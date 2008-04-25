@@ -1,0 +1,33 @@
+;; Object lisp/
+;; SEMANTICDB Tags save file
+(semanticdb-project-database-file "lisp/"
+  :tables (list 
+   (semanticdb-table "planner-config.el"
+    :major-mode 'emacs-lisp-mode
+    :tags '(("setq" code nil nil [37 72]) ("setq" code nil nil [73 476]) ("muse" include nil nil [478 493]) ("planner" include nil nil [494 512]) ("planner-w3m" include nil nil [513 535]) ("planner-id" include nil nil [536 557]) ("planner-cyclic" include nil nil [558 583]) ("planner-publish" include nil nil [584 610]) ("remember-planner" include nil nil [611 638]) ("setq" code nil nil [640 670]) ("setq" code nil nil [671 701]) ("setq" code nil nil [727 787]) ("setq" code nil nil [788 853]) ("setq" code nil nil [871 926]))
+    :file "planner-config.el"
+    :pointmax 928
+    )
+   (semanticdb-table "jde-config.el"
+    :major-mode 'emacs-lisp-mode
+    :tags '(("jde" include nil nil [1 15]))
+    :file "jde-config.el"
+    :pointmax 18
+    :unmatched-syntax 'nil
+    )
+   (semanticdb-table "irc-config.el"
+    :major-mode 'emacs-lisp-mode
+    :tags '(("when" code nil nil [1 1033]))
+    :file "irc-config.el"
+    :pointmax 1033
+    )
+   (semanticdb-table "my-config.el"
+    :major-mode 'emacs-lisp-mode
+    :tags 'nil
+    :file "my-config.el"
+    )
+   )
+  :file "semantic.cache"
+  :semantic-tag-version "2.0pre3"
+  :semanticdb-version "2.0pre3"
+  )
