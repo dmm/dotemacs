@@ -10,6 +10,8 @@
 
 (in-package :swank-backend)
 
+(defvar *tmp*)
+
 (if (find-package :gray)
   (import-from :gray *gray-stream-symbols* :swank-backend)
   (import-from :ext *gray-stream-symbols* :swank-backend))
@@ -300,7 +302,27 @@
 
 ;;;; Definitions
 
-(defimplementation find-definitions (name) nil)
+(defimplementation find-definitions (name)
+  (if (fboundp name)
+      (let ((tmp (find-source-location (symbol-function name))))
+        `(((defun ,name) ,tmp)))))
+
+(defimplementation find-source-location (obj)
+  (setf *tmp* obj)
+  (or
+   (typecase obj
+     (function
+      (multiple-value-bind (file pos) (ignore-errors (si:bc-file obj))
+        (if (and file pos) 
+            (make-location
+              `(:file ,(namestring file))
+              `(:position ,pos)
+              `(:snippet
+                ,(with-open-file (s file)
+                                 (skip-toplevel-forms pos s)
+                                 (skip-comments-and-whitespace s)
+                                 (read-snippet s))))))))
+   `(:error (format nil "Source definition of ~S not found" obj))))
 
 ;;;; Threads
 
@@ -453,7 +475,9 @@
                            (not (and (open-stream-p x)
                                      (output-stream-p x))))
                          *auto-flush-streams*))
-        (mapc #'stream-finish-output *auto-flush-streams*)))
+        (dolist (i *auto-flush-streams*)
+          (ignore-errors (stream-finish-output i))
+          (ignore-errors (finish-output i)))))
      (sleep *auto-flush-interval*)))
 
   )
