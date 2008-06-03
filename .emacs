@@ -10,7 +10,7 @@
 (defvar emacs-root (if (or (eq system-type 'cygwin)
 			   (eq system-type 'gnu/linux)
 			   (eq system-type 'linux))
-		       "/home/dmattli/" 		 
+		       "/cygdrive/c/Documents and Settings/dmattli/" 		 
 		     "c:/home/dmm/")
   "My home directory — the root of my personal emacs load-path.")
 
@@ -38,6 +38,8 @@
 (load-library "jde-config")
 (load-library "pink-bliss")
 (load-library "bbdb-config")
+(load-library "js2-config")
+
 
 ;; load customizations
 (load-file "~/.custom")
