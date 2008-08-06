@@ -959,12 +959,25 @@ out IDs for.")
       (ccl:signal-semaphore (mailbox.semaphore mbox)))))
 
 (defimplementation receive ()
+  (receive-if (constantly t)))
+
+(defvar *in-receive-if* nil)
+
+(defimplementation receive-if (test)
   (let* ((mbox (mailbox ccl:*current-process*))
          (mutex (mailbox.mutex mbox)))
-    (ccl:wait-on-semaphore (mailbox.semaphore mbox))
-    (ccl:with-lock-grabbed (mutex)
-      (assert (mailbox.queue mbox))
-      (pop (mailbox.queue mbox)))))
+    (loop 
+     (ccl:with-lock-grabbed (mutex)
+       (let* ((q (mailbox.queue mbox))
+              (tail (member-if test q)))
+         (when tail 
+           (setf (mailbox.queue mbox) 
+                 (nconc (ldiff q tail) (cdr tail)))
+           (when *in-receive-if*
+             (ccl:signal-semaphore (mailbox.semaphore mbox)))
+           (return (car tail)))))
+     (let ((*in-receive-if* t))
+       (ccl:wait-on-semaphore (mailbox.semaphore mbox))))))
 
 (defimplementation quit-lisp ()
   (ccl::quit))

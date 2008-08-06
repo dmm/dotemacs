@@ -36,6 +36,7 @@
            #:emacs-inspect
            #:label-value-line
            #:label-value-line*
+           
            #:with-struct
            ))
 
@@ -193,6 +194,7 @@ EXCEPT is a list of symbol names which should be ignored."
 (defvar *gray-stream-symbols*
   '(:fundamental-character-output-stream
     :stream-write-char
+    :stream-write-string
     :stream-fresh-line
     :stream-force-output
     :stream-finish-output
@@ -346,15 +348,20 @@ If DIRECTORY is specified it may be used by certain implementations to
 rebind *DEFAULT-PATHNAME-DEFAULTS* which may improve the recording of
 source information.
 
-If DEBUG is supplied, it may be used by certain implementations to
-compile with maximum debugging information.
+If DEBUG is supplied, and non-NIL, it may be used by certain
+implementations to compile with a debug optimization quality of its
+value.
+
+Should return T on successfull compilation, NIL otherwise.
 ")
 
 (definterface swank-compile-file (filename load-p external-format)
    "Compile FILENAME signalling COMPILE-CONDITIONs.
 If LOAD-P is true, load the file after compilation.
 EXTERNAL-FORMAT is a value returned by find-external-format or
-:default.")
+:default.
+
+Should return T on successfull compilation, NIL otherwise.")
 
 (deftype severity () 
   '(member :error :read-error :warning :style-warning :note))
@@ -765,7 +772,7 @@ That is the source location of the underlying datastructure of
 OBJECT. E.g. on a STANDARD-OBJECT, the source location of the
 respective DEFCLASS definition is returned, on a STRUCTURE-CLASS the
 respective DEFSTRUCT definition, and so on."
-  ;; This returns _ source location and not a list of locations. It's
+  ;; This returns one source location and not a list of locations. It's
   ;; supposed to return the location of the DEFGENERIC definition on
   ;; #'SOME-GENERIC-FUNCTION.
   )
@@ -930,7 +937,8 @@ Depending on the impleimentaion, this function may never return."
   "Return an Emacs-parsable object to identify THREAD.
 
 Ids should be comparable with equal, i.e.:
- (equal (thread-id <t1>) (thread-id <t2>)) <==> (eq <t1> <t2>)")
+ (equal (thread-id <t1>) (thread-id <t2>)) <==> (eq <t1> <t2>)"
+  thread)
 
 (definterface find-thread (id)
   "Return the thread for ID.
@@ -950,9 +958,20 @@ user. They do not have to be unique."
    (declare (ignore thread))
    "")
 
+(definterface thread-description (thread)
+  "Return a string describing THREAD."
+  (declare (ignore thread))
+  "")
+
+(definterface set-thread-description (thread description)
+  "Set THREAD's description to DESCRIPTION."
+  (declare (ignore thread description))
+  "")
+
 (definterface make-lock (&key name)
    "Make a lock for thread synchronization.
-Only one thread may hold the lock (via CALL-WITH-LOCK-HELD) at a time."
+Only one thread may hold the lock (via CALL-WITH-LOCK-HELD) at a time
+but that thread may hold it more than once."
    (declare (ignore name))
    :null-lock)
 
@@ -961,24 +980,6 @@ Only one thread may hold the lock (via CALL-WITH-LOCK-HELD) at a time."
    (declare (ignore lock)
             (type function function))
    (funcall function))
-
-(definterface make-recursive-lock (&key name)
-  "Make a lock for thread synchronization.
-Only one thread may hold the lock (via CALL-WITH-RECURSIVE-LOCK-HELD)
-at a time, but that thread may hold it more than once."
-  (cons nil (make-lock :name name)))
-
-(definterface call-with-recursive-lock-held (lock function)
-  "Call FUNCTION with LOCK held, queueing if necessary."
-  (if (eql (car lock) (current-thread))
-      (funcall function)
-      (call-with-lock-held (cdr lock)
-                           (lambda ()
-                             (unwind-protect
-                                  (progn
-                                    (setf (car lock) (current-thread))
-                                    (funcall function))
-                               (setf (car lock) nil))))))
 
 (definterface current-thread ()
   "Return the currently executing thread."
@@ -1004,6 +1005,9 @@ at a time, but that thread may hold it more than once."
 
 (definterface receive ()
   "Return the next message from current thread's mailbox.")
+
+(definterface receive-if (predicate)
+  "Return the first message satisfiying PREDICATE.")
 
 (definterface toggle-trace (spec)
   "Toggle tracing of the function(s) given with SPEC.

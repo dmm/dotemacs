@@ -414,6 +414,13 @@
       (fspec-definition-locations next)))
    (t
     (let ((defs (excl::find-source-file fspec)))
+      (when (and (null defs)
+                 (listp fspec)
+                 (string= (car fspec) '#:method))
+        ;; If methods are defined in a defgeneric form, the source location is
+        ;; recorded for the gf but not for the methods. Therefore fall back to
+        ;; the gf as the likely place of definition.
+        (setq defs (excl::find-source-file (second fspec))))
       (if (null defs)
           (list
            (list (list nil fspec)
@@ -667,11 +674,6 @@
 (defimplementation send (thread message)
   (let* ((mbox (mailbox thread))
          (mutex (mailbox.mutex mbox)))
-    (mp:process-wait-with-timeout 
-     "yielding before sending" 0.1
-     (lambda ()
-       (mp:with-process-lock (mutex)
-         (< (length (mailbox.queue mbox)) 10))))
     (mp:with-process-lock (mutex)
       (setf (mailbox.queue mbox)
             (nconc (mailbox.queue mbox) (list message))))))
@@ -682,6 +684,17 @@
     (mp:process-wait "receive" #'mailbox.queue mbox)
     (mp:with-process-lock (mutex)
       (pop (mailbox.queue mbox)))))
+
+(defimplementation receive-if (test)
+  (let ((mbox (mailbox mp:*current-process*)))
+    (mp:process-wait "receive-if" 
+                     (lambda () (some test (mailbox.queue mbox))))
+    (mp:with-process-lock ((mailbox.mutex mbox))
+      (let* ((q (mailbox.queue mbox))
+             (tail (member-if test q)))
+        (assert tail)
+        (setf (mailbox.queue mbox) (nconc (ldiff q tail) (cdr tail)))
+        (car tail)))))
 
 (defimplementation quit-lisp ()
   (excl:exit 0 :quiet t))

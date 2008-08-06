@@ -100,9 +100,10 @@
 
 (defimplementation accept-connection (socket &key
                                       external-format buffering timeout)
-  (declare (ignore timeout external-format))
-  (let ((buffering (or buffering :full)))
-    (make-socket-io-stream (ext:accept-tcp-connection socket) buffering)))
+  (declare (ignore timeout))
+  (make-socket-io-stream (ext:accept-tcp-connection socket) 
+                         (or buffering :full)
+                         (or external-format :iso-8859-1)))
 
 ;;;;; Sockets
 
@@ -117,10 +118,24 @@
   (let ((hostent (ext:lookup-host-entry hostname)))
     (car (ext:host-entry-addr-list hostent))))
 
-(defun make-socket-io-stream (fd buffering)
+(defvar *external-format-to-coding-system*
+  '((:iso-8859-1
+     "latin-1" "latin-1-unix" "iso-latin-1-unix"
+     "iso-8859-1" "iso-8859-1-unix")
+    #+unicode
+    (:utf-8 "utf-8" "utf-8-unix")))
+
+(defimplementation find-external-format (coding-system)
+  (car (rassoc-if (lambda (x) (member coding-system x :test #'equal))
+                  *external-format-to-coding-system*)))
+
+(defun make-socket-io-stream (fd buffering external-format)
   "Create a new input/output fd-stream for FD."
+  #-unicode(declare (ignore external-format))
   (sys:make-fd-stream fd :input t :output t :element-type 'base-char
-                      :buffering buffering))
+                      :buffering buffering
+                      #+unicode :external-format 
+                      #+unicode external-format))
 
 ;;;;; Signal-driven I/O
 
@@ -2082,18 +2097,35 @@ The `symbol-value' of each element is a type tag.")
                 (make-mailbox)))))
   
   (defimplementation send (thread message)
-    (let* ((mbox (mailbox thread))
-           (mutex (mailbox.mutex mbox)))
-      (mp:with-lock-held (mutex)
-        (setf (mailbox.queue mbox)
-              (nconc (mailbox.queue mbox) (list message))))))
+    (let* ((mbox (mailbox thread)))
+      (sys:without-interrupts
+        (mp:with-lock-held ((mailbox.mutex mbox))
+          (setf (mailbox.queue mbox)
+                (nconc (mailbox.queue mbox) (list message)))))))
   
   (defimplementation receive ()
-    (let* ((mbox (mailbox mp:*current-process*))
-           (mutex (mailbox.mutex mbox)))
-      (mp:process-wait "receive" #'mailbox.queue mbox)
-      (mp:with-lock-held (mutex)
-        (pop (mailbox.queue mbox)))))
+    (let* ((mbox (mailbox mp:*current-process*)))
+      (loop
+       (mp:process-wait "receive" #'mailbox.queue mbox)
+       (sys:without-interrupts
+         (mp:with-lock-held ((mailbox.mutex mbox))
+           (when (mailbox.queue mbox)
+             (return (pop (mailbox.queue mbox)))))))))
+
+  (defimplementation receive-if (test)
+    (let ((mbox (mailbox mp:*current-process*)))
+      (loop
+       (mp:process-wait "receive-if" 
+                        (lambda () (some test (mailbox.queue mbox))))
+       (sys:without-interrupts
+         (mp:with-lock-held ((mailbox.mutex mbox))
+           (let* ((q (mailbox.queue mbox))
+                  (tail (member-if test q)))
+             (when tail
+               (setf (mailbox.queue mbox) 
+                     (nconc (ldiff q tail) (cdr tail)))
+               (return (car tail)))))))))
+                   
 
   ) ;; #+mp
 

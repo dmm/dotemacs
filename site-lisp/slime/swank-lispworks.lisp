@@ -225,6 +225,10 @@ Return NIL if the symbol is unbound."
     (env:with-environment ((slime-env hook '()))
       (funcall fun))))
 
+(defimplementation install-debugger-globally (function)
+  (setq *debugger-hook* function)
+  (setf (env:environment) (slime-env function '())))
+
 (defvar *sldb-top-frame*)
 
 (defun interesting-frame-p (frame)
@@ -731,19 +735,48 @@ function names like \(SETF GET)."
 (defimplementation thread-alive-p (thread)
   (mp:process-alive-p thread))
 
+(defstruct (mailbox (:conc-name mailbox.)) 
+  (mutex (mp:make-lock :name "thread mailbox"))
+  (queue '() :type list))
+
 (defvar *mailbox-lock* (mp:make-lock))
 
 (defun mailbox (thread)
   (mp:with-lock (*mailbox-lock*)
     (or (getf (mp:process-plist thread) 'mailbox)
         (setf (getf (mp:process-plist thread) 'mailbox)
-              (mp:make-mailbox)))))
+              (make-mailbox)))))
 
 (defimplementation receive ()
-  (mp:mailbox-read (mailbox mp:*current-process*)))
+  (let* ((mbox (mailbox mp:*current-process*))
+         (lock (mailbox.mutex mbox)))
+    (loop
+     (mp:process-wait "receive" #'mailbox.queue mbox)
+     (mp:without-interrupts
+       (mp:with-lock (lock "receive/try" 0.1)
+         (when (mailbox.queue mbox)
+           (return (pop (mailbox.queue mbox)))))))))
 
-(defimplementation send (thread object)
-  (mp:mailbox-send (mailbox thread) object))
+(defimplementation receive-if (test)
+  (let* ((mbox (mailbox mp:*current-process*))
+         (lock (mailbox.mutex mbox)))
+    (loop
+     (mp:process-wait "receive-if"
+                      (lambda () (some test (mailbox.queue mbox))))
+     (mp:without-interrupts
+       (mp:with-lock (lock "receive-if/try" 0.1)
+         (let* ((q (mailbox.queue mbox))
+                (tail (member-if test q)))
+           (when tail
+             (setf (mailbox.queue mbox) (nconc (ldiff q tail) (cdr tail)))
+             (return (car tail)))))))))
+
+(defimplementation send (thread message)
+  (let ((mbox (mailbox thread)))
+    (mp:without-interrupts
+      (mp:with-lock ((mailbox.mutex mbox))
+        (setf (mailbox.queue mbox)
+              (nconc (mailbox.queue mbox) (list message)))))))
 
 ;;; Some intergration with the lispworks environment
 
@@ -762,12 +795,29 @@ function names like \(SETF GET)."
     (defmethod env-internals:environment-display-debugger (env)
       *debug-io*)))
 
+(defvar *auto-flush-interval* 0.15)
+(defvar *auto-flush-lock* (mp:make-lock :name "auto-flush-lock"))
+(defvar *auto-flush-thread* nil)
+(defvar *auto-flush-streams* '())
+  
 (defimplementation make-stream-interactive (stream)
-  (unless (find-method #'stream:stream-soft-force-output nil `((eql ,stream))
-                       nil)
-    (let ((lw:*handle-warn-on-redefinition* :warn))
-      (defmethod stream:stream-soft-force-output  ((o (eql stream)))
-        (force-output o)))))
+  (mp:with-lock (*auto-flush-lock*)
+    (pushnew stream *auto-flush-streams*)
+    (unless *auto-flush-thread*
+      (setq *auto-flush-thread*
+            (mp:process-run-function "auto-flush-thread [SWANK]" () 
+                                     #'flush-streams)))))
+
+(defun flush-streams ()
+  (loop
+   (mp:with-lock (*auto-flush-lock*)
+     (setq *auto-flush-streams*
+           (remove-if (lambda (x)
+                        (not (and (open-stream-p x)
+                                  (output-stream-p x))))
+                      *auto-flush-streams*))
+     (mapc #'finish-output *auto-flush-streams*))
+   (sleep *auto-flush-interval*)))
 
 (defmethod env-internals:confirm-p ((e slime-env) &optional msg &rest args)
   (apply (swank-sym :y-or-n-p-in-emacs) msg args))
