@@ -5,16 +5,18 @@
 (setq gnus-select-method '(nntp "news.kc.sbcglobal.net"))
 
 (setq gnus-secondary-select-methods
-      '((nnimap "minermail"
+      '(
+	(nnimap "minermail"
 		(nnimap-address "minermail.mst.edu")
 		(nnimap-server-port 993)
 		(nnimap-stream ssl)
-		(nnimap-list-pattern "INBOX*"))
+		(nnimap-list-pattern "INBOX.*"))
 	(nnimap "mattli.us"
 		(nnimap-address "mattli.us")
 		(nnimap-server-port 993)
-		(nnimap-stream ssl)
-		(nnimap-list-pattern "INBOX*"))))
+		(nnimap-stream ssl))
+	)
+      )
 
 (setq nnimap-expunge-on-close "never")
 (setq gnus-permanently-visible-groups "e") ;Always display subscribed groups with e in name ;)

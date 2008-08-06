@@ -1,8 +1,8 @@
 ;;; CONFIGURATION for planner mode
 
-(setq planner-project "dmm's life")
+(setq planner-project "dmm's work")
 (setq muse-project-alist
-      '(("dmm's life"
+      '(("dmm's work"
 	 ("~/plans" ;; Or wherever you want your planner files to be
 	  :default "TaskPool"
 	  :major-mode planner-mode
@@ -14,20 +14,19 @@
 		;;  of Planner)
 		:path "~/plans/pub"))))
 
-(require 'muse)
+;(require 'muse)
 (require 'planner)
-(require 'planner-w3m)
-(require 'planner-id)
-(require 'planner-cyclic)
-(require 'planner-publish)
-(require 'remember-planner)
+;(require 'planner-w3m)
+;(require 'planner-id)
+;(require 'planner-cyclic)
+;(require 'planner-publish)
+;(require 'remember-planner)
 
 (setq planner-xhtml-header "")
 (setq planner-xhtml-footer "")
 
 ; Planner mode settings
 (setq remember-handler-functions '(remember-planner-append))
-(setq remember-annotation-functions planner-annotation-functions)
 
 ;Cyclic setting
 (setq planner-cyclic-diary-file "~/plans/cyclic-tasks")

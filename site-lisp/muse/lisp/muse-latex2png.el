@@ -1,15 +1,15 @@
 ;; muse-latex2png.el --- generate PNG images from inline LaTeX code
 
-;; Copyright (C) 2005, 2006 Free Software Foundation, Inc.
+;; Copyright (C) 2005, 2006, 2007, 2008  Free Software Foundation, Inc.
 
-;; Author: Michael Olson (mwolson AT gnu DOT org)
+;; Author: Michael Olson <mwolson@gnu.org>
 ;; Created: 12-Oct-2005
 
 ;; This file is part of Emacs Muse.  It is not part of GNU Emacs.
 
 ;; Emacs Muse is free software; you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published
-;; by the Free Software Foundation; either version 2, or (at your
+;; by the Free Software Foundation; either version 3, or (at your
 ;; option) any later version.
 
 ;; Emacs Muse is distributed in the hope that it will be useful, but
@@ -205,35 +205,59 @@ See `muse-latex2png-region' for valid keys for ATTRS."
     (setq attrs (cons (cons "prefix"
                             (concat "latex2png-" (muse-page-name)))
                       attrs)))
-  (if (muse-style-derived-p "latex")
+  (if (or (muse-style-derived-p "latex") (muse-style-derived-p "context"))
       (muse-publish-mark-read-only beg end)
     (muse-latex2png-region beg end attrs)))
+
+(put 'muse-publish-latex-tag 'muse-dangerous-tag t)
 
 (defun muse-publish-math-tag (beg end)
   "Surround the given region with \"$\" characters.  Then, if the
 current style is not Latex-based, generate an image for the given
 Latex math code.
 
-If 6 or more spaces come before the tag, surrouund the region
-with \"$$\" instead."
+If 6 or more spaces come before the tag, and the end of the tag
+is at the end of a line, then surround the region with the
+equivalent of \"$$\" instead.  This causes the region to be
+centered in the published output, among other things."
   (let* ((centered (and (re-search-backward
                          (concat "^[" muse-regexp-blank "]\\{6,\\}\\=")
                          nil t)
+                        (save-excursion
+                          (save-match-data
+                            (goto-char end)
+                            (looking-at (concat "[" muse-regexp-blank "]*$"))))
                         (prog1 t
                           (replace-match "")
-                          (delete-backward-char 1)
+                          (when (and (or (muse-style-derived-p "latex")
+                                         (muse-style-derived-p "context"))
+                                     (not (bobp)))
+                            (backward-char 1)
+                            (if (bolp)
+                                (delete-char 1)
+                              (forward-char 1)))
                           (setq beg (point)))))
-         (dol (if centered "$$" "$"))
+         (tag-beg (if centered
+                      (if (muse-style-derived-p "context")
+                          "\\startformula " "\\[ ")
+                    "$"))
+         (tag-end (if centered
+                      (if (muse-style-derived-p "context")
+                          " \\stopformula" " \\]")
+                    "$"))
          (attrs (nconc (list (cons "prefix"
                                    (concat "latex2png-" (muse-page-name))))
                        (if centered nil
                          '(("inline" . t))))))
-    (muse-insert-markup dol)
+    (goto-char beg)
+    (muse-insert-markup tag-beg)
     (goto-char end)
-    (muse-insert-markup dol)
-    (if (muse-style-derived-p "latex")
+    (muse-insert-markup tag-end)
+    (if (or (muse-style-derived-p "latex") (muse-style-derived-p "context"))
         (muse-publish-mark-read-only beg (point))
       (muse-latex2png-region beg (point) attrs))))
+
+(put 'muse-publish-math-tag 'muse-dangerous-tag t)
 
 ;;; Insinuate with muse-publish
 

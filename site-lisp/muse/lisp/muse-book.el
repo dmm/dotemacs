@@ -1,12 +1,12 @@
 ;;; muse-book.el --- publish entries into a compilation
 
-;; Copyright (C) 2004, 2005, 2006 Free Software Foundation, Inc.
+;; Copyright (C) 2004, 2005, 2006, 2007, 2008  Free Software Foundation, Inc.
 
 ;; This file is part of Emacs Muse.  It is not part of GNU Emacs.
 
 ;; Emacs Muse is free software; you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published
-;; by the Free Software Foundation; either version 2, or (at your
+;; by the Free Software Foundation; either version 3, or (at your
 ;; option) any later version.
 
 ;; Emacs Muse is distributed in the hope that it will be useful, but
@@ -73,7 +73,9 @@ together as if one giant chapter."
   :type 'string
   :group 'muse-book)
 
-(defcustom muse-book-latex-footer "\n\\end{document}"
+(defcustom muse-book-latex-footer
+  "<lisp>(muse-latex-bibliography)</lisp>
+\\end{document}"
   "Footer used for publishing books to LaTeX.  This may be text or a filename."
   :type 'string
   :group 'muse-book)
@@ -88,7 +90,7 @@ but treating the page as if it were a single chapter within a book."
   (let ((muse-publishing-directives (list (cons "title" title)))
         (muse-publishing-current-file (cdr entry))
         (beg (point)) end)
-    (insert-file-contents (cdr entry))
+    (muse-insert-file-contents (cdr entry))
     (setq end (copy-marker (point-max) t))
     (muse-publish-markup-region beg end (car entry) style)
     (goto-char beg)
@@ -134,7 +136,7 @@ used for publishing."
     (narrow-to-region (point) (point))
     (unwind-protect
         (progn
-          (insert-file-contents file)
+          (muse-insert-file-contents file)
           (muse-publish-markup
            "attributes"
            `(;; Remove leading and trailing whitespace from the file
@@ -256,10 +258,10 @@ changed since it was last published."
           (goto-char (point-max))
           (if style-footer (muse-insert-file-or-string style-footer file))
           (run-hooks 'muse-after-book-publish-hook)
-          (let ((backup-inhibited t))
-            (write-file output-path))
-          (if style-final
-              (funcall style-final file output-path target)))))
+          (if (muse-write-file output-path)
+              (if style-final
+                  (funcall style-final file output-path target))
+            (setq published nil)))))
     (if published
         (message "The book \"%s\" has been published." file))
     published))

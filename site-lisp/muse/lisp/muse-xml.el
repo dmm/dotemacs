@@ -1,15 +1,15 @@
 ;;; muse-xml.el --- publish XML files
 
-;; Copyright (C) 2005, 2006 Free Software Foundation, Inc.
+;; Copyright (C) 2005, 2006, 2007, 2008  Free Software Foundation, Inc.
 
-;; Author: Michael Olson (mwolson AT gnu DOT org)
+;; Author: Michael Olson <mwolson@gnu.org>
 ;; Date: Sat 23-Jul-2005
 
 ;; This file is part of Emacs Muse.  It is not part of GNU Emacs.
 
 ;; Emacs Muse is free software; you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published
-;; by the Free Software Foundation; either version 2, or (at your
+;; by the Free Software Foundation; either version 3, or (at your
 ;; option) any later version.
 
 ;; Emacs Muse is distributed in the hope that it will be useful, but
@@ -81,16 +81,20 @@ This may be text or a filename."
 (defcustom muse-xml-footer "
   <!-- Page published by Emacs Muse ends here -->
 </MUSE>\n"
-  "Footer used for publishing Xml XML files.
+  "Footer used for publishing XML files.
 This may be text or a filename."
   :type 'string
   :group 'muse-xml)
 
 (defcustom muse-xml-markup-regexps
   `(;; Beginning of doc, end of doc, or plain paragraph separator
-    (10000 ,(concat "\\(\\(\n\\([" muse-regexp-blank "]*\n\\)+\\)"
+    (10000 ,(concat "\\(\\(\n\\(?:[" muse-regexp-blank "]*\n\\)*"
+                    "\\([" muse-regexp-blank "]*\n\\)\\)"
                     "\\|\\`\\s-*\\|\\s-*\\'\\)")
-           0 muse-xml-markup-paragraph))
+           ;; this is somewhat repetitive because we only require the
+           ;; line just before the paragraph beginning to be not
+           ;; read-only
+           3 muse-xml-markup-paragraph))
   "List of markup rules for publishing a Muse page to XML.
 For more on the structure of this list, see `muse-publish-markup-regexps'."
   :type '(repeat (choice
@@ -127,6 +131,7 @@ For more on the structure of this list, see
     (rule            . "<hr />")
     (fn-sep          . "<hr />\n")
     (no-break-space  . "&nbsp;")
+    (line-break      . "<br>")
     (enddots         . "....")
     (dots            . "...")
     (section         . "<section level=\"1\"><title>")
@@ -163,6 +168,10 @@ For more on the structure of this list, see
     (end-center      . "\n</format></p>")
     (begin-quote     . "<blockquote>\n")
     (end-quote       . "\n</blockquote>")
+    (begin-cite      . "<cite>")
+    (begin-cite-author . "<cite type=\"author\">")
+    (begin-cite-year . "<cite type=\"year\">")
+    (end-cite        . "</cite>")
     (begin-quote-item . "<p>")
     (end-quote-item  . "</p>")
     (begin-uli       . "<list type=\"unordered\">\n")
@@ -217,8 +226,7 @@ found in `muse-xml-encoding-map'."
     (goto-char (match-beginning 0))
     (when (save-excursion
             (save-match-data
-              (and (re-search-backward "<\\(/?\\)p[ >]"
-                                       nil t)
+              (and (re-search-backward "<\\(/?\\)p[ >]" nil t)
                    (not (string-equal (match-string 1) "/")))))
       (when (get-text-property (1- (point)) 'end-list)
         (goto-char (previous-single-property-change (1- (point)) 'end-list)))

@@ -5,47 +5,73 @@
 ;; Common lisp, yay!
 (require 'cl)
 
-;; Everything in ~/emacs!
+;; Some helpful functions 
 
-(defvar emacs-root (if (or (eq system-type 'cygwin)
-			   (eq system-type 'gnu/linux)
-			   (eq system-type 'linux))
-		       "/cygdrive/c/Documents and Settings/dmattli/" 		 
-		     "c:/home/dmm/")
-  "My home directory — the root of my personal emacs load-path.")
+(defun files-in-below-directory (directory)
+  "List the .el files in DIRECTORY and in its sub-directories."
+  ;; Although the function will be used non-interactively,
+  ;; it will be easier to test if we make it interactive.
+  ;; The directory will have a name such as
+  ;;  "/usr/local/share/emacs/21.0.100/lisp/"
+  (interactive "DDirectory name: ")
+  (let (el-files-list
+	(current-directory-list
+	 (directory-files-and-attributes directory t)))
+    ;; while we are in the current directory
+    (while current-directory-list
+      (cond
+       ;; check to see whether filename ends in `.el'
+       ;; and if so, append its name to a list.
+       ((equal ".el" (substring (car (car current-directory-list)) -3))
+	(setq el-files-list
+	      (cons (car (car current-directory-list)) el-files-list)))
+       ;; check whether filename is that of a directory
+       ((eq t (car (cdr (car current-directory-list))))
+	;; decide whether to skip or recurse
+	(if
+	    (equal "."
+		   (substring (car (car current-directory-list)) -1))
+	    ;; then do nothing since filename is that of
+	    ;;   current directory or parent, "." or ".."
+	    ()
+	  ;; else descend into the directory and repeat the process
+	  (setq el-files-list
+		(append
+		 (files-in-below-directory
+		  (car (car current-directory-list)))
+		 el-files-list)))))
+      ;; move to the next filename in the list; this also
+      ;; shortens the list so the while loop eventually comes to an end
+      (setq current-directory-list (cdr current-directory-list)))
+    ;; return the filenames
+    el-files-list))
 
-(defun add-path (p)
-  (add-to-list 'load-path
-	       (concat emacs-root p)))
 
-(if (fboundp 'normal-top-level-add-subdirs-to-load-path)
-    (let* ((my-lisp-dir "~/emacs/site-lisp/") ; Change this to a more portable path
-	   (default-directory my-lisp-dir))
-      (setq load-path (cons my-lisp-dir load-path))
-      (normal-top-level-add-subdirs-to-load-path)))
+(defun fill-load-path (path)
+  (dolist (file (files-in-below-directory path))
+    (if file
+	(add-to-list 'load-path
+		     (file-name-directory file)))))
 
-(add-path "emacs/site-lisp")
-(add-path "emacs/lisp")
+(defun load-tree (path)
+  (dolist (fl (files-in-below-directory path))
+    (if fl
+	(load-file fl))))
 
-(load-library "efuncs")
-(load-library "my-config")
-(load-library "mail-config")
-(load-library "slime-config")
-(load-library "paredit-config")
-;(load-library "w3m-config")
-(load-library "gnus-config")
-(load-library "irc-config")
-(load-library "jde-config")
-(load-library "pink-bliss")
-(load-library "bbdb-config")
-(load-library "js2-config")
+
+
+
+;; Fill load-path
+(fill-load-path "~/emacs/site-lisp/")
+(fill-load-path "~/emacs/lisp/")
+
+;; Load configuration
+(load-tree "~/emacs/lisp/")
 
 
 ;; load customizations
 (load-file "~/.custom")
 
-
-;(if-not-terminal "do do stuff")
 
 ;; load info manuals
 (setq Info-default-directory-list
@@ -58,4 +84,3 @@
 
 ;; yesssssss
 (shell)
-

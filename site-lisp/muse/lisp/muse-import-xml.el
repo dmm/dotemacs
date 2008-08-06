@@ -1,6 +1,6 @@
 ;;; muse-import-xml.el --- common to all from-xml converters
 
-;; Copyright (C) 2006 Free Software Foundation, Inc.
+;; Copyright (C) 2006, 2007, 2008  Free Software Foundation, Inc.
 
 ;; Author: Elena Pomohaci <e.pomohaci@gmail.com>
 
@@ -8,7 +8,7 @@
 
 ;; Emacs Muse is free software; you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published
-;; by the Free Software Foundation; either version 2, or (at your
+;; by the Free Software Foundation; either version 3, or (at your
 ;; option) any later version.
 
 ;; Emacs Muse is distributed in the hope that it will be useful, but
@@ -30,6 +30,7 @@
 (provide 'muse-import-xml)
 
 (require 'xml)
+(require 'muse)
 
 (defvar muse-import-xml-prefix ""
   "The name prefix for tag functions")
@@ -63,7 +64,7 @@
 (defun muse-import-xml-parse-node (node)
   "Parse a xml tree node"
   (if (stringp node)
-      (insert (replace-regexp-in-string "^[ \t]+" "" node))
+      (insert (muse-replace-regexp-in-string "^[ \t]+" "" node))
     (let ((fname (intern-soft (concat muse-import-xml-prefix
                                       (symbol-name (xml-node-name node))))))
       (if (functionp fname)

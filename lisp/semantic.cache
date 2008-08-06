@@ -2,32 +2,48 @@
 ;; SEMANTICDB Tags save file
 (semanticdb-project-database-file "lisp/"
   :tables (list 
-   (semanticdb-table "planner-config.el"
+   (semanticdb-table "cedet-config.el"
     :major-mode 'emacs-lisp-mode
-    :tags '(("setq" code nil nil [37 72]) ("setq" code nil nil [73 476]) ("muse" include nil nil [478 493]) ("planner" include nil nil [494 512]) ("planner-w3m" include nil nil [513 535]) ("planner-id" include nil nil [536 557]) ("planner-cyclic" include nil nil [558 583]) ("planner-publish" include nil nil [584 610]) ("remember-planner" include nil nil [611 638]) ("setq" code nil nil [640 670]) ("setq" code nil nil [671 701]) ("setq" code nil nil [727 787]) ("setq" code nil nil [788 853]) ("setq" code nil nil [871 926]))
-    :file "planner-config.el"
-    :pointmax 928
+    :tags '(("load-file" code nil nil [2 68]) ("speedbar" include nil nil [69 88]) ("load-file" code nil nil [103 164]) ("semantic-load-enable-excessive-code-helpers" code nil nil [796 841]))
+    :file "cedet-config.el"
+    :pointmax 1051
+    :unmatched-syntax 'nil
     )
    (semanticdb-table "jde-config.el"
     :major-mode 'emacs-lisp-mode
-    :tags '(("jde" include nil nil [1 15]))
+    :tags '(("speedbar-frame-mode" function (:prototype-flag t :user-visible-flag t) nil [27 96]) ("speedbar-get-focus" function (:prototype-flag t :user-visible-flag t) nil [97 165]) ("global-set-key" code nil nil [166 209]) ("setq" code nil nil [230 271]) ("semantic-load" include nil nil [272 296]) ("jde" include nil nil [313 327]) ("setq" code nil nil [330 407]))
     :file "jde-config.el"
-    :pointmax 18
+    :pointmax 407
     :unmatched-syntax 'nil
     )
-   (semanticdb-table "irc-config.el"
+   (semanticdb-table "slime-config.el"
     :major-mode 'emacs-lisp-mode
-    :tags '(("when" code nil nil [1 1033]))
-    :file "irc-config.el"
-    :pointmax 1033
+    :tags '(("setq" code nil nil [43 78]) ("slime-setup" code nil nil [96 109]))
+    :file "slime-config.el"
+    :pointmax 110
+    :unmatched-syntax 'nil
     )
-   (semanticdb-table "my-config.el"
+   (semanticdb-table "gnus-config.el"
     :major-mode 'emacs-lisp-mode
-    :tags 'nil
-    :file "my-config.el"
+    :tags '(("gnus" include nil nil [30 45]) ("setq" code nil nil [47 104]) ("setq" code nil nil [106 407]) ("setq" code nil nil [409 447]) ("setq" code nil nil [448 490]))
+    :file "gnus-config.el"
+    :pointmax 542
+    )
+   (semanticdb-table "planner-config.el"
+    :major-mode 'emacs-lisp-mode
+    :tags '(("setq" code nil nil [37 72]) ("setq" code nil nil [73 476]) ("planner" include nil nil [495 513]) ("setq" code nil nil [646 676]) ("setq" code nil nil [677 707]) ("setq" code nil nil [733 793]) ("setq" code nil nil [811 866]))
+    :file "planner-config.el"
+    :pointmax 868
+    :unmatched-syntax 'nil
+    )
+    (semanticdb-table "org-mode-config.el"
+    :major-mode 'emacs-lisp-mode
+    :tags '(("add-to-list" code nil nil [28 82]) ("define-key" code nil nil [84 131]) ("eval-after-load" code nil nil [133 1096]) ("remember" include nil nil [1098 1117]) ("add-hook" code nil nil [1119 1178]) ("define-key" code nil nil [1180 1233]) ("custom-set-variables" code nil nil [1235 2583]))
+    :file "org-mode-config.el"
+    :pointmax 2584
     )
    )
   :file "semantic.cache"
-  :semantic-tag-version "2.0pre3"
-  :semanticdb-version "2.0pre3"
+  :semantic-tag-version "2.0pre4"
+  :semanticdb-version "2.0pre4"
   )

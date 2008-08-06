@@ -1,15 +1,15 @@
 ;;; muse-blosxom.el --- publish a document tree for serving by (py)Blosxom
 
-;; Copyright (C) 2004, 2005, 2006 Free Software Foundation, Inc.
+;; Copyright (C) 2004, 2005, 2006, 2007, 2008  Free Software Foundation, Inc.
 
-;; Author: Michael Olson (mwolson AT gnu DOT org)
+;; Author: Michael Olson <mwolson@gnu.org>
 ;; Date: Wed, 23 March 2005
 
 ;; This file is part of Emacs Muse.  It is not part of GNU Emacs.
 
 ;; Emacs Muse is free software; you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published
-;; by the Free Software Foundation; either version 2, or (at your
+;; by the Free Software Foundation; either version 3, or (at your
 ;; option) any later version.
 
 ;; Emacs Muse is distributed in the hope that it will be useful, but
@@ -50,16 +50,19 @@
 ;; `hardcodedates.py' provides the second service.  Eventually it is
 ;; hoped that a blosxom plugin and script will be found/written.
 ;;
-;; Alternately, the pyblosxom metadate plugin may be used.  Set the
-;; value of muse-blosxom-use-metadate to non-nil to enable adding a
-;; #postdate directive to all published files.  You can do this by:
+;; Alternately, the pyblosxom metadate plugin may be used.  On the
+;; plus side, there is no need to run a script to gather the date.  On
+;; the downside, each entry is read twice rather than once when the
+;; page is rendered.  Set the value of muse-blosxom-use-metadate to
+;; non-nil to enable adding a #postdate directive to all published
+;; files.  You can do this by:
 ;;
 ;; M-x customize-variable RET muse-blosxom-use-metadate RET
 ;;
 ;; With the metadate plugin installed in pyblosxom, the date set in
 ;; this directive will be used instead of the file's modification
-;; time.  The plugin is available at:
-;; http://pyblosxom.sourceforge.net/blog/registry/date/metadate
+;; time.  The plugin is included with Muse at
+;; contrib/pyblosxom/metadate.py.
 ;;
 ;; Generating a Muse project entry
 ;; -------------------------------
@@ -206,26 +209,27 @@ at http://pyblosxom.sourceforge.net/blog/registry/date/metadate."
 
 (defun muse-blosxom-update-page-date-alist ()
   "Add a date entry to `muse-blosxom-page-date-alist' for this page."
-  ;; Make current file be relative to base directory
-  (let ((rel-file
-         (concat
-          (file-name-as-directory
-           (or (muse-publishing-directive "category")
-               (file-relative-name
-                (file-name-directory
-                 (expand-file-name muse-publishing-current-file))
-                (file-truename muse-blosxom-base-directory))))
-          (file-name-nondirectory muse-publishing-current-file))))
-    ;; Strip the file extension
-    (when muse-ignored-extensions-regexp
-      (setq rel-file (save-match-data
-                       (and (string-match muse-ignored-extensions-regexp
-                                          rel-file)
-                            (replace-match "" t t rel-file)))))
-    ;; Add to page-date alist
-    (add-to-list
-     'muse-blosxom-page-date-alist
-     `(,rel-file . ,(muse-publishing-directive "date")))))
+  (when muse-publishing-current-file
+    ;; Make current file be relative to base directory
+    (let ((rel-file
+           (concat
+            (file-name-as-directory
+             (or (muse-publishing-directive "category")
+                 (file-relative-name
+                  (file-name-directory
+                   (expand-file-name muse-publishing-current-file))
+                  (file-truename muse-blosxom-base-directory))))
+            (file-name-nondirectory muse-publishing-current-file))))
+      ;; Strip the file extension
+      (when muse-ignored-extensions-regexp
+        (setq rel-file (save-match-data
+                         (and (string-match muse-ignored-extensions-regexp
+                                            rel-file)
+                              (replace-match "" t t rel-file)))))
+      ;; Add to page-date alist
+      (add-to-list
+       'muse-blosxom-page-date-alist
+       `(,rel-file . ,(muse-publishing-directive "date"))))))
 
 ;; Enter a new blog entry
 
@@ -255,9 +259,10 @@ The page will be initialized with the current date and TITLE."
                         (not (string= tag "")))
             (add-to-list 'tags tag t))
           tags)
-      (completing-read "Category: "
-                       (mapcar 'list (muse-project-recurse-directory
-                                      muse-blosxom-base-directory))))
+      (funcall muse-completing-read-function
+               "Category: "
+               (mapcar 'list (muse-project-recurse-directory
+                              muse-blosxom-base-directory))))
     (read-string "Title: ")))
   (let ((file (muse-blosxom-title-to-file title)))
     (muse-project-find-file

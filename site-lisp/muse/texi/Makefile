@@ -1,7 +1,10 @@
 .PHONY: all info-only doc clean realclean distclean fullclean install
 .PRECIOUS: %.info %.html
 
-include ../Makefile.defs
+DEFS = $(shell test -f ../Makefile.defs && echo ../Makefile.defs \
+	|| echo ../Makefile.defs.default)
+
+include $(DEFS)
 
 all: doc
 
@@ -23,4 +26,4 @@ distclean realclean fullclean: clean
 install: $(MANUAL).info
 	[ -d $(INFODIR) ] || install -d $(INFODIR)
 	install -m 0644 $(MANUAL).info $(INFODIR)/$(MANUAL)
-	$(INSTALLINFO) $(INFODIR)/$(MANUAL)
+	$(call install_info,$(MANUAL))

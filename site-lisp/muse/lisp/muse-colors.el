@@ -1,6 +1,6 @@
 ;;; muse-colors.el --- coloring and highlighting used by Muse
 
-;; Copyright (C) 2004, 2005, 2006 Free Software Foundation, Inc.
+;; Copyright (C) 2004, 2005, 2006, 2007, 2008  Free Software Foundation, Inc.
 
 ;; Author: John Wiegley (johnw AT gnu DOT org)
 ;; Keywords: hypermedia
@@ -10,7 +10,7 @@
 
 ;; Emacs Muse is free software; you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published
-;; by the Free Software Foundation; either version 2, or (at your
+;; by the Free Software Foundation; either version 3, or (at your
 ;; option) any later version.
 
 ;; Emacs Muse is distributed in the hope that it will be useful, but
@@ -104,20 +104,24 @@ used as the filename of the image."
                  (function :tag "Custom function"))
   :group 'muse-colors)
 
+(defvar muse-colors-region-end nil
+  "Indicate the end of the region that is currently being font-locked.")
+(make-variable-buffer-local 'muse-colors-region-end)
 
 ;;;###autoload
 (defun muse-colors-toggle-inline-images ()
-  "Toggle inlined images on/off."
+  "Toggle display of inlined images on/off."
   (interactive)
   ;; toggle the custom setting
   (if (not muse-colors-inline-images)
       (setq muse-colors-inline-images t)
     (setq muse-colors-inline-images nil))
   ;; reprocess the buffer
-  (muse-colors-buffer))
-
-(define-key muse-mode-map [(control ?c) (control ?i)]
-  'muse-colors-toggle-inline-images)
+  (muse-colors-buffer)
+  ;; display informative message
+  (if muse-colors-inline-images
+      (message "Images are now displayed inline")
+    (message "Images are now displayed as links")))
 
 (defvar muse-colors-outline-faces-list
   (if (facep 'outline-1)
@@ -131,8 +135,12 @@ used as the filename of the image."
   "Outline faces to use when assigning Muse header faces.")
 
 (defun muse-make-faces-default (&optional later)
+  "Generate the default face definitions for headers."
   (dolist (num '(1 2 3 4 5))
-    (let ((newsym (intern (concat "muse-header-" (int-to-string num)))))
+    (let ((newsym (intern (concat "muse-header-" (int-to-string num))))
+          (docstring (concat
+                      "Muse header face.  See "
+                      "`muse-colors-autogen-headings' before changing it.")))
       ;; put in the proper group and give documentation
       (if later
           (unless (featurep 'xemacs)
@@ -142,20 +150,22 @@ used as the filename of the image."
         (if (featurep 'xemacs)
             (eval `(defface ,newsym
                      '((t (:size
-                           ,(nth (1- num) '("24pt" "18pt" "14pt" "12pt" "11pt"))
+                           ,(nth (1- num)
+                                 '("24pt" "18pt" "14pt" "12pt" "11pt"))
                            :bold t)))
-                     "Muse header face"
+                     ,docstring
                      :group 'muse-colors))
           (eval `(defface ,newsym
                    '((t (:height ,(1+ (* 0.1 (- 5 num)))
                                  :inherit variable-pitch
                                  :weight bold)))
-                   "Muse header face"
+                   ,docstring
                    :group 'muse-colors)))))))
 
 (progn (muse-make-faces-default))
 
 (defun muse-make-faces (&optional frame)
+  "Generate face definitions for headers based the user's preferences."
   (cond
    ((not muse-colors-autogen-headings)
     nil)
@@ -228,10 +238,16 @@ whether progress messages should be displayed to the user."
   :type 'hook
   :group 'muse-colors)
 
-(defvar muse-colors-regexp nil)
-(defvar muse-colors-vector nil)
+(defvar muse-colors-regexp nil
+  "Regexp matching each car of `muse-colors-markup'.")
+(defvar muse-colors-vector nil
+  "Vector of all characters that are part of Muse markup.
+This is composed of the 2nd element of each `muse-colors-markup'
+entry.")
 
 (defun muse-configure-highlighting (sym val)
+  "Extract color markup information from VAL and set to SYM.
+This is usually called with `muse-colors-markup' as both arguments."
   (let ((regexps nil)
         (rules nil))
     (dolist (rule val)
@@ -243,11 +259,12 @@ whether progress messages should be displayed to the user."
         (when value
           (setq rules (cons rule rules))
           (setq regexps (cons value regexps)))))
+    (setq rules (nreverse rules)
+          regexps (nreverse regexps))
     (setq muse-colors-regexp (concat "\\("
                                      (mapconcat #'identity regexps "\\|")
                                      "\\)")
           muse-colors-vector (make-vector 128 nil))
-    (setq rules (nreverse rules))
     (while rules
       (if (eq (cadr (car rules)) t)
           (let ((i 0) (l 128))
@@ -260,10 +277,8 @@ whether progress messages should be displayed to the user."
       (setq rules (cdr rules))))
   (set sym val))
 
-(eval-when-compile
-  (defvar end))
-
 (defun muse-colors-emphasized ()
+  "Color emphasized text and headings."
   ;; Here we need to check four different points - the start and end
   ;; of the leading *s, and the start and end of the trailing *s.  We
   ;; allow the outsides to be surrounded by whitespace or punctuation,
@@ -278,7 +293,9 @@ whether progress messages should be displayed to the user."
          (e1 (match-end 0))
          (leader (- e1 beg))
          b2 e2 multiline)
-    (unless (eq (get-text-property beg 'invisible) 'muse)
+    (unless (or (eq (get-text-property beg 'invisible) 'muse)
+                (get-text-property beg 'muse-comment)
+                (get-text-property beg 'muse-directive))
       ;; check if it's a header
       (if (eq (char-after e1) ?\ )
           (when (or (= beg (point-min))
@@ -293,12 +310,12 @@ whether progress messages should be displayed to the user."
                   (memq (char-before beg)
                         '(?\- ?\[ ?\< ?\( ?\' ?\` ?\" ?\n)))
           (save-excursion
-            (skip-chars-forward "^*<>\n" end)
+            (skip-chars-forward "^*<>\n" muse-colors-region-end)
             (when (eq (char-after) ?\n)
               (setq multiline t)
-              (skip-chars-forward "^*<>" end))
+              (skip-chars-forward "^*<>" muse-colors-region-end))
             (setq b2 (point))
-            (skip-chars-forward "*" end)
+            (skip-chars-forward "*" muse-colors-region-end)
             (setq e2 (point))
             ;; Abort if space exists just before end
             ;; or bad leader
@@ -321,19 +338,22 @@ whether progress messages should be displayed to the user."
                  beg e2 '(font-lock-multiline t))))))))))
 
 (defun muse-colors-underlined ()
+  "Color underlined text."
   (let ((start (match-beginning 0))
         multiline)
-    (unless (eq (get-text-property start 'invisible) 'muse)
+    (unless (or (eq (get-text-property start 'invisible) 'muse)
+                (get-text-property start 'muse-comment)
+                (get-text-property start 'muse-directive))
       ;; beginning of line or space or symbol
       (when (or (= start (point-min))
                 (eq (char-syntax (char-before start)) ?\ )
                 (memq (char-before start)
                       '(?\- ?\[ ?\< ?\( ?\' ?\` ?\" ?\n)))
         (save-excursion
-          (skip-chars-forward "^_<>\n" end)
+          (skip-chars-forward "^_<>\n" muse-colors-region-end)
           (when (eq (char-after) ?\n)
             (setq multiline t)
-            (skip-chars-forward "^_<>" end))
+            (skip-chars-forward "^_<>" muse-colors-region-end))
           ;; Abort if space exists just before end
           ;; or no '_' at end
           ;; or word constituent follows
@@ -352,19 +372,22 @@ whether progress messages should be displayed to the user."
                '(font-lock-multiline t)))))))))
 
 (defun muse-colors-verbatim ()
+  "Render in teletype and suppress further parsing."
   (let ((start (match-beginning 0))
         multiline)
-    (unless (eq (get-text-property start 'invisible) 'muse)
+    (unless (or (eq (get-text-property start 'invisible) 'muse)
+                (get-text-property start 'muse-comment)
+                (get-text-property start 'muse-directive))
       ;; beginning of line or space or symbol
       (when (or (= start (point-min))
                 (eq (char-syntax (char-before start)) ?\ )
                 (memq (char-before start)
                       '(?\- ?\[ ?\< ?\( ?\' ?\` ?\" ?\n)))
         (let ((pos (point)))
-          (skip-chars-forward "^=\n" end)
+          (skip-chars-forward "^=\n" muse-colors-region-end)
           (when (eq (char-after) ?\n)
             (setq multiline t)
-            (skip-chars-forward "^=" end))
+            (skip-chars-forward "^=" muse-colors-region-end))
           ;; Abort if space exists just before end
           ;; or no '=' at end
           ;; or word constituent follows
@@ -401,6 +424,9 @@ whether progress messages should be displayed to the user."
 
     ;; highlight any markup tags encountered
     (muse-tag-regexp ?\< muse-colors-custom-tags)
+
+    ;; display comments
+    (,(concat "^;[" muse-regexp-blank "]") ?\; muse-colors-comment)
 
     ;; this has to come later since it doesn't have a special
     ;; character in the second cell
@@ -451,6 +477,7 @@ fontification in that area."
   (defvar font-lock-multiline nil))
 
 (defun muse-use-font-lock ()
+  "Set up font-locking for Muse."
   (muse-add-to-invisibility-spec 'muse)
   (set (make-local-variable 'font-lock-multiline) 'undecided)
   (set (make-local-variable 'font-lock-defaults)
@@ -475,6 +502,16 @@ fontification in that area."
   "Indicate whether Muse is fontifying the current buffer.")
 (make-variable-buffer-local 'muse-colors-fontifying-p)
 
+(defvar muse-colors-delayed-commands nil
+  "Commands to be run immediately after highlighting a region.
+
+This is meant to accommodate highlighting <lisp> in #title
+directives after everything else.
+
+It may be modified by Muse functions during highlighting, but not
+the user.")
+(make-variable-buffer-local 'muse-colors-delayed-commands)
+
 (defun muse-colors-region (beg end &optional verbose)
   "Apply highlighting according to `muse-colors-markup'.
 Note that this function should NOT change the buffer, nor should any
@@ -485,6 +522,8 @@ of the functions listed in `muse-colors-markup'."
         (inhibit-modification-hooks t)
         (modified-p (buffer-modified-p))
         (muse-colors-fontifying-p t)
+        (muse-colors-region-end (muse-line-end-position end))
+        (muse-colors-delayed-commands nil)
         deactivate-mark)
     (unwind-protect
         (save-excursion
@@ -523,6 +562,8 @@ of the functions listed in `muse-colors-markup'."
                       (aref muse-colors-vector
                             (char-after (match-beginning 0))))
                 (when markup-func (funcall markup-func)))
+              (dolist (command muse-colors-delayed-commands)
+                (apply (car command) (cdr command)))
               (run-hook-with-args 'muse-colors-buffer-hook
                                   beg end verbose)
               (if verbose (message "Highlighting buffer...done")))))
@@ -557,7 +598,13 @@ Functions should not modify the contents of the buffer."
                        function))
   :group 'muse-colors)
 
+(defvar muse-colors-inhibit-tags-in-directives t
+  "If non-nil, don't allow tags to be interpreted in directives.
+This is used to delay highlighting of <lisp> tags in #title until later.")
+(make-variable-buffer-local 'muse-colors-inhibit-tags-in-directives)
+
 (defsubst muse-colors-tag-info (tagname &rest args)
+  "Get tag info associated with TAGNAME, ignoring ARGS."
   (assoc tagname muse-colors-tags))
 
 (defun muse-colors-custom-tags ()
@@ -566,7 +613,10 @@ Functions should not modify the contents of the buffer."
     (goto-char (match-beginning 0))
     (looking-at muse-tag-regexp))
   (let ((tag-info (muse-colors-tag-info (match-string 1))))
-    (when tag-info
+    (unless (or (not tag-info)
+                (get-text-property (match-beginning 0) 'muse-comment)
+                (and muse-colors-inhibit-tags-in-directives
+                     (get-text-property (match-beginning 0) 'muse-directive)))
       (let ((closed-tag (match-string 3))
             (start (match-beginning 0))
             end attrs)
@@ -608,7 +658,8 @@ Functions should not modify the contents of the buffer."
          begin end '(face nil font-lock-multiline nil end-glyph nil
                           invisible nil intangible nil display nil
                           mouse-face nil keymap nil help-echo nil
-                          muse-link nil))
+                          muse-link nil muse-directive nil muse-comment nil
+                          muse-no-implicit-link nil))
       (set-buffer-modified-p modified-p))))
 
 (defun muse-colors-example-tag (beg end)
@@ -631,6 +682,7 @@ Functions should not modify the contents of the buffer."
     (add-text-properties beg end `(font-lock-multiline ,multi))))
 
 (defun muse-colors-lisp-tag (beg end attrs)
+  "Color the region enclosed by a <lisp> tag."
   (if (not muse-colors-evaluate-lisp-tags)
       (muse-colors-literal-tag beg end)
     (muse-unhighlight-region beg end)
@@ -676,9 +728,11 @@ Functions should not modify the contents of the buffer."
   (if (or (featurep 'xemacs)
           (>= emacs-major-version 21))
       'keymap
-    'local-map))
+    'local-map)
+  "The name of the keymap or local-map property.")
 
 (defsubst muse-link-properties (help-str &optional face)
+  "Determine text properties to use for a link."
   (append (if face
               (list 'face face 'mouse-face 'highlight 'muse-link t)
             (list 'invisible 'muse 'intangible t))
@@ -697,7 +751,12 @@ ignored."
       (when link
         (cond ((string-match muse-url-regexp link)
                'muse-link)
+              ((muse-file-remote-p link)
+               'muse-link)
               ((string-match muse-file-regexp link)
+               (when (string-match "/[^/]+#[^#./]+\\'" link)
+                 ;; strip anchor from the end of a path
+                 (setq link (substring link 0 (match-beginning 0))))
                (if (file-exists-p link)
                    'muse-link
                  'muse-bad-link))
@@ -729,6 +788,7 @@ file."
   (save-match-data
     (and (or (fboundp 'create-image)
              (fboundp 'make-glyph))
+         (not (string-match "\\`[uU][rR][lL]:" link))
          (string-match muse-image-regexp link))))
 
 (defun muse-make-file-glyph (filename)
@@ -758,8 +818,11 @@ in place of an image link defined by BEG and END."
     (when (stringp image-file)
       (if (fboundp 'create-image)
           ;; use create-image and display property
-          (add-text-properties beg end
-                               (list 'display (create-image image-file)))
+          (let ((display-stuff (condition-case nil
+                                   (create-image image-file)
+                                 (error nil))))
+            (when display-stuff
+              (add-text-properties beg end (list 'display display-stuff))))
         ;; use make-glyph and invisible property
         (and (setq glyph (muse-make-file-glyph image-file))
              (progn
@@ -770,7 +833,9 @@ in place of an image link defined by BEG and END."
 
 (defun muse-colors-explicit-link ()
   "Color explicit links."
-  (when (eq ?\[ (char-after (match-beginning 0)))
+  (when (and (eq ?\[ (char-after (match-beginning 0)))
+             (not (get-text-property (match-beginning 0) 'muse-comment))
+             (not (get-text-property (match-beginning 0) 'muse-directive)))
     ;; remove flyspell overlays
     (when (fboundp 'flyspell-unhighlight-at)
       (let ((cur (match-beginning 0)))
@@ -825,15 +890,19 @@ in place of an image link defined by BEG and END."
 
 (defun muse-colors-implicit-link ()
   "Color implicit links."
-  ;; remove flyspell overlays
-  (when (fboundp 'flyspell-unhighlight-at)
-    (let ((cur (match-beginning 0)))
-      (while (> (match-end 0) cur)
-        (flyspell-unhighlight-at cur)
-        (setq cur (1+ cur)))))
   (unless (or (eq (get-text-property (match-beginning 0) 'invisible) 'muse)
+              (get-text-property (match-beginning 0) 'muse-comment)
+              (get-text-property (match-beginning 0) 'muse-directive)
+              (get-text-property (match-beginning 0) 'muse-no-implicit-link)
               (eq (char-before (match-beginning 0)) ?\")
               (eq (char-after (match-end 0)) ?\"))
+    ;; remove flyspell overlays
+    (when (fboundp 'flyspell-unhighlight-at)
+      (let ((cur (match-beginning 0)))
+        (while (> (match-end 0) cur)
+          (flyspell-unhighlight-at cur)
+          (setq cur (1+ cur)))))
+    ;; colorize link
     (let ((link (muse-match-string-no-properties 1))
           (face (muse-link-face (match-string 1))))
       (when face
@@ -842,9 +911,34 @@ in place of an image link defined by BEG and END."
                               (muse-match-string-no-properties 1) face))))))
 
 (defun muse-colors-title ()
-  (add-text-properties (+ 7 (match-beginning 0))
-                       (muse-line-end-position)
-                       '(face muse-header-1)))
+  "Color #title directives."
+  (let ((beg (+ 7 (match-beginning 0))))
+    (add-text-properties beg (muse-line-end-position) '(muse-directive t))
+    ;; colorize <lisp> tags in #title after other <lisp> tags have had a
+    ;; chance to run, so that we can have behavior that is consistent
+    ;; with how the document is published
+    (setq muse-colors-delayed-commands
+          (cons (list 'muse-colors-title-lisp beg (muse-line-end-position))
+                muse-colors-delayed-commands))))
+
+(defun muse-colors-title-lisp (beg end)
+  "Called after other highlighting is done for a region in order to handle
+<lisp> tags that exist in #title directives."
+  (save-restriction
+    (narrow-to-region beg end)
+    (goto-char (point-min))
+    (let ((muse-colors-inhibit-tags-in-directives nil)
+          (muse-colors-tags '(("lisp" t t nil muse-colors-lisp-tag))))
+      (while (re-search-forward muse-tag-regexp nil t)
+        (muse-colors-custom-tags))))
+  (add-text-properties beg end '(face muse-header-1)))
+
+(defun muse-colors-comment ()
+  "Color comments."
+  (add-text-properties (match-beginning 0) (muse-line-end-position)
+                       (list 'face 'font-lock-comment-face
+                             'muse-comment t)))
+
 
 (provide 'muse-colors)
 

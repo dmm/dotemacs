@@ -1,4 +1,4 @@
 ;;; SLIME Configuration
 (require 'slime)
-(setq inferior-lisp-program "clisp") ; My lisp system
+(setq inferior-lisp-program "sbcl") ; My lisp system
 (slime-setup)
