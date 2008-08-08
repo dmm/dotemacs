@@ -9,8 +9,8 @@
 	(nnimap "minermail"
 		(nnimap-address "minermail.mst.edu")
 		(nnimap-server-port 993)
-		(nnimap-stream ssl)
-		(nnimap-list-pattern "INBOX.*"))
+		(nnimap-stream ssl))
+
 	(nnimap "mattli.us"
 		(nnimap-address "mattli.us")
 		(nnimap-server-port 993)
