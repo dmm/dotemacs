@@ -32,6 +32,9 @@
            #:unbound-slot-filler
            #:declaration-arglist
            #:type-specifier-arglist
+           ;; interrupt macro for the backend
+           #:*pending-slime-interrupts*
+           #:check-slime-interrupts
            ;; inspector related symbols
            #:emacs-inspect
            #:label-value-line
@@ -299,6 +302,17 @@ that the calling thread is the one that interacts with Emacs."
 (definterface getpid ()
   "Return the (Unix) process ID of this superior Lisp.")
 
+(definterface install-sigint-handler (function)
+  "Call FUNCTION on SIGINT (instead of invoking the debugger).
+Return old signal handler."
+  nil)
+
+(definterface call-with-user-break-handler (handler function)
+  "Install the break handler HANDLER while executing FUNCTION."
+  (let ((old-handler (install-sigint-handler handler)))
+    (unwind-protect (funcall function)
+      (install-sigint-handler old-handler))))
+
 (definterface lisp-implementation-type-name ()
   "Return a short name for the Lisp implementation."
   (lisp-implementation-type))
@@ -449,15 +463,6 @@ argument.
 Output should be forced to OUTPUT-FN before calling INPUT-FN.
 
 The streams are returned as two values.")
-
-(definterface make-stream-interactive (stream)
-  "Do any necessary setup to make STREAM work interactively.
-This is called for each stream used for interaction with the user
-\(e.g. *standard-output*). An implementation could setup some
-implementation-specific functions to control output flushing at the
-like."
-  (declare (ignore stream))
-  nil)
 
 
 ;;;; Documentation
@@ -943,7 +948,8 @@ Ids should be comparable with equal, i.e.:
 (definterface find-thread (id)
   "Return the thread for ID.
 ID should be an id previously obtained with THREAD-ID.
-Can return nil if the thread no longer exists.")
+Can return nil if the thread no longer exists."
+  (current-thread))
 
 (definterface thread-name (thread)
    "Return the name of THREAD.
@@ -1003,11 +1009,22 @@ but that thread may hold it more than once."
 (definterface send (thread object)
   "Send OBJECT to thread THREAD.")
 
-(definterface receive ()
-  "Return the next message from current thread's mailbox.")
+(definterface receive (&optional timeout)
+  "Return the next message from current thread's mailbox."
+  (receive-if (constantly t) timeout))
 
-(definterface receive-if (predicate)
+(definterface receive-if (predicate &optional timeout)
   "Return the first message satisfiying PREDICATE.")
+
+(defvar *pending-slime-interrupts*)
+
+(defun check-slime-interrupts ()
+  "Execute pending interrupts if any.
+This should be called periodically in operations which
+can take a long time to complete."
+  (when (and (boundp '*pending-slime-interrupts*)
+             *pending-slime-interrupts*)
+    (funcall (pop *pending-slime-interrupts*))))
 
 (definterface toggle-trace (spec)
   "Toggle tracing of the function(s) given with SPEC.
@@ -1080,3 +1097,12 @@ SPEC can be:
     (values             . (&rest typespecs))
     (vector             . (&optional element-type size))
     ))
+
+;;; Heap dumps
+
+(definterface save-image (filename &optional restart-function)
+  "Save a heap image to the file FILENAME.
+RESTART-FUNCTION, if non-nil, should be called when the image is loaded.")
+
+
+  

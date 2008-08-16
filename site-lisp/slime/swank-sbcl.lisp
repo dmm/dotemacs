@@ -112,6 +112,13 @@
                          (or external-format :iso-latin-1-unix)
                          (or buffering :full)))
 
+#-win32
+(defimplementation install-sigint-handler (function)
+  (sb-sys:enable-interrupt sb-unix:sigint 
+                           (lambda (&rest args)
+                             (declare (ignore args))
+                             (funcall function))))
+
 (defvar *sigio-handlers* '()
   "List of (key . fn) pairs to be called on SIGIO.")
 
@@ -451,6 +458,7 @@ compiler state."
 
 (defimplementation swank-compile-string (string &key buffer position directory
                                                 debug)
+  (declare (ignorable debug))
   (let ((*buffer-name* buffer)
         (*buffer-offset* position)
         (*buffer-substring* string)
@@ -1226,12 +1234,31 @@ stack."
     
     (defimplementation thread-description (thread)
       (sb-thread:with-mutex (*thread-descr-map-lock*)
-        (or (gethash thread *thread-description-map*) "")))
+        (or (gethash thread *thread-description-map*)
+            (short-backtrace thread 6 10))))
 
     (defimplementation set-thread-description (thread description)
       (sb-thread:with-mutex (*thread-descr-map-lock*)
-        (setf (gethash thread *thread-description-map*) description))))
-  
+        (setf (gethash thread *thread-description-map*) description)))
+
+    (defun short-backtrace (thread start count)
+      (let ((self (current-thread))
+            (tag (get-internal-real-time)))
+        (sb-thread:interrupt-thread
+         thread
+         (lambda ()
+           (let* ((frames (nthcdr start (sb-debug:backtrace-as-list count))))
+             (send self (cons tag frames)))))
+        (handler-case
+            (sb-ext:with-timeout 0.1
+              (let ((frames (cdr (receive-if (lambda (msg) 
+                                               (eq (car msg) tag)))))
+                    (*print-pretty* nil))
+                (format nil "~{~a~^ <- ~}" (mapcar #'car frames))))
+          (sb-ext:timeout () ""))))
+
+    )
+
   (defimplementation make-lock (&key name)
     (sb-thread:make-mutex :name name))
 
@@ -1280,59 +1307,36 @@ stack."
               (nconc (mailbox.queue mbox) (list message)))
         (sb-thread:condition-broadcast (mailbox.waitqueue mbox)))))
 
-  (defimplementation receive ()
+  (defimplementation receive-if (test &optional timeout)
     (let* ((mbox (mailbox (current-thread)))
            (mutex (mailbox.mutex mbox)))
-      (sb-thread:with-mutex (mutex)
-        (loop
-         (let ((q (mailbox.queue mbox)))
-           (cond (q (return (pop (mailbox.queue mbox))))
-                 (t (sb-thread:condition-wait (mailbox.waitqueue mbox)
-                                              mutex))))))))
-
-  (defimplementation receive-if (test)
-    (let* ((mbox (mailbox (current-thread)))
-           (mutex (mailbox.mutex mbox)))
-      (sb-thread:with-mutex (mutex)
-        (loop
+      (assert (or (not timeout) (eq timeout t)))
+      (loop
+       (check-slime-interrupts)
+       (sb-thread:with-mutex (mutex)
          (let* ((q (mailbox.queue mbox))
                 (tail (member-if test q)))
-           (cond (tail 
-                  (setf (mailbox.queue mbox) (nconc (ldiff q tail) (cdr tail)))
-                  (return (car tail)))
-                 (t (sb-thread:condition-wait (mailbox.waitqueue mbox)
-                                              mutex))))))))
+           (when tail 
+             (setf (mailbox.queue mbox) (nconc (ldiff q tail) (cdr tail)))
+             (return (car tail))))
+         (when (eq timeout t) (return (values nil t)))
+         (handler-case (sb-ext:with-timeout 0.2
+                         (sb-thread:condition-wait (mailbox.waitqueue mbox)
+                                                   mutex))
+           (sb-ext:timeout ()))))))
 
-  ;; Auto-flush streams
-
-  (defvar *auto-flush-interval* 0.15
-    "How often to flush interactive streams. This value is passed
-    directly to cl:sleep.")
-
-  (defvar *auto-flush-lock* (sb-thread:make-mutex :name "auto flush"))
-
-  (defvar *auto-flush-thread* nil)
-
-  (defvar *auto-flush-streams* '())
-  
-  (defimplementation make-stream-interactive (stream)
-    (sb-thread:with-mutex (*auto-flush-lock*)
-      (pushnew stream *auto-flush-streams*)
-      (unless *auto-flush-thread*
-        (setq *auto-flush-thread*
-              (sb-thread:make-thread #'flush-streams
-                                     :name "auto-flush-thread")))))
-
-  (defun flush-streams ()
-    (loop
-     (sb-thread:with-mutex (*auto-flush-lock*)
-       (setq *auto-flush-streams*
-             (remove-if (lambda (x)
-                          (not (and (open-stream-p x)
-                                    (output-stream-p x))))
-                        *auto-flush-streams*))
-       (mapc #'finish-output *auto-flush-streams*))
-     (sleep *auto-flush-interval*)))
+  #-non-broken-terminal-sessions
+  (progn
+    (defvar *native-wait-for-terminal* #'sb-thread::get-foreground)
+    (sb-ext:with-unlocked-packages (sb-thread) 
+      (defun sb-thread::get-foreground ()
+        (ignore-errors
+          (format *debug-io* ";; SWANK: sb-thread::get-foreground ...~%")
+          (finish-output *debug-io*))
+        (or (and (typep *debug-io* 'two-way-stream)
+                 (typep (two-way-stream-input-stream *debug-io*)
+                        'slime-input-stream))
+            (funcall *native-wait-for-terminal*)))))
 
   )
 
@@ -1399,3 +1403,17 @@ stack."
 (defimplementation hash-table-weakness (hashtable)
   #+#.(swank-backend::sbcl-with-weak-hash-tables)
   (sb-ext:hash-table-weakness hashtable))
+
+#-win32
+(defimplementation save-image (filename &optional restart-function)
+  (let ((pid (sb-posix:fork)))
+    (cond ((= pid 0) 
+           (let ((args `(,filename 
+                         ,@(if restart-function
+                               `((:toplevel ,restart-function))))))
+             (apply #'sb-ext:save-lisp-and-die args)))
+          (t
+           (multiple-value-bind (rpid status) (sb-posix:waitpid pid 0)
+             (assert (= pid rpid))
+             (assert (and (sb-posix:wifexited status)
+                          (zerop (sb-posix:wexitstatus status)))))))))

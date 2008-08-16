@@ -99,6 +99,14 @@
       #+win32 ((ext:getenv "PID")) ; where does that come from?
       (t -1))))
 
+(defimplementation call-with-user-break-handler (handler function)
+  (handler-bind ((system::simple-interrupt-condition
+                  (lambda (c)
+                    (declare (ignore c))
+                    (funcall handler)
+                    (continue))))
+    (funcall function)))
+
 (defimplementation lisp-implementation-type-name ()
   "clisp")
 
@@ -682,6 +690,12 @@ Execute BODY with NAME's function slot set to FUNCTION."
 
 (defimplementation make-weak-value-hash-table (&rest args)
   (apply #'make-hash-table :weak :value args))
+
+(defimplementation save-image (filename &optional restart-function)
+  (let ((args `(,filename 
+                ,@(if restart-function 
+                      `((:init-function ,restart-function))))))
+    (apply #'ext:saveinitmem args)))
 
 ;;; Local Variables:
 ;;; eval: (put 'compile-file-frobbing-notes 'lisp-indent-function 1)

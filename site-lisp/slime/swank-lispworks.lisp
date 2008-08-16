@@ -32,9 +32,15 @@
 (defun swank-mop:eql-specializer-object (eql-spec)
   (second eql-spec))
 
-(when (fboundp 'dspec::define-dspec-alias)
-  (dspec::define-dspec-alias defimplementation (name args &rest body)
-    `(defmethod ,name ,args ,@body)))
+(eval-when (:compile-toplevel :execute :load-toplevel)
+  (defvar *original-defimplementation* (macro-function 'defimplementation))
+  (defmacro defimplementation (&whole whole name args &body body 
+                               &environment env)
+    (declare (ignore args body))
+    `(progn
+       (dspec:record-definition '(defun ,name) (dspec:location)
+                                :check-redefinition-p nil)
+       ,(funcall *original-defimplementation* whole env))))
 
 ;;; TCP server
 
@@ -212,13 +218,18 @@ Return NIL if the symbol is unbound."
                  :io-bindings io-bindings
                  :debugger-hoook hook))
 
-(defmethod env-internals:environment-display-notifier
+(defmethod env-internals:environment-display-notifier 
     ((env slime-env) &key restarts condition)
-  (declare (ignore restarts))
-  (funcall (slot-value env 'debugger-hook) condition *debugger-hook*))
+  (declare (ignore restarts condition))
+  (funcall (swank-sym :swank-debugger-hook) condition *debugger-hook*)
+  ;;  nil
+  )
 
 (defmethod env-internals:environment-display-debugger ((env slime-env))
   *debug-io*)
+
+(defmethod env-internals:confirm-p ((e slime-env) &optional msg &rest args)
+  (apply (swank-sym :y-or-n-p-in-emacs) msg args))
 
 (defimplementation call-with-debugger-hook (hook fun)
   (let ((*debugger-hook* hook))
@@ -345,6 +356,12 @@ Return NIL if the symbol is unbound."
 (defimplementation restart-frame (frame-number)
   (let ((frame (nth-frame frame-number)))
     (dbg::restart-frame frame :same-args t)))
+
+(defimplementation disassemble-frame (frame-number)
+  (let* ((frame (nth-frame frame-number)))
+    (when (dbg::call-frame-p frame)
+      (let ((function (dbg::get-call-frame-function frame)))
+        (disassemble function)))))
 
 ;;; Definition finding
 
@@ -747,36 +764,27 @@ function names like \(SETF GET)."
         (setf (getf (mp:process-plist thread) 'mailbox)
               (make-mailbox)))))
 
-(defimplementation receive ()
+(defimplementation receive-if (test &optional timeout)
   (let* ((mbox (mailbox mp:*current-process*))
          (lock (mailbox.mutex mbox)))
+    (assert (or (not timeout) (eq timeout t)))
     (loop
-     (mp:process-wait "receive" #'mailbox.queue mbox)
-     (mp:without-interrupts
-       (mp:with-lock (lock "receive/try" 0.1)
-         (when (mailbox.queue mbox)
-           (return (pop (mailbox.queue mbox)))))))))
-
-(defimplementation receive-if (test)
-  (let* ((mbox (mailbox mp:*current-process*))
-         (lock (mailbox.mutex mbox)))
-    (loop
-     (mp:process-wait "receive-if"
-                      (lambda () (some test (mailbox.queue mbox))))
-     (mp:without-interrupts
-       (mp:with-lock (lock "receive-if/try" 0.1)
-         (let* ((q (mailbox.queue mbox))
-                (tail (member-if test q)))
-           (when tail
-             (setf (mailbox.queue mbox) (nconc (ldiff q tail) (cdr tail)))
-             (return (car tail)))))))))
+     (check-slime-interrupts)
+     (mp:with-lock (lock "receive-if/try")
+       (let* ((q (mailbox.queue mbox))
+              (tail (member-if test q)))
+         (when tail
+           (setf (mailbox.queue mbox) (nconc (ldiff q tail) (cdr tail)))
+           (return (car tail)))))
+     (when (eq timeout t) (return (values nil t)))
+     (mp:process-wait-with-timeout 
+      "receive-if" 0.2 (lambda () (some test (mailbox.queue mbox)))))))
 
 (defimplementation send (thread message)
   (let ((mbox (mailbox thread)))
-    (mp:without-interrupts
-      (mp:with-lock ((mailbox.mutex mbox))
-        (setf (mailbox.queue mbox)
-              (nconc (mailbox.queue mbox) (list message)))))))
+    (mp:with-lock ((mailbox.mutex mbox))
+      (setf (mailbox.queue mbox)
+            (nconc (mailbox.queue mbox) (list message))))))
 
 ;;; Some intergration with the lispworks environment
 
@@ -785,42 +793,7 @@ function names like \(SETF GET)."
 (defimplementation emacs-connected ()
   (when (eq (eval (swank-sym :*communication-style*))
             nil)
-    (set-sigint-handler))
-  ;; pop up the slime debugger by default
-  (let ((lw:*handle-warn-on-redefinition* :warn))
-    (defmethod env-internals:environment-display-notifier 
-        (env &key restarts condition)
-      (declare (ignore restarts))
-      (funcall (swank-sym :swank-debugger-hook) condition *debugger-hook*))
-    (defmethod env-internals:environment-display-debugger (env)
-      *debug-io*)))
-
-(defvar *auto-flush-interval* 0.15)
-(defvar *auto-flush-lock* (mp:make-lock :name "auto-flush-lock"))
-(defvar *auto-flush-thread* nil)
-(defvar *auto-flush-streams* '())
-  
-(defimplementation make-stream-interactive (stream)
-  (mp:with-lock (*auto-flush-lock*)
-    (pushnew stream *auto-flush-streams*)
-    (unless *auto-flush-thread*
-      (setq *auto-flush-thread*
-            (mp:process-run-function "auto-flush-thread [SWANK]" () 
-                                     #'flush-streams)))))
-
-(defun flush-streams ()
-  (loop
-   (mp:with-lock (*auto-flush-lock*)
-     (setq *auto-flush-streams*
-           (remove-if (lambda (x)
-                        (not (and (open-stream-p x)
-                                  (output-stream-p x))))
-                      *auto-flush-streams*))
-     (mapc #'finish-output *auto-flush-streams*))
-   (sleep *auto-flush-interval*)))
-
-(defmethod env-internals:confirm-p ((e slime-env) &optional msg &rest args)
-  (apply (swank-sym :y-or-n-p-in-emacs) msg args))
+    (set-sigint-handler)))
       
 
 ;;;; Weak hashtables

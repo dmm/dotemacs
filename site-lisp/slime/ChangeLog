@@ -1,3 +1,381 @@
+2008-08-15  Tobias C. Rittweiler  <tcr@freebits.de>
+
+	* slime.el (slime-popup-buffer-quit): Fix regression; we have to
+	invoke `bury-buffer' without an argument to make it switch buffers
+	for us (for the case when the snapshot wasn't restored.)
+
+2008-08-15  Tobias C. Rittweiler  <tcr@freebits.de>
+
+	* slime.el (slime-list-compiler-notes): Only shrink if notes tree
+	isn't displayed as being collapsed.
+
+2008-08-15  Tobias C. Rittweiler  <tcr@freebits.de>
+
+	* slime.el (slime-popup-buffer-quit): If not kill, then at least
+	bury the buffer.
+	(slime-list-compiler-notes): Shrink the compiler-notes window.
+
+2008-08-14  Tobias C. Rittweiler  <tcr@freebits.de>
+
+	If another frame is already displaying a REPL, `C-c C-z' will now
+	select this window instead of splitting the current frame, and
+	displaying the REPL in the newly created window.
+
+	* slime.el (slime-switch-to-output-buffer-search-all-frames): New
+	variable to customize this behaviour, as it may not be optimal for
+	people using multiple screens at once.
+	(slime-switch-to-output-buffer): Adapted accordingly.
+
+2008-08-14  Tobias C. Rittweiler  <tcr@freebits.de>
+
+	Xref buffers: `M-,' in an Xref buffer will now revert to an Emacs
+	state as of before the Xref command.
+
+	* slime.el (slime-xref-mode-map): Add `slime-xref-retract' as `M-,'
+	(slime-xref-retract): New. Restores the emacs snapshot unconditionally.
+	(slime-xref-quit): Use it.
+
+2008-08-14  Tobias C. Rittweiler  <tcr@freebits.de>
+
+	Xref buffers: `q', and `SPC' will push onto the find-definition
+	stack such that M-, will work afterwards.
+
+	* slime.el (defstruct slime-emacs-snapshot): Also save the point
+	explicitly.  It is implicitly stored already in the
+	window-configuration, but inaccessible therein.
+	(slime-current-emacs-snapshot, slime-set-emacs-snapshot): Adapted.
+	(slime-push-definition-stack-from-snapshot): New. Reason for above
+	changes.
+
+	(slime-with-popup-buffer): Make sure that the current
+	emacs-snapshot is taken, not only when the :emacs-snapshot
+	argument is NIL at expansion time, but also on runtime.
+
+	(slime-with-xref-buffer): The name of the Xref buffer was created
+	at expansion time, but must be computed at runtime. Fix that.
+	(slime-xref-quit): Use `slime-push-definition-stack-from-snapshot'
+	(sime-xref-goto): Adapted to also push onto the stack.
+
+	* slime.el (slime-compute-modeline-package): Cleaned up.
+	(slime-update-modeline-string): Ditto.
+
+2008-08-12  Helmut Eller  <heller@common-lisp.net>
+
+	Add a dump-image function to the loader.
+
+	* swank-loader.lisp (dump-image): New.
+
+	* swank-backend.lisp (save-image): New interface.
+
+	* swank-cmucl.lisp, swank-clisp.lisp, swank-sbcl.lisp
+	(save-image): Implemented.
+
+2008-08-12  Helmut Eller  <heller@common-lisp.net>
+
+	* slime.el (slime-repl-send-input): Disable modification hooks
+	when marking old input.
+	(slime-check-version): Use y-or-n-p.
+
+2008-08-12  Helmut Eller  <heller@common-lisp.net>
+
+	Finally handle reader-errors without disconnecting.
+
+	* swank.lisp (decode-message): Convert reader-error conditions
+	into :reader-error events.
+	(dispatch-event): Send :reader-error events to Emacs.
+
+	* slime.el (slime-dispatch-event): Display reader-errors.
+
+2008-08-12  Helmut Eller  <heller@common-lisp.net>
+
+	* swank.lisp (with-buffer-syntax): Take package as argument.
+	(defslimefun): Derive the package for exporting from the symbol.
+
+2008-08-12  Helmut Eller  <heller@common-lisp.net>
+
+	Let SIGINT create a synthetic event.
+
+	* swank.lisp (install-fd-handler,simple-serve-requests): Dispatch
+	a :emacs-interrupt event in the SIGINT handler.
+
+	* slime.el (slime-interrupt): Send nothing over the wire when
+	SIGINT is used.
+
+2008-08-11  Helmut Eller  <heller@common-lisp.net>
+
+	* test.sh: Use batch mode by default.
+
+2008-08-11  Helmut Eller  <heller@common-lisp.net>
+
+	Improve interrupt safety for single-threaded lisps.
+
+	* slime.el (slime-interrupt): Send a :emacs-interrupt message
+	together with SIGINT.  SIGINT now means "check for new events"
+	instead of "invoke the debugger".
+
+	* swank-backend.lisp (install-sigint-handler)
+	(call-with-user-break-handler): New functions.
+
+	* swank.lisp (simple-serve-requests,install-fd-handler): Use it.
+	(read-packet): New function. Check for interrupts.
+	(decode-message): Use it.
+	(wait-for-event/event-loop): Check for interrupts.
+
+2008-08-11  Helmut Eller  <heller@common-lisp.net>
+
+	* swank-abcl.lisp (preferred-communication-style): Return nil
+	until we implement receive-if.
+
+	* swank-openmcl.lisp (receive-if): Support timeout argument.
+	* swank-allegro.lisp (receive-if): Ditto.
+
+2008-08-11  Helmut Eller  <heller@common-lisp.net>
+
+	* swank.lisp (*global-debugger*): Change default back to t.
+
+2008-08-10  Helmut Eller  <heller@common-lisp.net>
+
+	* swank-ecl.lisp (thread-id): Assign an non-nil id to unknown
+	threads.
+
+	* slime.el (slime-execute-tests): Call slime-test-should-fail-p
+	before executing the test (which may close the connection).
+	(def-slime-test): Use slime-sync-to-top-level with a timeout.
+	(slime-temp-directory): New function.
+	(slime-run-tests): Save repl-history in /tmp.
+	(slime-repl-mode): Ignore persistent history if
+	slime-repl-history-file is nil.
+	(slime-quit-lisp-internal): New function.
+	(slime-quit-lisp, slime-restart-inferior-lisp): Use it
+	(slime-batch-test): Exit, if the Lisp isn't up and running after
+	30 secs.
+
+2008-08-10  Helmut Eller  <heller@common-lisp.net>
+
+	* swank.lisp (wait-for-event): Add timeout argument.  This is used
+	for :fd-handler and :sigio style where we only process events as
+	long as we don't block.
+	(wait-for-event/event-loop, read-event)
+	(decode-message, receive-if): Ditto.
+	(process-requests): Renamed from read-from-emacs.
+	(handle-requests): Renamed from handle-request. Take timeout
+	argument.  Update callers.
+	(process-available-input): Deleted.
+	(with-swank-error-handler): Renamed from
+	with-reader-error-handler.
+	(with-connection): Use it.
+
+2008-08-10  Helmut Eller  <heller@common-lisp.net>
+
+	* swank.lisp (invoke-slime-debugger): New function.
+	Analagous to cl:invoke-debugger.
+	(swank-debugger-hook): Use it.
+
+2008-08-09  Helmut Eller  <heller@common-lisp.net>
+
+	* slime.el (slime-quit-lisp): Optionally send kill signal.
+	(slime-quit-connection-at-point): Disconnect after some timeout.
+
+2008-08-09  Helmut Eller  <heller@common-lisp.net>
+
+	Fixes for heap dumping.
+
+	* swank.lisp (*log-output*): Don't initialize at load-time,
+	otherwise the stream would end up in a heap image.
+
+2008-08-09  Helmut Eller  <heller@common-lisp.net>
+
+	* swank-lispworks.lisp (defimplementation): Record location.
+
+2008-08-09  Helmut Eller  <heller@common-lisp.net>
+
+	* swank.lisp (*maximum-pipelined-output-chunks*): New variable
+
+2008-08-09  Helmut Eller  <heller@common-lisp.net>
+
+	Display the "Use default debugger" restart more prominently
+	for testing.
+
+	* swank.lisp (swank-debugger-hook): Bind a user visible restart
+	to invoke the native debugger.
+	(*global-debugger*): Make this nil by default.
+	(sldb-loop): Minor cleanups.
+	(sldb-break-with-default-debugger): Invoke the native debugger
+	on top of the slime debugger.
+
+	* slime.el (slime-simple-completions): Bind slime-current-thread
+	to t so that completion is peformed in a fresh thread.
+	(sldb-setup): Always pop to the debugger buffer.
+	(sldb-activate): Optionally select the window.
+
+	* swank-sbcl.lisp (sb-thread::get-foreground): Override this
+	as the default implementation is unusable for Slime.
+
+	* swank-lispworks.lisp (environment-display-notifier): Just
+	return t.
+
+2008-08-09  Helmut Eller  <heller@common-lisp.net>
+
+	* swank-lispworks.lisp (disassemble-frame): Implemented.
+
+2008-08-09  Tobias C. Rittweiler  <tcr@freebits.de>
+
+	M-x slime doesn't destroy the window layout anymore when you
+	switch windows/frames while the connection is being set up.
+
+	* slime.el (slime-hide-inferior-lisp-buffer): Search for the
+	inferior-lisp buffer's window in all frames.
+	(slime-repl-update-banner): Do not pop to the REPL buffer.
+
+2008-08-08  Tobias C. Rittweiler  <tcr@freebits.de>
+
+	* slime.el: Fixing `q' in Xref buffers.
+
+	(slime-popup-buffer-snapshot-unchanged-p): New.
+	(slime-popup-buffer-restore-snapshot): New.
+	(slime-xref-quit): Can't use slime-popup-buffer directly. Instead
+	implement its own quit behaviour using the above functions.
+
+2008-08-08  Helmut Eller  <heller@common-lisp.net>
+
+	Use wait-for-event instead of catch/throw where needed.
+
+	* swank.lisp (read-user-input-from-emacs, y-or-n-p-in-emacs)
+	(eval-in-emacs): Use wait-for-event.
+	(make-tag): Replaces intern-catch-tag.
+	(take-input): Deleted.
+	(dispatch-event): Remove some redundancy.
+
+2008-08-08  Tobias C. Rittweiler  <tcr@freebits.de>
+
+	* slime.el: Make xref buffers use `slime-with-popup-buffer',
+	nee `slime-with-temp-buffer'.
+
+	(slime-with-xref-buffer): Rewritten using a popup buffer.
+	(slime-init-xref-buffer): Removed.
+	(slime-display-xref-buffer): Removed.
+
+2008-08-08  Tobias C. Rittweiler  <tcr@freebits.de>
+
+	* slime.el: Rename slime's temp-buffer to popup-buffer.
+
+2008-08-08  Tobias C. Rittweiler  <tcr@freebits.de>
+
+	* slime.el (slime-compiler-notes-mode, slime-connection-ist-mode):
+	Add slime-temp-buffer-mode-map to docstring.
+
+2008-08-08  Tobias C. Rittweiler  <tcr@freebits.de>
+
+	* slime.el (slime-connections-buffer-name): New variable.
+	(slime-list-connections): Use it.
+	(def-slime-selector ?c): Ditto
+
+2008-08-08  Tobias C. Rittweiler  <tcr@freebits.de>
+
+	* slime.el: Make the threads browser use `slime-with-temp-buffer'.
+
+	(slime-temp-buffer-quit-function): New buffer-local
+	variable. Defaults to `slime-temp-buffer-quit'.
+	(slime-temp-buffer-mode): `q' invokes above variable now.
+
+	(slime-threads-buffer-name): New variable.
+	(slime-list-threads): Use slime-with-temp-buffer.
+	(slime-update-threads-buffer): New. Lifted from
+	slime-list-threads.
+	(slime-thread-quit): Renamed to slime-quit-threads-buffer.
+
+2008-08-08  Helmut Eller  <heller@common-lisp.net>
+
+	Unify event dispatching for single and multi-threaded cases.
+
+	* swank.lisp (send-to-control-thread,read-from-control-thread)
+	(send-to-socket-io,read-from-socket-io): Deleted.
+	(send-event, read-event, send-to-emacs)
+	(signal-interrupt, use-threads-p): New functions.
+	And more random changes.
+
+2008-08-08  Helmut Eller  <heller@common-lisp.net>
+
+	Spawn the auto-flush thread in the front end.
+	This removes some copy&paste code in various backends.
+
+	* swank.lisp (auto-flush-loop): New function.
+	(open-streams): Use it.
+	* swank-backend.lisp (make-stream-interactive): Deleted.
+
+2008-08-08  Helmut Eller  <heller@common-lisp.net>
+
+	* slime.el (test disconnect): Call slime-inferior-process
+	with explicit connection argument to avoid clashes with
+	buffer-local connections.
+
+2008-08-08  Tobias C. Rittweiler  <tcr@freebits.de>
+
+	* slime.el (slime-create-macroexpansion-buffer): Make fontifying
+	case insensitive as the result from macroexpansion is most likely
+	printed all upper-case.
+
+2008-08-07  Helmut Eller  <heller@common-lisp.net>
+
+	* slime.el (slime-with-temp-buffer): By default, no longer inherit
+	the current connection.
+
+2008-08-07  Tobias C. Rittweiler  <tcr@freebits.de>
+
+	Previously, M-p at the REPL deleted the input if no match could be
+	found in the history. Now the input is untouched.
+
+	* slime.el (slime-repl-history-replace): Ditch delete-at-end-p
+	argument.
+	(slime-repl-next-input, slime-repl-previous-input): Adapted.
+	(slime-repl-forward-input, slime-repl-backward-input): Ditto.
+
+2008-08-07  Helmut Eller  <heller@common-lisp.net>
+
+	* slime.el (slime-with-temp-buffer): Renamed from
+	slime-with-output-to-temp-buffer.  Initialize the buffer local
+	buffer variables before and after running BODY, so that we don't
+	need the mode argument.
+
+2008-08-07  Tobias C. Rittweiler  <tcr@freebits.de>
+
+	* slime.el (def-slime-test narrowing): Adapted to recent changes
+	of `slime-with-output-to-temp-buffer'.
+
+2008-08-07  Tobias C. Rittweiler  <tcr@freebits.de>
+
+	Mode-Line will now display a buffer's connection, and a buffer's
+	package. Furthermore, stale connections will also be indicated.
+
+	* slime.el: (slime-update-modeline-package): Renamed to
+	`slime-extended-modeline'.
+	(slime-modeline-string),
+	(slime-modeline-connection-name),
+	(slime-modeline-connection-state): New variables.
+	(slime-update-modeline-package): Renamed to
+	`slime-compute-modeline-package'.
+	(slime-compute-modeline-connection): New.
+	(sime-compute-modeline-connection-state): New.
+	(slime-compute-modeline-string): New.
+	(slime-update-modeline-string): New.
+	(slime-shall-we-update-modeline-p): New.
+	(slime-update-modeline): New. Run periodically by idle timer.
+
+	(slime-mode, slime-temp-buffer-mode): Install extended mode-line.
+
+	(slime-stale-connection-p, slime-debugged-connection-p): New.
+	(slime-compute-connection-state): New.
+	(slime-connection-state-as-string): New.
+	(slime-state-name): Removed.
+	(slime-set-state): Removed.
+
+	(slime-length>): Fix typecase.
+
+2008-08-07  Helmut Eller  <heller@common-lisp.net>
+
+	* swank-allegro.lisp, swank-cmucl.lisp,
+	swank-scl.lisp (receive-if): Periodically check for interrupts.
+
 2008-08-06  Nikodemus Siivola <nikodemus@random-state.net>
 
 	* swank-sbcl.lisp (handle-notification-condition): resignal
@@ -8,6 +386,31 @@
 	file for a second time.
 	(call-with-compilation-hooks): STYLE-WARNINGs are WARNINGs, and
 	don't need a separate handler.
+
+2008-08-06  Helmut Eller  <heller@common-lisp.net>
+
+	* swank-sbcl.lisp (short-backtrace): New function.
+	(thread-description): Use it.
+
+	* slime.el (slime-show-apropos): Use lisp-syntax-table to make
+	M-. more useful.
+
+2008-08-06  Helmut Eller  <heller@common-lisp.net>
+
+	Queue interrupts in various places.
+
+	* swank-backend.lisp (*pending-slime-interrupts*): New variable.
+	(check-slime-interrupts): New function.
+
+	* swank-lispworks.lisp (receive-if): Use it.
+
+	* swank-sbcl.lisp, swank-openmcl.lisp: Ditto.
+
+	* swank.lisp (*slime-interrupts-enabled*): New variable.
+	(with-slime-interrupts, without-slime-interrupts): New macros.
+	(invoke-or-queue-interrupt): New function.
+	(interrupt-worker-thread, eval-for-emacs, swank-debugger-hook)
+	(debug-nth-thread, wait-for-event, read-from-emacs): Use them.
 
 2008-08-05  Helmut Eller  <heller@common-lisp.net>
 

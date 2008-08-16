@@ -71,6 +71,18 @@
 
 ;;;; Unix signals
 
+(defimplementation install-sigint-handler (handler)
+  (let ((old-handler (symbol-function 'si:terminal-interrupt)))
+    (setf (symbol-function 'si:terminal-interrupt)
+          (if (consp handler)
+              (car handler)
+              (lambda (&rest args)
+                (declare (ignore args))
+                (funcall handler)
+                (continue))))
+    (list old-handler)))
+
+
 (defimplementation getpid ()
   (si:getpid))
 
@@ -441,6 +453,7 @@
       (incf *thread-id-counter*)))
 
   (defparameter *thread-id-map* (make-hash-table))
+  (defparameter *id-thread-map* (make-hash-table))
 
   (defvar *thread-id-map-lock*
     (mp:make-lock :name "thread id map lock"))
@@ -454,19 +467,22 @@
 	#'(lambda ()
 	    (unwind-protect
 	      (mp:with-lock (*thread-id-map-lock*)
-	        (setf (gethash id *thread-id-map*) thread))
+	        (setf (gethash id *thread-id-map*) thread)
+                (setf (gethash thread *id-thread-map*) id))
 	      (funcall fn)
 	      (mp:with-lock (*thread-id-map-lock*)
+                (remhash thread *id-thread-map*)
                 (remhash id *thread-id-map*)))))
       (mp:process-enable thread)))
 
   (defimplementation thread-id (thread)
     (block thread-id
       (mp:with-lock (*thread-id-map-lock*)
-        (loop for id being the hash-key in *thread-id-map*
-              using (hash-value thread-pointer)
-              do (if (eq thread thread-pointer)
-		   (return-from thread-id id))))))
+        (or (gethash thread *id-thread-map*)
+            (let ((id (next-thread-id)))
+              (setf (gethash id *thread-id-map*) thread)
+              (setf (gethash thread *id-thread-map*) id)
+              id)))))
 
   (defimplementation find-thread (id)
     (mp:with-lock (*thread-id-map-lock*)
@@ -537,40 +553,8 @@
           ;interrupt-process will halt this if it takes longer than 1sec
           (sleep 1)))))
 
-  ;; Auto-flush streams
-  (defvar *auto-flush-interval* 0.15
-    "How often to flush interactive streams. This valu is passed
-    directly to cl:sleep.")
-
-  (defvar *auto-flush-lock* (make-lock :name "auto flush"))
-
-  (defvar *auto-flush-thread* nil)
-
-  (defvar *auto-flush-streams* '())
-
-  (defimplementation make-stream-interactive (stream)
-    (mp:with-lock (*auto-flush-lock*)
-      (pushnew stream *auto-flush-streams*)
-      (unless *auto-flush-thread*
-        (setq *auto-flush-thread*
-              (spawn #'flush-streams
-                     :name "auto-flush-thread")))))
-
   (defmethod stream-finish-output ((stream stream))
     (finish-output stream))
-
-  (defun flush-streams ()
-    (loop
-     (mp:with-lock (*auto-flush-lock*)
-       (setq *auto-flush-streams*
-             (remove-if (lambda (x)
-                          (not (and (open-stream-p x)
-                                    (output-stream-p x))))
-                        *auto-flush-streams*))
-       (dolist (i *auto-flush-streams*)
-         (ignore-errors (stream-finish-output i))
-         (ignore-errors (finish-output i))))
-     (sleep *auto-flush-interval*)))
 
   )
 

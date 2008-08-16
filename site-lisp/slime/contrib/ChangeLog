@@ -1,3 +1,26 @@
+2008-08-12  Helmut Eller  <heller@common-lisp.net>
+
+	* slime-clipboard.el (slime-clipboard-insert-ref): Set
+	read-nonsticky to t to work better with kill/yank.
+	* swank-clipboard.lisp (:swank-clipboard): List exports to avoid
+	compiler warnings.
+
+2008-08-12  Helmut Eller  <heller@common-lisp.net>
+
+	Add a simple object clipboard.
+
+	* swank-clipboard.lisp: New file.
+	* slime-clipboard.el: New file.
+
+2008-08-07  Tobias C. Rittweiler  <tcr@freebits.de>
+
+	* slime-fancy.el: Add slime-mdot-fu and slime-package-fu.
+
+2008-08-07  Tobias C. Rittweiler  <tcr@freebits.de>
+
+	* slime-mdot-fu.el: Works for LET bindings now also.
+	(def-slime-test find-local-definitions.1): New test case.
+
 2008-08-05  Michael Weber  <michaelw+slime@foldr.org>
 
 	* slime-typeout-frame.el (slime-typeout-message-aux): prevent
