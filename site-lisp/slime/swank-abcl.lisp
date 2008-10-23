@@ -24,10 +24,12 @@
                                    :format-arguments format-arguments))))
     nil))
 
-(defimplementation make-fn-streams (input-fn output-fn)
-  (let* ((output (ext:make-slime-output-stream output-fn))
-         (input  (ext:make-slime-input-stream input-fn output)))
-    (values input output)))
+(defimplementation make-output-stream (write-string)
+  (ext:make-slime-output-stream write-string))
+
+(defimplementation make-input-stream (read-string)
+  (ext:make-slime-input-stream read-string  
+                               (make-synonym-stream '*standard-output*)))
 
 (defimplementation call-with-compilation-hooks (function)
   (funcall function))
@@ -124,7 +126,6 @@
 
 (defimplementation local-port (socket)
   (java:jcall (java:jmethod "java.net.ServerSocket" "getLocalPort") socket))
-
 
 (defimplementation close-socket (socket)
   (ext:server-socket-close socket))
@@ -250,7 +251,8 @@
 
 (defimplementation compute-backtrace (start end)
   (let ((end (or end most-positive-fixnum)))
-    (subseq (backtrace-as-list-ignoring-swank-calls) start end)))
+    (loop for f in (subseq (backtrace-as-list-ignoring-swank-calls) start end)
+          collect f)))
 
 (defimplementation print-frame (frame stream)
   (write-string (string-trim '(#\space #\newline)
@@ -259,11 +261,6 @@
 
 (defimplementation frame-locals (index)
   `(,(list :name "??" :id 0 :value "??")))
-
-
-(defimplementation frame-catch-tags (index)
-  (declare (ignore index))
-  nil)
 
 #+nil
 (defimplementation disassemble-frame (index)
@@ -303,8 +300,11 @@
 (in-package :swank-backend)
 
 (defun handle-compiler-warning (condition)
-  (let ((loc nil));(getf (slot-value condition 'excl::plist) :loc)))
-    (unless (member condition *abcl-signaled-conditions*) ; filter condition signaled more than once.
+  (let ((loc (when (and jvm::*compile-file-pathname* 
+                        system::*source-position*)
+               (cons jvm::*compile-file-pathname* system::*source-position*))))
+    ;; filter condition signaled more than once.
+    (unless (member condition *abcl-signaled-conditions*) 
       (push condition *abcl-signaled-conditions*) 
       (signal (make-condition
                'compiler-condition
@@ -314,7 +314,7 @@
                :location (cond (*buffer-name*
                                 (make-location 
                                  (list :buffer *buffer-name*)
-                                 (list :position *buffer-start-position*)))
+                                 (list :offset *buffer-start-position* 0)))
                                (loc
                                 (destructuring-bind (file . pos) loc
                                   (make-location
@@ -322,7 +322,7 @@
                                    (list :position (1+ pos)))))
                                (t  
                                 (make-location
-                                 (list :file *compile-filename*)
+                                 (list :file (namestring *compile-filename*))
                                  (list :position 1)))))))))
 
 (defvar *abcl-signaled-conditions*)
@@ -335,8 +335,10 @@
       (let ((*buffer-name* nil)
             (*compile-filename* filename))
         (multiple-value-bind (fn warn fail) (compile-file filename)
-          (when (and load-p (not fail))
-            (load fn)))))))
+          (values fn warn
+                  (or fail 
+                      (and load-p 
+                           (not (load fn))))))))))
 
 (defimplementation swank-compile-string (string &key buffer position directory
                                                 debug)
@@ -348,7 +350,8 @@
             (*buffer-start-position* position)
             (*buffer-string* string))
         (funcall (compile nil (read-from-string
-                               (format nil "(~S () ~A)" 'lambda string))))))))
+                               (format nil "(~S () ~A)" 'lambda string))))
+        t))))
 
 #|
 ;;;; Definition Finding
@@ -382,8 +385,8 @@
     `(((,symbol)
        (:location 
         (:file ,(namestring (ext:source-pathname symbol)))
-        (:position ,(or (ext:source-file-position symbol) 0) t)
-        (:snippet nil))))))
+        (:position ,(or (ext:source-file-position symbol) 1))
+        (:align t))))))
 
 
 (defimplementation find-definitions (symbol)

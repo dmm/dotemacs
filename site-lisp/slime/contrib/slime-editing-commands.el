@@ -25,8 +25,7 @@
 
 (defun slime-end-of-defun ()
   (interactive)
-  (if (and (boundp 'slime-repl-input-end-mark)
-           slime-repl-input-end-mark)
+  (if (eq major-mode 'slime-repl-mode)
       (slime-repl-end-of-defun)
       (end-of-defun)))
 

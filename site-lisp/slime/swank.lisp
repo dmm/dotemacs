@@ -37,12 +37,14 @@
            #:*readtable-alist*
            #:*globally-redirect-io*
            #:*global-debugger*
-           #:*sldb-printer-bindings*
-           #:*swank-pprint-bindings*
+           #:*backtrace-printer-bindings*
            #:*default-worker-thread-bindings*
            #:*macroexpand-printer-bindings*
+           #:*sldb-printer-bindings*
+           #:*swank-pprint-bindings*
            #:*record-repl-results*
            #:*debug-on-swank-error*
+           #:*inspector-verbose*
            ;; These are re-exported directly from the backend:
            #:buffer-first-change
            #:frame-source-location-for-emacs
@@ -57,8 +59,7 @@
            #:profile-package
            #:default-directory
            #:set-default-directory
-           #:quit-lisp
-           #:with-swank-compilation-unit))
+           #:quit-lisp))
 
 (in-package :swank)
 
@@ -109,10 +110,30 @@ Redirection is done while Lisp is processing a request for Emacs.")
     (*print-right-margin*     . 65))
   "A set of printer variables used in the debugger.")
 
+(defvar *backtrace-pprint-dispatch-table*
+  (let ((table (copy-pprint-dispatch nil)))
+    (flet ((escape-string (stream string)
+             (cond (*print-escape* 
+                    (write-char #\" stream)
+                    (loop for c across string do
+                          (case c
+                            (#\" (write-string "\\\"" stream))
+                            (#\newline (write-string "\\n" stream))
+                            (#\return (write-string "\\r" stream))
+                            (t (write-char c stream))))
+                    (write-char #\" stream))
+                   (t (write-string string stream)))))
+      (set-pprint-dispatch 'string  #'escape-string 0 table)
+      table)))
+
 (defvar *backtrace-printer-bindings*
-  `((*print-pretty*           . nil)
+  `((*print-pretty*           . t)
+    (*print-readably*         . nil)
     (*print-level*            . 4)
-    (*print-length*           . 6))
+    (*print-length*           . 6)
+    (*print-lines*            . 1)
+    (*print-right-margin*     . 200)
+    (*print-pprint-dispatch*  . ,*backtrace-pprint-dispatch-table*))
   "Pretter settings for printing backtraces.")
 
 (defvar *default-worker-thread-bindings* '()
@@ -268,6 +289,9 @@ recently established one."
   "Return the value of *SWANK-STATE-STACK*."
   *swank-state-stack*)
 
+(defslimefun ping (tag)
+  tag)
+
 ;; A conditions to include backtrace information
 (define-condition swank-error (error) 
   ((condition :initarg :condition :reader swank-error.condition)
@@ -320,34 +344,39 @@ Do not set this to T unless you want to debug swank internals.")
 
 ;;;;; Helper macros
 
+;; If true execute interrupts, otherwise queue them.
+;; Note: `with-connection' binds *pending-slime-interrupts*.
 (defvar *slime-interrupts-enabled*)
 
-(defmacro with-slime-interrupts (&body body)
+(defmacro with-interrupts-enabled% (flag body)
   `(progn
      (check-slime-interrupts)
-     (let ((*slime-interrupts-enabled* t)
-           (*pending-slime-interrupts* '()))
-       (multiple-value-prog1 (progn ,@body) 
-         (check-slime-interrupts)))))
+     (multiple-value-prog1
+         (let ((*slime-interrupts-enabled* ,flag))
+           ,@body)
+       (check-slime-interrupts))))
+
+(defmacro with-slime-interrupts (&body body)
+  `(with-interrupts-enabled% t ,body))
 
 (defmacro without-slime-interrupts (&body body)
-  `(progn
-     (check-slime-interrupts)
-     (let ((*slime-interrupts-enabled* nil)
-           (*pending-slime-interrupts* '()))
-       (multiple-value-prog1 (progn ,@body)
-         (check-slime-interrupts)))))
+  `(with-interrupts-enabled% nil ,body))
 
 (defun invoke-or-queue-interrupt (function)
+  (log-event "invoke-or-queue-interrupt: ~a" function)
   (cond ((not (boundp '*slime-interrupts-enabled*))
          (without-slime-interrupts
            (funcall function)))
         (*slime-interrupts-enabled*
          (funcall function))
-        ((cdr *pending-slime-interrupts*)
-         (simple-break "Two many queued interrupts"))
         (t
-         (push function *pending-slime-interrupts*))))
+         (setq *pending-slime-interrupts*
+               (nconc *pending-slime-interrupts*
+                      (list function)))
+         (cond ((cdr *pending-slime-interrupts*)
+                (check-slime-interrupts))
+               (t
+                (log-event "queue-interrupt: ~a" function))))))
 
 (defslimefun simple-break (&optional (datum "Interrupt from Emacs") &rest args)
   (with-simple-restart (continue "Continue from break.")
@@ -374,12 +403,25 @@ If *REDIRECT-IO* is true then all standard I/O streams are redirected."
   `(call-with-connection ,connection (lambda () ,@body)))
 
 (defun call-with-connection (connection function)
-  (let ((*emacs-connection* connection))
-    (without-slime-interrupts
-      (with-swank-error-handler (*emacs-connection*)
-        (with-io-redirection (*emacs-connection*)
-          (call-with-debugger-hook #'swank-debugger-hook function))))))
+  (if (eq *emacs-connection* connection)
+      (funcall function)
+      (let ((*emacs-connection* connection)
+            (*pending-slime-interrupts* '()))
+        (without-slime-interrupts
+          (with-swank-error-handler (*emacs-connection*)
+            (with-io-redirection (*emacs-connection*)
+              (call-with-debugger-hook #'swank-debugger-hook function)))))))
 
+(defun call-with-retry-restart (msg thunk)
+  (loop (with-simple-restart (retry "~a" msg)
+          (return (funcall thunk)))))
+
+(defmacro with-retry-restart ((&key (msg "Retry.")) &body body)
+  (check-type msg string)
+  `(call-with-retry-restart ,msg #'(lambda () ,@body)))
+
+;;; FIXME: Can this be removed with the introduction of
+;;;        WITH/WITHOUT-SLIME-INTERRUPTS.
 (defmacro without-interrupts (&body body)
   `(call-without-interrupts (lambda () ,@body)))
 
@@ -440,6 +482,7 @@ The package is deleted before returning."
 
 (defun current-thread-id ()
   (thread-id (current-thread)))
+
 
 
 ;;;;; Logging
@@ -804,27 +847,26 @@ if the file doesn't exist; otherwise the first line of the file."
 (defun open-streams (connection)
   "Return the 5 streams for IO redirection:
 DEDICATED-OUTPUT INPUT OUTPUT IO REPL-RESULTS"
-  (let ((output-fn (make-output-function connection))
-        (input-fn
-         (lambda () 
-           (with-connection (connection)
-             (with-simple-restart (abort-read
-                                   "Abort reading input from Emacs.")
-               (read-user-input-from-emacs))))))
-    (multiple-value-bind (in out) (make-fn-streams input-fn output-fn)
-      (let* ((dedicated-output (if *use-dedicated-output-stream*
-                                   (open-dedicated-output-stream
-                                    (connection.socket-io connection))))
-             (out (or dedicated-output out))
-             (io (make-two-way-stream in out))
-             (repl-results (make-output-stream-for-target connection
-                                                          :repl-result)))
-        (when (eq (connection.communication-style connection) :spawn)
-          (spawn (lambda () (auto-flush-loop out)) 
-                 :name "auto-flush-thread"))
-        (values dedicated-output in out io repl-results)))))
-
-(defvar *maximum-pipelined-output-chunks* 20)
+  (let* ((output-fn (make-output-function connection))
+         (input-fn
+          (lambda () 
+            (with-connection (connection)
+              (with-simple-restart (abort-read
+                                    "Abort reading input from Emacs.")
+                (read-user-input-from-emacs)))))
+         (dedicated-output (if *use-dedicated-output-stream*
+                               (open-dedicated-output-stream
+                                (connection.socket-io connection))))
+         (out (make-output-stream output-fn))
+         (in (make-input-stream input-fn))
+         (out (or dedicated-output out))
+         (io (make-two-way-stream in out))
+         (repl-results (make-output-stream-for-target connection
+                                                      :repl-result)))
+    (when (eq (connection.communication-style connection) :spawn)
+      (spawn (lambda () (auto-flush-loop out))
+             :name "auto-flush-thread"))
+    (values dedicated-output in out io repl-results)))
 
 ;; FIXME: if wait-for-event aborts the event will stay in the queue forever.
 (defun make-output-function (connection)
@@ -832,17 +874,23 @@ DEDICATED-OUTPUT INPUT OUTPUT IO REPL-RESULTS"
   (let ((i 0) (tag 0) (l 0))
     (lambda (string)
       (with-connection (connection)
-        (with-simple-restart (abort "Abort sending output to Emacs.")
-          (when (or (= i *maximum-pipelined-output-chunks*) 
-                    (> l (* 80 20 5)))
-            (setf tag (mod (1+ tag) 1000))
-            (send-to-emacs `(:ping ,(current-thread-id) ,tag))
-            (wait-for-event `(:emacs-pong ,tag))
-            (setf i 0) 
-            (setf l 0))
-          (incf i)
-          (incf l (length string))
-          (send-to-emacs `(:write-string ,string)))))))
+        (multiple-value-setq (i tag l) 
+          (send-user-output string i tag l))))))
+
+(defvar *maximum-pipelined-output-chunks* 50)
+(defvar *maximum-pipelined-output-length* (* 80 20 5))
+(defun send-user-output (string pcount tag plength)
+  ;; send output with flow control
+  (when (or (> pcount *maximum-pipelined-output-chunks*) 
+            (> plength *maximum-pipelined-output-length*))
+    (setf tag (mod (1+ tag) 1000))
+    (send-to-emacs `(:ping ,(current-thread-id) ,tag))
+    (with-simple-restart (abort "Abort sending output to Emacs.")
+      (wait-for-event `(:emacs-pong ,tag)))
+    (setf pcount 0) 
+    (setf plength 0))
+  (send-to-emacs `(:write-string ,string))
+  (values (1+ pcount) tag (+ plength (length string))))
 
 (defun make-output-function-for-target (connection target)
   "Create a function to send user output to a specific TARGET in Emacs."
@@ -854,10 +902,7 @@ DEDICATED-OUTPUT INPUT OUTPUT IO REPL-RESULTS"
 
 (defun make-output-stream-for-target (connection target)
   "Create a stream that sends output to a specific TARGET in Emacs."
-  (nth-value 1 (make-fn-streams 
-                (lambda ()
-                  (error "Should never be called"))
-                (make-output-function-for-target connection target))))
+  (make-output-stream (make-output-function-for-target connection target)))
 
 (defun open-dedicated-output-stream (socket-io)
   "Open a dedicated output connection to the Emacs on SOCKET-IO.
@@ -883,36 +928,49 @@ This is an optimized way for Lisp to deliver output to Emacs."
       (when socket
         (close-socket socket)))))
 
-(defvar *sldb-quit-restart* 'abort
-  "What restart should swank attempt to invoke when the user sldb-quits.")
+;; The restart that will be invoked when the user calls sldb-quit.
+;; This restart will be named "abort" because many people press "a"
+;; instead of "q" in the debugger.
+(defvar *sldb-quit-restart*)
 
-(defun handle-requests (connection &optional timeout just-one)
-  "Read and process requests.  
+;; Establish a top-level restart and execute BODY.
+;; Execute K if the restart is invoked.
+(defmacro with-top-level-restart ((connection k) &body body)
+  `(with-connection (,connection)
+     (restart-case 
+         (let ((*sldb-quit-restart* (find-restart 'abort)))
+           . ,body)
+       (abort (&optional v)
+         :report "Return to SLIME's top level."
+         (declare (ignore v))
+         (force-user-output)
+         ,k))))
+
+(defun handle-requests (connection &optional timeout)
+  "Read and process :emacs-rex requests.
 The processing is done in the extent of the toplevel restart."
-  (assert (null *swank-state-stack*))
-  (let ((*swank-state-stack* '(:handle-request)))
-    (with-connection (connection)
-      (loop 
-       (with-simple-restart (abort "Return to SLIME's top level.")
-         (let* ((*sldb-quit-restart* (find-restart 'abort))
-                (timeout? (process-requests timeout just-one)))
-           (when (or just-one timeout?) 
-             (return))))))))
+  (cond ((boundp '*sldb-quit-restart*)
+         (process-requests timeout))
+        (t 
+         (tagbody
+            start
+            (with-top-level-restart (connection (go start))
+              (process-requests timeout))))))
 
-(defun process-requests (timeout just-one)
+(defun process-requests (timeout)
   "Read and process requests from Emacs."
   (loop
    (multiple-value-bind (event timeout?)
        (wait-for-event `(:emacs-rex . _) timeout)
-     (when timeout? (return t))
-     (apply #'eval-for-emacs (cdr event))
-     (when just-one (return nil)))))
+    (when timeout? (return))
+    (apply #'eval-for-emacs (cdr event)))))
 
 (defun current-socket-io ()
   (connection.socket-io *emacs-connection*))
 
 (defun close-connection (c condition backtrace)
   (let ((*debugger-hook* nil))
+    (log-event "close-connection: ~a ...~%" condition)
   (format *log-output* "~&;; swank:close-connection: ~A~%" condition)
   (let ((cleanup (connection.cleanup c)))
     (when cleanup
@@ -938,8 +996,8 @@ The processing is done in the extent of the toplevel restart."
             (ignore-errors (stream-external-format (connection.socket-io c)))
             (connection.communication-style c)
             *use-dedicated-output-stream*)
-    (finish-output *log-output*))))
-
+    (finish-output *log-output*))
+  (log-event "close-connection ~a ... done.~%" condition)))
 
 ;;;;;; Thread based communication
 
@@ -954,7 +1012,7 @@ The processing is done in the extent of the toplevel restart."
 (defun dispatch-loop (connection)
   (let ((*emacs-connection* connection))
     (with-panic-handler (connection)
-      (loop (dispatch-event (read-event))))))
+      (loop (dispatch-event (receive))))))
 
 (defvar *auto-flush-interval* 0.2)
 
@@ -1008,7 +1066,9 @@ The processing is done in the extent of the toplevel restart."
 (defun spawn-worker-thread (connection)
   (spawn (lambda () 
            (with-bindings *default-worker-thread-bindings*
-             (handle-requests connection nil t)))
+             (with-top-level-restart (connection nil)
+               (apply #'eval-for-emacs 
+                      (cdr (wait-for-event `(:emacs-rex . _)))))))
          :name "worker"))
 
 (defun spawn-repl-thread (connection name)
@@ -1051,15 +1111,14 @@ The processing is done in the extent of the toplevel restart."
                      (current-socket-io)))))
 
 (defvar *event-queue* '())
+(defvar *events-enqueued* 0)
 
 (defun send-event (thread event)
   (log-event "send-event: ~s ~s~%" thread event)
   (cond ((use-threads-p) (send thread event))
-        (t (setf *event-queue* (nconc *event-queue* (list event))))))
-
-(defun read-event (&optional timeout)
-  (cond ((use-threads-p) (receive timeout))
-        (t (decode-message (current-socket-io) timeout))))
+        (t (setf *event-queue* (nconc *event-queue* (list event)))
+           (setf *events-enqueued* (mod (1+ *events-enqueued*)
+                                        most-positive-fixnum)))))
 
 (defun send-to-emacs (event)
   "Send EVENT to Emacs."
@@ -1069,31 +1128,43 @@ The processing is done in the extent of the toplevel restart."
         (t (dispatch-event event))))
 
 (defun signal-interrupt (thread interrupt)  
-  (log-event "singal-interrupt~%")
+  (log-event "signal-interrupt~%")
   (cond ((use-threads-p) (interrupt-thread thread interrupt))
         (t (funcall interrupt))))
 
 (defun wait-for-event (pattern &optional timeout)
   (log-event "wait-for-event: ~s ~s~%" pattern timeout)
-  (cond ((use-threads-p) 
-         (without-slime-interrupts
-           (receive-if (lambda (e) (event-match-p e pattern)) timeout)))
-        (t 
-         (wait-for-event/event-loop pattern timeout))))
+  (without-slime-interrupts
+    (cond ((use-threads-p) 
+           (receive-if (lambda (e) (event-match-p e pattern)) timeout))
+          (t 
+           (wait-for-event/event-loop pattern timeout)))))
 
 (defun wait-for-event/event-loop (pattern timeout)
   (assert (or (not timeout) (eq timeout t)))
   (loop 
    (check-slime-interrupts)
-   (let ((tail (member-if (lambda (e) (event-match-p e pattern))
-                          *event-queue*)))
-     (when tail 
-       (setq *event-queue* 
-	     (nconc (ldiff *event-queue* tail) (cdr tail)))
-       (return (car tail))))
-   (multiple-value-bind (event timeout?) (read-event timeout)
-     (when timeout? (return (values nil t)))
-     (dispatch-event event))))
+   (let ((event (poll-for-event pattern)))
+     (when event (return (car event))))
+   (let ((events-enqueued *events-enqueued*)
+         (ready (wait-for-input (list (current-socket-io)) timeout)))
+     (cond ((and timeout (not ready))
+            (return (values nil t)))
+           ((or (/= events-enqueued *events-enqueued*)
+                (eq ready :interrupt))
+            ;; rescan event queue, interrupts may enqueue new events 
+            )
+           (t
+            (assert (equal ready (list (current-socket-io))))
+            (dispatch-event (decode-message (current-socket-io))))))))
+
+(defun poll-for-event (pattern)
+  (let ((tail (member-if (lambda (e) (event-match-p e pattern))
+                         *event-queue*)))
+    (when tail 
+      (setq *event-queue* (nconc (ldiff *event-queue* tail)
+                                 (cdr tail)))
+      tail)))
 
 (defun event-match-p (event pattern)
   (cond ((or (keywordp pattern) (numberp pattern) (stringp pattern)
@@ -1101,10 +1172,12 @@ The processing is done in the extent of the toplevel restart."
 	 (equal event pattern))
 	((symbolp pattern) t)
 	((consp pattern)
-         (and (consp event)
-              (and (event-match-p (car event) (car pattern))
-                   (event-match-p (cdr event) (cdr pattern)))))
-	(t (error "Invalid pattern: ~S" pattern))))
+         (case (car pattern)
+           ((or) (some (lambda (p) (event-match-p event p)) (cdr pattern)))
+           (t (and (consp event)
+                   (and (event-match-p (car event) (car pattern))
+                        (event-match-p (cdr event) (cdr pattern)))))))
+        (t (error "Invalid pattern: ~S" pattern))))
 
 (defun spawn-threads-for-connection (connection)
   (setf (connection.control-thread connection) 
@@ -1138,39 +1211,41 @@ The processing is done in the extent of the toplevel restart."
 (defun install-sigio-handler (connection)
   (add-sigio-handler (connection.socket-io connection) 
                      (lambda () (process-io-interrupt connection)))
-  (handle-or-process-requests connection))
+  (handle-requests connection t))
+
+(defvar *io-interupt-level* 0)
 
 (defun process-io-interrupt (connection)
-  (log-event "process-io-interrupt~%")
-  (invoke-or-queue-interrupt
-   (lambda () (handle-or-process-requests connection))))
-
-(defun handle-or-process-requests (connection)
-  (log-event "handle-or-process-requests: ~a~%" *swank-state-stack*)
-  (cond ((null *swank-state-stack*)
-         (handle-requests connection t))
-        ((eq (car *swank-state-stack*) :read-next-form))
-        (t (process-requests t nil))))
+  (log-event "process-io-interrupt ~d ...~%" *io-interupt-level*)
+  (let ((*io-interupt-level* (1+ *io-interupt-level*)))
+    (invoke-or-queue-interrupt
+     (lambda () (handle-requests connection t))))
+  (log-event "process-io-interrupt ~d ... done ~%" *io-interupt-level*))
 
 (defun deinstall-sigio-handler (connection)
   (log-event "deinstall-sigio-handler...~%")
-  (remove-sigio-handlers (connection.socket-io connection))  
+  (remove-sigio-handlers (connection.socket-io connection))
   (log-event "deinstall-sigio-handler...done~%"))
 
 ;;;;;; SERVE-EVENT based IO
 
 (defun install-fd-handler (connection)
   (add-fd-handler (connection.socket-io connection)
-                  (lambda () (handle-or-process-requests connection)))
+                  (lambda () (handle-requests connection t)))
   (setf (connection.saved-sigint-handler connection)
         (install-sigint-handler 
          (lambda () 
            (invoke-or-queue-interrupt
             (lambda () 
-              (dispatch-event `(:emacs-interrupt ,(current-thread-id))))))))
-  (handle-or-process-requests connection))
+              (with-connection (connection)
+                (dispatch-interrupt-event)))))))
+  (handle-requests connection t))
+
+(defun dispatch-interrupt-event ()
+  (dispatch-event `(:emacs-interrupt ,(current-thread-id))))
 
 (defun deinstall-fd-handler (connection)
+  (log-event "deinstall-fd-handler~%")
   (remove-fd-handlers (connection.socket-io connection))
   (install-sigint-handler (connection.saved-sigint-handler connection)))
 
@@ -1180,9 +1255,7 @@ The processing is done in the extent of the toplevel restart."
   (unwind-protect 
        (call-with-user-break-handler
         (lambda () 
-          (invoke-or-queue-interrupt 
-           (lambda () 
-             (dispatch-event `(:emacs-interrupt ,(current-thread-id))))))
+          (invoke-or-queue-interrupt #'dispatch-interrupt-event))
         (lambda ()
           (with-simple-restart (close-connection "Close SLIME connection")
             (handle-requests connection))))
@@ -1412,24 +1485,20 @@ NIL if streams are not globally redirected.")
 (defmacro with-thread-description (description &body body)
   `(call-with-thread-description ,description #'(lambda () ,@body)))
 
-(defun decode-message (stream &optional timeout)
+(defun decode-message (stream)
   "Read an S-expression from STREAM using the SLIME protocol."
-  (assert (or (not timeout) (eq timeout t)))
   ;;(log-event "decode-message~%")
   (let ((*swank-state-stack* (cons :read-next-form *swank-state-stack*)))
     (handler-bind ((error (lambda (c) (error (make-swank-error c)))))
-      (let ((c (read-char-no-hang stream nil)))
-        (cond ((and (not c) timeout) (values nil t))
-              (t
-               (and c (unread-char c stream))
-               (let ((packet (read-packet stream)))
-                 (handler-case (values (read-form packet) nil)
-                   (reader-error (c) 
-                     `(:reader-error ,packet ,c))))))))))
+      (let ((packet (read-packet stream)))
+        (handler-case (values (read-form packet) nil)
+          (reader-error (c) 
+            `(:reader-error ,packet ,c)))))))
 
+;; use peek-char to detect EOF, read-sequence may return 0 instead of
+;; signaling a condition.
 (defun read-packet (stream)
-  (peek-char nil stream) ; wait while queuing interrupts
-  (check-slime-interrupts)
+  (peek-char nil stream) 
   (let* ((header (read-chunk stream 6))
          (length (parse-integer header :radix #x10))
          (payload (read-chunk stream length)))
@@ -1466,11 +1535,11 @@ NIL if streams are not globally redirected.")
 (defun encode-message (message stream)
   (let* ((string (prin1-to-string-for-emacs message))
          (length (length string)))
+    (assert (<= length #xffffff))
     (log-event "WRITE: ~A~%" string)
-    (without-interrupts
-      (let ((*print-pretty* nil))
-        (format stream "~6,'0x" length))
-      (write-string string stream))
+    (let ((*print-pretty* nil))
+      (format stream "~6,'0x" length))
+    (write-string string stream)
     ;;(terpri stream)
     (finish-output stream)))
 
@@ -1484,6 +1553,8 @@ NIL if streams are not globally redirected.")
 
 (defun force-user-output ()
   (force-output (connection.user-io *emacs-connection*)))
+
+(add-hook *pre-reply-hook* 'force-user-output)
 
 (defun clear-user-input  ()
   (clear-input (connection.user-input *emacs-connection*)))
@@ -1752,10 +1823,11 @@ Return the package or nil."
 (defun guess-package (string)
   "Guess which package corresponds to STRING.
 Return nil if no package matches."
-  (or (find-package string)
-      (parse-package string)
-      (if (find #\! string) ; for SBCL
-          (guess-package (substitute #\- #\! string)))))
+  (when string
+    (or (find-package string)
+        (parse-package string)
+        (if (find #\! string)           ; for SBCL
+            (guess-package (substitute #\- #\! string))))))
 
 (defvar *readtable-alist* (default-readtable-alist)
   "An alist mapping package names to readtables.")
@@ -1816,18 +1888,19 @@ Errors are trapped and invoke our debugger."
 
 (defslimefun interactive-eval (string)
   (with-buffer-syntax ()
-    (let ((values (multiple-value-list (eval (from-string string)))))
-      (fresh-line)
-      (finish-output)
-      (format-values-for-echo-area values))))
+    (with-retry-restart (:msg "Retry SLIME interactive evaluation request.")
+      (let ((values (multiple-value-list (eval (from-string string)))))
+        (finish-output)
+        (format-values-for-echo-area values)))))
 
 (defslimefun eval-and-grab-output (string)
   (with-buffer-syntax ()
-    (let* ((s (make-string-output-stream))
-           (*standard-output* s)
-           (values (multiple-value-list (eval (from-string string)))))
-      (list (get-output-stream-string s) 
-            (format nil "~{~S~^~%~}" values)))))
+    (with-retry-restart (:msg "Retry SLIME evaluation request.")
+      (let* ((s (make-string-output-stream))
+             (*standard-output* s)
+             (values (multiple-value-list (eval (from-string string)))))
+        (list (get-output-stream-string s) 
+              (format nil "~{~S~^~%~}" values))))))
 
 (defun eval-region (string)
   "Evaluate STRING.
@@ -1845,16 +1918,18 @@ last form."
 
 (defslimefun interactive-eval-region (string)
   (with-buffer-syntax ()
-    (format-values-for-echo-area (eval-region string))))
+    (with-retry-restart (:msg "Retry SLIME interactive evaluation request.")
+      (format-values-for-echo-area (eval-region string)))))
 
 (defslimefun re-evaluate-defvar (form)
   (with-buffer-syntax ()
-    (let ((form (read-from-string form)))
-      (destructuring-bind (dv name &optional value doc) form
-	(declare (ignore value doc))
-	(assert (eq dv 'defvar))
-	(makunbound name)
-	(prin1-to-string (eval form))))))
+    (with-retry-restart (:msg "Retry SLIME evaluation request.")
+      (let ((form (read-from-string form)))
+        (destructuring-bind (dv name &optional value doc) form
+          (declare (ignore value doc))
+          (assert (eq dv 'defvar))
+          (makunbound name)
+          (prin1-to-string (eval form)))))))
 
 (defvar *swank-pprint-bindings*
   `((*print-pretty*   . t) 
@@ -1878,7 +1953,8 @@ Used by pprint-eval.")
   
 (defslimefun pprint-eval (string)
   (with-buffer-syntax ()
-    (swank-pprint (multiple-value-list (eval (read-from-string string))))))
+    (with-retry-restart (:msg "Retry SLIME evaluation request.")
+      (swank-pprint (multiple-value-list (eval (read-from-string string)))))))
 
 (defslimefun set-package (name)
   "Set *package* to the package named NAME.
@@ -1900,13 +1976,14 @@ Return the full package-name and the string to use in the prompt."
 (defun repl-eval (string)
   (clear-user-input)
   (with-buffer-syntax ()
-    (track-package 
-     (lambda ()
-       (multiple-value-bind (values last-form) (eval-region string)
-         (setq *** **  ** *  * (car values)
-               /// //  // /  / values
-               +++ ++  ++ +  + last-form)
-         (funcall *send-repl-results-function* values)))))
+    (with-retry-restart (:msg "Retry SLIME REPL evaluation request.")
+      (track-package 
+       (lambda ()
+         (multiple-value-bind (values last-form) (eval-region string)
+           (setq *** **  ** *  * (car values)
+                 /// //  // /  / values
+                 +++ ++  ++ +  + last-form)
+           (funcall *send-repl-results-function* values))))))
   nil)
 
 (defun track-package (fun)
@@ -1917,7 +1994,6 @@ Return the full package-name and the string to use in the prompt."
                              (package-string-for-prompt *package*)))))))
 
 (defun send-repl-results-to-emacs (values)    
-  (fresh-line)
   (finish-output)
   (if (null values)
       (send-to-emacs `(:write-string "; No value" :repl-result))
@@ -1932,6 +2008,33 @@ Return the full package-name and the string to use in the prompt."
       (etypecase s
         (string (write-string s out))
         (character (write-char s out))))))
+
+(defun truncate-string (string width &optional ellipsis)
+  (let ((len (length string)))
+    (cond ((< len width) string)
+          (ellipsis (cat (subseq string 0 width) ellipsis))
+          (t (subseq string 0 width)))))
+
+(defun call/truncated-output-to-string (length function 
+                                        &optional (ellipsis ".."))
+  "Call FUNCTION with a new stream, return the output written to the stream.
+If FUNCTION tries to write more than LENGTH characters, it will be
+aborted and return immediately with the output written so far."
+  (let ((buffer (make-string (+ length (length ellipsis))))
+        (fill-pointer 0))
+    (block buffer-full
+      (flet ((write-output (string)
+               (let* ((free (- length fill-pointer))
+                      (count (min free (length string))))
+                 (replace buffer string :start1 fill-pointer :end2 count)
+                 (incf fill-pointer count)
+                 (when (> (length string) free)
+                   (replace buffer ellipsis :start1 fill-pointer)
+                   (return-from buffer-full buffer)))))
+        (let ((stream (make-output-stream #'write-output)))
+          (funcall function stream)
+          (finish-output stream)
+          (subseq buffer 0 fill-pointer))))))
 
 (defun package-string-for-prompt (package)
   "Return the shortest nickname (or canonical name) of PACKAGE."
@@ -1951,11 +2054,21 @@ Return the full package-name and the string to use in the prompt."
 
 N.B. this is not an actual package name or nickname."
   (when *auto-abbreviate-dotted-packages*
-    (let ((last-dot (position #\. (package-name package) :from-end t)))
-      (when last-dot (subseq (package-name package) (1+ last-dot))))))
+    (loop with package-name = (package-name package)
+          with offset = nil
+          do (let ((last-dot-pos (position #\. package-name :end offset :from-end t)))
+               (unless last-dot-pos
+                 (return nil))
+               ;; If a dot chunk contains only numbers, that chunk most
+               ;; likely represents a version number; so we collect the
+               ;; next chunks, too, until we find one with meat.
+               (let ((name (subseq package-name (1+ last-dot-pos) offset)))
+                 (if (notevery #'digit-char-p name)
+                     (return (subseq package-name (1+ last-dot-pos)))
+                     (setq offset last-dot-pos)))))))
 
 (defun shortest-package-nickname (package)
-  "Return the shortest nickname (or canonical name) of PACKAGE."
+  "Return the shortest nickname of PACKAGE."
   (loop for name in (cons (package-name package) (package-nicknames package))
         for shortest = name then (if (< (length name) (length shortest))
                                    name
@@ -1975,7 +2088,7 @@ Returns true if it actually called emacs, or NIL if not."
   (flet ((pathname-or-string-p (thing)
            (or (pathnamep thing) (typep thing 'string)))
          (canonicalize-filename (filename)
-           (namestring (or (probe-file filename) filename))))
+           (pathname-to-filename (or (probe-file filename) filename))))
     (let ((target
            (cond ((and (listp what) (pathname-or-string-p (first what)))
                   (cons (canonicalize-filename (car what)) (cdr what)))
@@ -2045,12 +2158,9 @@ after Emacs causes a restart to be invoked."
 
 (defun swank-debugger-hook (condition hook)
   "Debugger function for binding *DEBUGGER-HOOK*."
-  (restart-case 
-      (call-with-debugger-hook 
-       hook (lambda () (invoke-slime-debugger condition)))
-    (default-debugger (&optional v)
-      :report "Use default debugger." (declare (ignore v))
-      (invoke-default-debugger condition))))
+  (declare (ignore hook))
+  (call-with-debugger-hook #'swank-debugger-hook
+                           (lambda () (invoke-slime-debugger condition))))
 
 (defun invoke-default-debugger (condition)
   (let ((*debugger-hook* nil))
@@ -2086,7 +2196,7 @@ after Emacs causes a restart to be invoked."
 
 (defun debug-in-emacs (condition)
   (let ((*swank-debugger-condition* condition)
-        (*sldb-restarts* (compute-sane-restarts condition))
+        (*sldb-restarts* (compute-restarts condition))
         (*package* (or (and (boundp '*buffer-package*)
                             (symbol-value '*buffer-package*))
                        *package*))
@@ -2106,13 +2216,22 @@ after Emacs causes a restart to be invoked."
           (send-to-emacs 
            (list* :debug (current-thread-id) level
                   (debugger-info-for-emacs 0 *sldb-initial-frames*)))
+          (send-to-emacs 
+           (list :debug-activate (current-thread-id) level nil))
           (loop 
-           (send-to-emacs (list :debug-activate (current-thread-id) level nil))
-           (handler-case (process-requests nil t)
+           (handler-case 
+               (destructure-case (wait-for-event 
+                                  `(or (:emacs-rex . _)
+                                       (:sldb-return ,(1+ level))))
+                 ((:emacs-rex &rest args) (apply #'eval-for-emacs args))
+                 ((:sldb-return _) (declare (ignore _)) (return nil))) 
              (sldb-condition (c) 
                (handle-sldb-condition c))))))
     (send-to-emacs `(:debug-return
-                     ,(current-thread-id) ,level ,*sldb-stepping-p*))))
+                     ,(current-thread-id) ,level ,*sldb-stepping-p*))
+    (wait-for-event `(:sldb-return ,(1+ level)) t) ; clean event-queue
+    (when (> level 1)
+      (send-event (current-thread) `(:sldb-return ,level)))))
 
 (defun handle-sldb-condition (condition)
   "Handle an internal debugger condition.
@@ -2162,16 +2281,26 @@ format suitable for Emacs."
    (list :debug-activate (current-thread-id) *sldb-level* t)))
 
 (defslimefun backtrace (start end)
-  "Return a list ((I FRAME) ...) of frames from START to END.
-I is an integer describing and FRAME a string."
+  "Return a list ((I FRAME PLIST) ...) of frames from START to END.
+
+I is an integer, and can be used to reference the corresponding frame
+from Emacs; FRAME is a string representation of an implementation's
+frame."
   (loop for frame in (compute-backtrace start end)
-        for i from start
-        collect (list i (with-output-to-string (stream)
-                          (handler-case
-                              (with-bindings *backtrace-printer-bindings*
-                                (print-frame frame stream))
-                            (t ()
-                              (format stream "[error printing frame]")))))))
+        for i from start collect 
+        (list* i (frame-to-string frame)
+               (ecase (frame-restartable-p frame)
+                 ((nil) nil)
+                 ((t) `((:restartable t)))))))
+
+(defun frame-to-string (frame)
+  (with-bindings *backtrace-printer-bindings*
+    (call/truncated-output-to-string 
+     (* (or *print-lines* 1) (or *print-right-margin* 100))
+     (lambda (stream)
+       (handler-case (print-frame frame stream)
+         (serious-condition ()
+           (format stream "[error printing frame]")))))))
 
 (defslimefun debugger-info-for-emacs (start end)
   "Return debugger state, with stack frames from START to END.
@@ -2180,9 +2309,11 @@ The result is a list:
 where
   condition   ::= (description type [extra])
   restart     ::= (name description)
-  stack-frame ::= (number description)
+  stack-frame ::= (number description [plist])
   extra       ::= (:references and other random things)
   cont        ::= continutation
+  plist       ::= (:restartable {nil | t | :unknown})
+
 condition---a pair of strings: message, and type.  If show-source is
 not nil it is a frame number for which the source should be displayed.
 
@@ -2202,7 +2333,7 @@ Operation was KERNEL::DIVISION, operands (1 0).\"
    \"[Condition of type DIVISION-BY-ZERO]\")
   ((\"ABORT\" \"Return to Slime toplevel.\")
    (\"ABORT\" \"Return to Top-Level.\"))
-  ((0 \"(KERNEL::INTEGER-/-INTEGER 1 0)\"))
+  ((0 \"(KERNEL::INTEGER-/-INTEGER 1 0)\" (:restartable nil)))
   (4))"
   (list (debugger-condition-for-emacs)
         (format-restarts-for-emacs)
@@ -2224,7 +2355,8 @@ Operation was KERNEL::DIVISION, operands (1 0).\"
 (defslimefun throw-to-toplevel ()
   "Invoke the ABORT-REQUEST restart abort an RPC from Emacs.
 If we are not evaluating an RPC then ABORT instead."
-  (let ((restart (find-restart *sldb-quit-restart*)))
+  (let ((restart (and (not (symbolp *sldb-quit-restart*))
+                      (find-restart *sldb-quit-restart*))))
     (cond (restart (invoke-restart restart))
           (t (format nil
                      "Restart not found: ~a"
@@ -2242,26 +2374,31 @@ has changed, ignore the request."
      ,form))
 
 (defslimefun eval-string-in-frame (string index)
-  (to-string (eval-in-frame (wrap-sldb-vars (from-string string))
-                            index)))
+  (to-string
+   (with-retry-restart (:msg "Retry SLIME evaluation request.")
+     (eval-in-frame (wrap-sldb-vars (from-string string))
+                    index))))
 
 (defslimefun pprint-eval-string-in-frame (string index)
   (swank-pprint
-   (multiple-value-list 
-    (eval-in-frame (wrap-sldb-vars (from-string string)) index))))
+   (with-retry-restart (:msg "Retry SLIME evaluation request.")
+     (multiple-value-list 
+      (eval-in-frame (wrap-sldb-vars (from-string string)) index)))))
 
-(defslimefun frame-locals-for-emacs (index)
-  "Return a property list ((&key NAME ID VALUE) ...) describing
-the local variables in the frame INDEX."
+(defslimefun frame-locals-and-catch-tags (index)
+  "Return a list (LOCALS TAGS) for vars and catch tags in the frame INDEX.
+LOCALS is a list of the form ((&key NAME ID VALUE) ...).
+TAGS has is a list of strings."
+  (list (frame-locals-for-emacs index)
+        (mapcar #'to-string (frame-catch-tags index))))
+
+(defun frame-locals-for-emacs (index)
   (with-bindings *backtrace-printer-bindings*
-    (mapcar (lambda (frame-locals)
-              (destructuring-bind (&key name id value) frame-locals
-                (list :name (prin1-to-string name) :id id
-                      :value (to-string value))))
-            (frame-locals index))))
-
-(defslimefun frame-catch-tags-for-emacs (frame-index)
-  (mapcar #'to-string (frame-catch-tags frame-index)))
+    (loop for var in (frame-locals index)
+          collect (destructuring-bind (&key name id value) var
+                    (list :name (prin1-to-string name) 
+                          :id id
+                          :value (to-line value))))))
 
 (defslimefun sldb-disassemble (index)
   (with-output-to-string (*standard-output*)
@@ -2294,32 +2431,22 @@ the local variables in the frame INDEX."
 
 ;;;; Compilation Commands.
 
-(defstruct (:swank-compilation-unit
+(defstruct (:compilation-result
              (:type list) :named
-             (:conc-name swank-compilation-unit.)
-             (:constructor make-swank-compilation-unit ()))
-  notes      ; 
-  results    ; a result is of type (MEMBER T NIL :COMPLAINED)
-  durations  ;
-  )
+             (:constructor make-compilation-result (notes successp duration)))
+  notes
+  (successp nil :type boolean)
+  (duration 0.0 :type float))
 
-(defvar *swank-compilation-unit* nil)
-
-(defun measure-time-interval (fn)
-  "Call FN and return the first return value and the elapsed time.
-The time is measured in microseconds."
-  (declare (type function fn))
+(defun measure-time-interval (fun)
+  "Call FUN and return the first return value and the elapsed time.
+The time is measured in seconds."
+  (declare (type function fun))
   (let ((before (get-internal-real-time)))
     (values
-     (funcall fn)
-     (* (- (get-internal-real-time) before)
-        (/ 1000000 internal-time-units-per-second)))))
-
-(defun record-note-for-condition (condition)
-  "Record a note for a compiler-condition into the currently active
-Swank-Compilation-Unit."
-  (push (make-compiler-note condition)
-        (swank-compilation-unit.notes *swank-compilation-unit*)))
+     (funcall fun)
+     (/ (- (get-internal-real-time) before)
+        (coerce internal-time-units-per-second 'float)))))
 
 (defun make-compiler-note (condition)
   "Make a compiler note data structure from a compiler-condition."
@@ -2331,67 +2458,57 @@ Swank-Compilation-Unit."
          (let ((s (short-message condition)))
            (if s (list :short-message s)))))
 
-(defmacro with-swank-compilation-unit ((&key override) &body body)
-  "Similiar to CL:WITH-COMPILATION-UNIT. Within a
-Swank-Compilation-Unit all notes, results etc. produced by
-COMPILE-FILE-FOR-EMACS and COMPILE-STRING-FOR-EMACS (possibly called
-more than once) will be collected into this unit."
-  (if override
-      `(let ((*swank-compilation-unit* (make-swank-compilation-unit)))
-         ,@body)
-      `(let ((*swank-compilation-unit* (or *swank-compilation-unit*
-                                           (make-swank-compilation-unit))))
-         ,@body)))
-
-(defun swank-compilation-unit-for-emacs (unit)
-  "Make a Swank-Compilation-Unit suitable for Emacs."
-  (let ((new (make-swank-compilation-unit)))
-    (with-struct (swank-compilation-unit. notes results durations) unit
-      (setf (swank-compilation-unit.notes new)   (reverse notes))
-      (setf (swank-compilation-unit.results new) (reverse results))
-      (setf (swank-compilation-unit.durations new)
-            (reverse (mapcar #'(lambda (usecs) (/ usecs 1000000.0)) durations))))
-    new))
-
-(defun swank-compiler (function)
-  (let ((notes-p))
-    (multiple-value-bind (result usecs)
-        (with-simple-restart (abort "Abort SLIME compilation.")
-          (handler-bind ((compiler-condition #'(lambda (c)
-                                                 (setf notes-p t)
-                                                 (record-note-for-condition c))))
-            (measure-time-interval function)))
-      (when result        (setf result (if notes-p :complained t)))
-      (when (eql usecs t) (setf usecs 0)) ; compilation aborted.
-      (push result (swank-compilation-unit.results *swank-compilation-unit*))
-      (push usecs  (swank-compilation-unit.durations *swank-compilation-unit*))
-      (swank-compilation-unit-for-emacs *swank-compilation-unit*))))
+(defun collect-notes (function)
+  (let ((notes '()))
+    (multiple-value-bind (successp seconds)
+        (handler-bind ((compiler-condition
+                        (lambda (c) (push (make-compiler-note c) notes))))
+          (measure-time-interval function))
+      (check-type successp boolean)
+      (make-compilation-result (reverse notes) successp seconds))))
 
 (defslimefun compile-file-for-emacs (filename load-p)
   "Compile FILENAME and, when LOAD-P, load the result.
 Record compiler notes signalled as `compiler-condition's."
-  (with-swank-compilation-unit (:override nil)
-    (with-buffer-syntax ()    
-      (let ((*compile-print* nil))
-        (swank-compiler 
-         (lambda ()
-           (swank-compile-file filename load-p
-                               (or (guess-external-format filename)
-                                   :default))))))))
+  (with-buffer-syntax ()
+    (collect-notes
+     (lambda ()
+       (let ((pathname (filename-to-pathname filename))
+             (*compile-print* nil) (*compile-verbose* t))
+         (multiple-value-bind (output-pathname warnings? failure?)
+             (swank-compile-file pathname load-p
+                                 (or (guess-external-format pathname)
+                                     :default))
+           (declare (ignore output-pathname warnings?))
+           (not failure?)))))))
 
 (defslimefun compile-string-for-emacs (string buffer position directory debug)
   "Compile STRING (exerpted from BUFFER at POSITION).
 Record compiler notes signalled as `compiler-condition's."
-  (with-swank-compilation-unit (:override nil)
-    (with-buffer-syntax ()
-      (swank-compiler
-       (lambda () 
-         (let ((*compile-print* nil) (*compile-verbose* t))
-           (swank-compile-string string :buffer buffer :position position 
-                                 :directory directory
-                                 :debug debug)))))))
+  (with-buffer-syntax ()
+    (collect-notes
+     (lambda () 
+       (let ((*compile-print* t) (*compile-verbose* nil))
+         (swank-compile-string string
+                               :buffer buffer
+                               :position position 
+                               :directory directory
+                               :debug debug))))))
 
-  
+(defslimefun compile-multiple-strings-for-emacs (strings debug)
+  "Compile STRINGS (exerpted from BUFFER at POSITION).
+Record compiler notes signalled as `compiler-condition's."
+  (loop for (string buffer package position directory) in strings collect
+        (collect-notes
+         (lambda ()
+           (with-buffer-syntax (package)
+             (let ((*compile-print* t) (*compile-verbose* nil))
+               (swank-compile-string string
+                                     :buffer buffer
+                                     :position position 
+                                     :directory directory
+                                     :debug debug)))))))
+
 (defun file-newer-p (new-file old-file)
   "Returns true if NEW-FILE is newer than OLD-FILE."
   (> (file-write-date new-file) (file-write-date old-file)))
@@ -2402,17 +2519,20 @@ Record compiler notes signalled as `compiler-condition's."
         (file-newer-p source-file fasl-file))))
 
 (defslimefun compile-file-if-needed (filename loadp)
-  (cond ((requires-compile-p filename)
-         (compile-file-for-emacs filename loadp))
-        (loadp
-         (load (compile-file-pathname filename))
-         nil)))
+  (let ((pathname (filename-to-pathname filename)))
+    (cond ((requires-compile-p pathname)
+           (compile-file-for-emacs pathname loadp))
+          (t
+           (collect-notes
+            (lambda ()
+              (or (not loadp)
+                  (load (compile-file-pathname pathname)))))))))
 
 
 ;;;; Loading
 
 (defslimefun load-file (filename)
-  (to-string (load filename)))
+  (to-string (load (filename-to-pathname filename))))
 
 
 ;;;;; swank-require
@@ -2421,7 +2541,9 @@ Record compiler notes signalled as `compiler-condition's."
   "Load the module MODULE."
   (dolist (module (if (listp modules) modules (list modules)))
     (unless (member (string module) *modules* :test #'string=)
-      (require module (or filename (module-filename module)))))
+      (require module (if filename
+                          (filename-to-pathname filename)
+                          (module-filename module)))))
   *modules*)
 
 (defvar *find-module* 'find-module
@@ -2742,6 +2864,19 @@ Include the nicknames if NICKNAMES is true."
 (defslimefun find-definition-for-thing (thing)
   (find-source-location thing))
 
+(defslimefun find-source-location-for-emacs (spec)
+  (find-source-location (value-spec-ref spec)))
+
+(defun value-spec-ref (spec)
+  (destructure-case spec
+    ((:string string package)
+     (with-buffer-syntax (package)
+       (eval (read-from-string string))))
+    ((:inspector part) 
+     (inspector-nth-part part))
+    ((:sldb frame var)
+     (frame-var-value frame var))))
+  
 (defslimefun find-definitions-for-emacs (name)
   "Return a list ((DSPEC LOCATION) ...) of definitions for NAME.
 DSPEC is a string and LOCATION a source location. NAME is a string."
@@ -2769,114 +2904,162 @@ DSPEC is a string and LOCATION a source location. NAME is a string."
 
 
 ;;;; Inspecting
+(defvar *inspector-verbose* nil)
 
-(defvar *inspectee*)
-(defvar *inspectee-content*)
-(defvar *inspectee-parts*) 
-(defvar *inspectee-actions*)
-(defvar *inspector-stack*)
+(defstruct (inspector-state (:conc-name istate.))
+  object
+  (verbose *inspector-verbose*)
+  (parts (make-array 10 :adjustable t :fill-pointer 0))
+  (actions (make-array 10 :adjustable t :fill-pointer 0))
+  content
+  next previous)
+
+(defvar *istate* nil)
 (defvar *inspector-history*)
 
 (defun reset-inspector ()
-  (setq *inspectee* nil
-        *inspectee-content* nil
-        *inspectee-parts* (make-array 10 :adjustable t :fill-pointer 0)
-        *inspectee-actions* (make-array 10 :adjustable t :fill-pointer 0)
-        *inspector-stack* '()
+  (setq *istate* nil
         *inspector-history* (make-array 10 :adjustable t :fill-pointer 0)))
-
+  
 (defslimefun init-inspector (string)
   (with-buffer-syntax ()
-    (reset-inspector)
-    (inspect-object (eval (read-from-string string)))))
+    (with-retry-restart (:msg "Retry SLIME inspection request.")
+      (reset-inspector)
+      (inspect-object (eval (read-from-string string))))))
 
 (defun inspect-object (o)
-  (push (setq *inspectee* o) *inspector-stack*)
-  (unless (find o *inspector-history*)
-    (vector-push-extend o *inspector-history*))
-  (let ((*print-pretty* nil) ; print everything in the same line
-        (*print-circle* t)
-        (*print-readably* nil))
-    (setq *inspectee-content* (inspector-content (emacs-inspect o))))
-  (list :title (with-output-to-string (s)
-                 (print-unreadable-object (o s :type t :identity t)))
-        :id (assign-index o *inspectee-parts*)
-        :content (content-range *inspectee-content* 0 500)))
+  (let ((previous *istate*)
+        (content (emacs-inspect/printer-bindings o)))
+    (unless (find o *inspector-history*)
+      (vector-push-extend o *inspector-history*))
+    (setq *istate* (make-inspector-state :object o :previous previous 
+                                         :content content))
+    (if previous (setf (istate.next previous) *istate*))
+    (istate>elisp *istate*)))
 
-(defun inspector-content (specs)
-  (loop for part in specs collect 
-        (etypecase part
-          (string part)
-          (cons (destructure-case part
-                  ((:newline) 
-                   '#.(string #\newline))
-                  ((:value obj &optional str) 
-                   (value-part obj str))
-                  ((:action label lambda &key (refreshp t)) 
-                   (action-part label lambda refreshp)))))))
+(defun emacs-inspect/printer-bindings (object)
+  (let ((*print-lines* 1) (*print-right-margin* 75)
+        (*print-pretty* t) (*print-readably* nil))
+    (emacs-inspect object)))
+
+(defun istate>elisp (istate)
+  (list :title (if (istate.verbose istate)
+                   (let ((*print-escape* t)
+                         (*print-circle* t)
+                         (*print-array* nil))
+                     (to-string (istate.object istate)))
+                   (call/truncated-output-to-string
+                    200
+                    (lambda (s)
+                      (print-unreadable-object
+                          ((istate.object istate) s :type t :identity t)))))
+        :id (assign-index (istate.object istate) (istate.parts istate))
+        :content (prepare-range istate 0 500)))
+
+(defun prepare-range (istate start end)
+  (let* ((range (content-range (istate.content istate) start end))
+         (ps (loop for part in range append (prepare-part part istate))))
+    (list ps 
+          (if (< (length ps) (- end start))
+              (+ start (length ps))
+              (+ end 1000))
+          start end)))
+
+(defun prepare-part (part istate)
+  (let ((newline '#.(string #\newline)))
+    (etypecase part
+      (string (list part))
+      (cons (destructure-case part
+              ((:newline) (list newline))
+              ((:value obj &optional str) 
+               (list (value-part obj str (istate.parts istate))))
+              ((:action label lambda &key (refreshp t)) 
+               (list (action-part label lambda refreshp
+                                  (istate.actions istate))))
+              ((:line label value)
+               (list (princ-to-string label) ": "
+                     (value-part value nil (istate.parts istate))
+                     newline)))))))
+
+(defun value-part (object string parts)
+  (list :value 
+        (or string (print-part-to-string object))
+        (assign-index object parts)))
+
+(defun action-part (label lambda refreshp actions)
+  (list :action label (assign-index (list lambda refreshp) actions)))
 
 (defun assign-index (object vector)
   (let ((index (fill-pointer vector)))
     (vector-push-extend object vector)
     index))
 
-(defun value-part (object string)
-  (list :value 
-        (or string (print-part-to-string object))
-        (assign-index object *inspectee-parts*)))
-
-(defun action-part (label lambda refreshp)
-  (list :action label (assign-index (list lambda refreshp)
-                                    *inspectee-actions*)))
-
 (defun print-part-to-string (value)
-  (let ((string (to-string value))
-        (pos (position value *inspector-history*)))
+  (let* ((string (to-line value))
+         (pos (position value *inspector-history*)))
     (if pos
         (format nil "#~D=~A" pos string)
         string)))
 
+;; Print OBJECT to a single line. Return the string.
+(defun to-line  (object &optional (width 75))
+  (call/truncated-output-to-string
+   width
+   (lambda (*standard-output*)
+     (write object :right-margin width :lines 1))
+   ".."))
+
 (defun content-range (list start end)
-  (let* ((len (length list)) (end (min len end)))
-    (list (subseq list start end) len start end)))
+  (typecase list
+    (list (let ((len (length list)))
+            (subseq list start (min len end))))
+    (lcons (llist-range list start end))))
 
 (defslimefun inspector-nth-part (index)
-  (aref *inspectee-parts* index))
+  (aref (istate.parts *istate*) index))
 
 (defslimefun inspect-nth-part (index)
   (with-buffer-syntax ()
-    (inspect-object (inspector-nth-part index))))
+    (let ((*inspector-verbose* (istate.verbose *istate*)))
+      (inspect-object (inspector-nth-part index)))))
 
 (defslimefun inspector-range (from to)
-  (content-range *inspectee-content* from to))
+  (prepare-range *istate* from to))
 
 (defslimefun inspector-call-nth-action (index &rest args)
-  (destructuring-bind (fun refreshp) (aref *inspectee-actions* index)
+  (destructuring-bind (fun refreshp) (aref (istate.actions *istate*) index)
     (apply fun args)
     (if refreshp
-        (inspect-object (pop *inspector-stack*))
+        (inspector-reinspect)
         ;; tell emacs that we don't want to refresh the inspector buffer
         nil)))
 
 (defslimefun inspector-pop ()
-  "Drop the inspector stack and inspect the second element.
-Return nil if there's no second element."
+  "Inspect the previous object.
+Return nil if there's no previous object."
   (with-buffer-syntax ()
-    (cond ((cdr *inspector-stack*)
-           (pop *inspector-stack*)
-           (inspect-object (pop *inspector-stack*)))
+    (cond ((istate.previous *istate*)
+           (setq *istate* (istate.previous *istate*))
+           (istate>elisp *istate*))
           (t nil))))
 
 (defslimefun inspector-next ()
-  "Inspect the next element in the *inspector-history*."
+  "Inspect the next element in the history of inspected objects.."
   (with-buffer-syntax ()
-    (let ((pos (position *inspectee* *inspector-history*)))
-      (cond ((= (1+ pos) (length *inspector-history*))
-             nil)
-            (t (inspect-object (aref *inspector-history* (1+ pos))))))))
+    (cond ((istate.next *istate*)
+           (setq *istate* (istate.next *istate*))
+           (istate>elisp *istate*))
+          (t nil))))
 
 (defslimefun inspector-reinspect ()
-  (inspect-object *inspectee*))
+  (setf (istate.content *istate*)
+        (emacs-inspect/printer-bindings (istate.object *istate*)))
+  (istate>elisp *istate*))
+
+(defslimefun inspector-toggle-verbose ()
+  "Toggle verbosity of inspected object."
+  (setf (istate.verbose *istate*) (not (istate.verbose *istate*)))
+  (istate>elisp *istate*))
 
 (defslimefun quit-inspector ()
   (reset-inspector)
@@ -2885,7 +3068,7 @@ Return nil if there's no second element."
 (defslimefun describe-inspectee ()
   "Describe the currently inspected object."
   (with-buffer-syntax ()
-    (describe-to-string *inspectee*)))
+    (describe-to-string (istate.object *istate*))))
 
 (defslimefun pprint-inspector-part (index)
   "Pretty-print the currently inspected object."
@@ -2894,8 +3077,9 @@ Return nil if there's no second element."
 
 (defslimefun inspect-in-frame (string index)
   (with-buffer-syntax ()
-    (reset-inspector)
-    (inspect-object (eval-in-frame (from-string string) index))))
+    (with-retry-restart (:msg "Retry SLIME inspection request.")
+      (reset-inspector)
+      (inspect-object (eval-in-frame (from-string string) index)))))
 
 (defslimefun inspect-current-condition ()
   (with-buffer-syntax ()
@@ -2906,6 +3090,51 @@ Return nil if there's no second element."
   (with-buffer-syntax ()
     (reset-inspector)
     (inspect-object (frame-var-value frame var))))
+
+;;;;; Lazy lists 
+
+(defstruct (lcons (:constructor %lcons (car %cdr))
+                  (:predicate lcons?))
+  car 
+  (%cdr nil :type (or null lcons function))
+  (forced? nil))
+
+(defmacro lcons (car cdr)
+  `(%lcons ,car (lambda () ,cdr)))
+
+(defmacro lcons* (car cdr &rest more)
+  (cond ((null more) `(lcons ,car ,cdr))
+        (t `(lcons ,car (lcons* ,cdr ,@more)))))
+
+(defun lcons-cdr (lcons)
+  (with-struct* (lcons- @ lcons) 
+    (cond ((@ forced?)
+           (@ %cdr))
+          (t
+           (let ((value (funcall (@ %cdr))))
+             (setf (@ forced?) t
+                   (@ %cdr) value))))))
+
+(defun llist-range (llist start end)
+  (llist-take (llist-skip llist start) (- end start)))
+
+(defun llist-skip (lcons index)
+  (do ((i 0 (1+ i))
+       (l lcons (lcons-cdr l)))
+      ((or (= i index) (null l))
+       l)))
+
+(defun llist-take (lcons count)
+  (let ((result '()))
+    (do ((i 0 (1+ i))
+         (l lcons (lcons-cdr l)))
+        ((or (= i count)
+             (null l)))
+      (push (lcons-car l) result))
+    (nreverse result)))
+
+(defun iline (label value)
+  `(:line ,label ,value))
 
 ;;;;; Lists
 
@@ -2918,10 +3147,6 @@ Return nil if there's no second element."
   (label-value-line* 
    ('car (car cons))
    ('cdr (cdr cons))))
-
-;; (inspect-list '#1=(a #1# . #1# ))
-;; (inspect-list (list* 'a 'b 'c))
-;; (inspect-list (make-list 10000))
 
 (defun inspect-list (list)
   (multiple-value-bind (length tail) (safe-length list)
@@ -2958,6 +3183,8 @@ Return NIL if LIST is circular."
 
 ;;;;; Hashtables
 
+
+
 (defmethod emacs-inspect ((ht hash-table))
   (append
    (label-value-line*
@@ -2984,17 +3211,19 @@ Return NIL if LIST is circular."
 ;;;;; Arrays
 
 (defmethod emacs-inspect ((array array))
-  (append
-   (label-value-line*
-    ("Dimensions" (array-dimensions array))
-    ("Element type" (array-element-type array))
-    ("Total size" (array-total-size array))
-    ("Adjustable" (adjustable-array-p array)))
-   (when (array-has-fill-pointer-p array)
-     (label-value-line "Fill pointer" (fill-pointer array)))
-   '("Contents:" (:newline))
-   (loop for i below (array-total-size array)
-         append (label-value-line i (row-major-aref array i)))))
+  (lcons*
+   (iline "Dimensions" (array-dimensions array))
+   (iline "Element type" (array-element-type array))
+   (iline "Total size" (array-total-size array))
+   (iline "Adjustable" (adjustable-array-p array))
+   (iline "Fill pointer" (if (array-has-fill-pointer-p array)
+                             (fill-pointer array)))
+   "Contents:" '(:newline)
+   (labels ((k (i max)
+              (cond ((= i max) '())
+                    (t (lcons (iline i (row-major-aref array i))
+                              (k (1+ i) max))))))
+     (k 0 (array-total-size array)))))
 
 ;;;;; Chars
 

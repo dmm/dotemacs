@@ -176,7 +176,8 @@
     (funcall fn)))
 
 (defimplementation compute-backtrace (start end)
-  (subseq *stack-trace* start (min end (length *stack-trace*))))
+  (loop for f in (subseq *stack-trace* start (min end (length *stack-trace*)))
+	collect f))
 
 (defimplementation print-frame (frame stream)
   (format stream "~S" frame))
@@ -201,10 +202,6 @@
   (let ((frame (elt *frame-trace* frame-number)))
     (let ((cl::*compiler-environment* (get-frame-debug-info frame)))
       (eval form))))
-
-(defimplementation frame-catch-tags (index)
-  (declare (ignore index))
-  nil)
 
 (defimplementation frame-var-value (frame-number var)
   (let ((vars (frame-variables (elt *frame-trace* frame-number))))
@@ -355,7 +352,7 @@
                                    (cond (*buffer-name*
                                           (make-location
                                            (list :buffer *buffer-name*)
-                                           (list :position *buffer-position*)))
+                                           (list :offset *buffer-position* 0)))
                                          (*compile-filename*
                                           (make-location
                                            (list :file *compile-filename*)
@@ -369,9 +366,10 @@
   (declare (ignore external-format))
   (with-compilation-hooks ()
     (let ((*buffer-name* nil))
-      (compile-file *compile-filename*)
-      (when load-p
-        (load (compile-file-pathname *compile-filename*))))))
+      (multiple-value-bind (output-file warnings? failure?)
+	  (compile-file *compile-filename*)
+	(values output-file warnings?
+		(or failure? (and load-p (load output-file))))))))
 
 (defimplementation swank-compile-string (string &key buffer position directory
                                                 debug)
@@ -381,7 +379,8 @@
           (*buffer-position* position)
           (*buffer-string* string))
       (funcall (compile nil (read-from-string
-                             (format nil "(~S () ~A)" 'lambda string)))))))
+                             (format nil "(~S () ~A)" 'lambda string))))
+      t)))
 
 ;;;; Inspecting
 

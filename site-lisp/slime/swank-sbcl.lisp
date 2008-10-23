@@ -117,7 +117,10 @@
   (sb-sys:enable-interrupt sb-unix:sigint 
                            (lambda (&rest args)
                              (declare (ignore args))
-                             (funcall function))))
+                             (sb-sys:invoke-interruption 
+                              (lambda ()
+                                (sb-sys:with-interrupts 
+                                  (funcall function)))))))
 
 (defvar *sigio-handlers* '()
   "List of (key . fn) pairs to be called on SIGIO.")
@@ -165,6 +168,35 @@
     (sb-bsd-sockets:socket (sb-bsd-sockets:socket-file-descriptor socket))
     (file-stream (sb-sys:fd-stream-fd socket))))
 
+(defvar *wait-for-input-called*)
+
+(defimplementation wait-for-input (streams &optional timeout)
+  (assert (member timeout '(nil t)))
+  (when (boundp '*wait-for-input-called*)
+    (setq *wait-for-input-called* t))
+  (let ((*wait-for-input-called* nil))
+    (loop
+     (let ((ready (remove-if-not #'listen streams)))
+       (when ready (return ready)))
+     (when timeout (return nil))
+     (when (check-slime-interrupts) (return :interrupt))
+     (when *wait-for-input-called* (return :interrupt))
+     (let* ((f (constantly t))
+            (handlers (loop for s in streams
+                            collect (add-one-shot-handler s f))))
+       (unwind-protect
+            (sb-sys:serve-event 0.2)
+         (mapc #'sb-sys:remove-fd-handler handlers))))))
+
+(defun add-one-shot-handler (stream function)
+  (let (handler)
+    (setq handler 
+          (sb-sys:add-fd-handler (sb-sys:fd-stream-fd stream) :input
+                                 (lambda (fd)
+                                   (declare (ignore fd))
+                                   (sb-sys:remove-fd-handler handler)
+                                   (funcall function stream))))))
+
 (defvar *external-format-to-coding-system*
   '((:iso-8859-1 
      "latin-1" "latin-1-unix" "iso-latin-1-unix" 
@@ -172,6 +204,12 @@
     (:utf-8 "utf-8" "utf-8-unix")
     (:euc-jp "euc-jp" "euc-jp-unix")
     (:us-ascii "us-ascii" "us-ascii-unix")))
+
+;; C.f. R.M.Kreuter in <20536.1219412774@progn.net> on sbcl-general, 2008-08-22.
+(defvar *physical-pathname-host* (pathname-host (user-homedir-pathname)))
+
+(defimplementation filename-to-pathname (filename)
+  (sb-ext:parse-native-namestring filename *physical-pathname-host*))
 
 (defimplementation find-external-format (coding-system)
   (car (rassoc-if (lambda (x) (member coding-system x :test #'equal))
@@ -256,7 +294,7 @@
 
 (defun sbcl-source-file-p (filename)
   (when filename
-    (loop for (_ pattern) in (logical-pathname-translations "SYS")
+    (loop for (nil pattern) in (logical-pathname-translations "SYS")
           thereis (pathname-match-p filename pattern))))
 
 (defun guess-readtable-for-filename (filename)
@@ -365,17 +403,15 @@ information."
 (defun locate-compiler-note (file source-path source)
   (cond ((and (not (eq file :lisp)) *buffer-name*)
          ;; Compiling from a buffer
-         (let ((position (+ *buffer-offset*
-                            (source-path-string-position
-                             source-path *buffer-substring*))))
-           (make-location (list :buffer *buffer-name*)
-                          (list :position position))))
+         (make-location (list :buffer *buffer-name*)
+                        (list :offset  *buffer-offset* 
+                              (source-path-string-position
+                               source-path *buffer-substring*))))
         ((and (pathnamep file) (null *buffer-name*))
          ;; Compiling from a file
          (make-location (list :file (namestring file))
-                        (list :position
-                              (1+ (source-path-file-position
-                                   source-path file)))))
+                        (list :position (1+ (source-path-file-position
+                                             source-path file)))))
         ((and (eq file :lisp) (stringp source))
          ;; Compiling macro generated code
          (make-location (list :source-form source)
@@ -429,16 +465,17 @@ compiler state."
 
 (defvar *trap-load-time-warnings* nil)
 
-(defimplementation swank-compile-file (filename load-p external-format)
+(defimplementation swank-compile-file (pathname load-p external-format)
   (handler-case
-      (let ((output-file (with-compilation-hooks ()
-                           (compile-file filename 
-                                         :external-format external-format))))
-        (when output-file
-          ;; Cache the latest source file for definition-finding.
-          (source-cache-get filename (file-write-date filename))
-          (when load-p
-            (load output-file))))
+      (multiple-value-bind (output-file warnings-p failure-p)
+          (with-compilation-hooks ()
+            (compile-file pathname :external-format external-format))
+        (values output-file warnings-p
+                (or failure-p
+                    (when load-p
+                      ;; Cache the latest source file for definition-finding.
+                      (source-cache-get pathname (file-write-date pathname))
+                      (not (load output-file))))))
     (sb-c:fatal-compiler-error () nil)))
 
 ;;;; compile-string
@@ -584,7 +621,7 @@ This is useful when debugging the definition-finding code.")
                          character-offset))
                 (snippet (string-path-snippet emacs-string form-path pos)))
            (make-location `(:buffer ,emacs-buffer)
-                          `(:position ,(+ pos emacs-position))
+                          `(:offset ,emacs-position ,pos)
                           `(:snippet ,snippet))))
         ((not pathname)
          `(:error ,(format nil "Source definition of ~A ~A not found"
@@ -695,7 +732,9 @@ Return NIL if the symbol is unbound."
   (defxref who-binds)
   (defxref who-sets)
   (defxref who-references)
-  (defxref who-macroexpands))
+  (defxref who-macroexpands)
+  #+#.(swank-backend::sbcl-with-symbol 'who-specializes 'sb-introspect)
+  (defxref who-specializes))
 
 (defun source-location-for-xref-data (xref-data)
   (let ((name (car xref-data))
@@ -843,11 +882,14 @@ stack."
   (let ((end (or end most-positive-fixnum)))
     (loop for f = (nth-frame start) then (sb-di:frame-down f)
 	  for i from start below end
-	  while f
-	  collect f)))
+	  while f collect f)))
 
 (defimplementation print-frame (frame stream)
   (sb-debug::print-frame-call frame stream))
+
+(defimplementation frame-restartable-p (frame)
+  #+#.(swank-backend::sbcl-with-restart-frame)
+  (not (null (sb-debug:frame-has-debug-tag-p frame))))
 
 ;;;; Code-location -> source-location translation
 
@@ -894,7 +936,7 @@ stack."
 (defun lisp-source-location (code-location)
   (let ((source (prin1-to-string
                  (sb-debug::code-location-source-form code-location 100))))
-    (make-location `(:source-form ,source) '(:position 0))))
+    (make-location `(:source-form ,source) '(:position 1))))
 
 (defun emacs-buffer-source-location (code-location plist)
   (if (code-location-has-debug-block-info-p code-location)
@@ -905,7 +947,7 @@ stack."
                (snipped (with-input-from-string (s emacs-string)
                           (read-snippet s pos))))
           (make-location `(:buffer ,emacs-buffer)
-                         `(:position ,(+ emacs-position pos))
+                         `(:offset ,emacs-position ,pos)
                          `(:snippet ,snipped))))
       (fallback-source-location code-location)))
 
@@ -919,7 +961,7 @@ stack."
         (let* ((pos (stream-source-position code-location s))
                (snippet (read-snippet s pos)))
           (make-location `(:file ,filename)
-                         `(:position ,(1+ pos))
+                         `(:position ,pos)
                          `(:snippet ,snippet)))))))
 
 (defun code-location-debug-source-name (code-location)
@@ -1320,24 +1362,15 @@ stack."
              (setf (mailbox.queue mbox) (nconc (ldiff q tail) (cdr tail)))
              (return (car tail))))
          (when (eq timeout t) (return (values nil t)))
+         ;; FIXME: with-timeout doesn't work properly on Darwin
+         #+linux
          (handler-case (sb-ext:with-timeout 0.2
                          (sb-thread:condition-wait (mailbox.waitqueue mbox)
                                                    mutex))
-           (sb-ext:timeout ()))))))
-
-  #-non-broken-terminal-sessions
-  (progn
-    (defvar *native-wait-for-terminal* #'sb-thread::get-foreground)
-    (sb-ext:with-unlocked-packages (sb-thread) 
-      (defun sb-thread::get-foreground ()
-        (ignore-errors
-          (format *debug-io* ";; SWANK: sb-thread::get-foreground ...~%")
-          (finish-output *debug-io*))
-        (or (and (typep *debug-io* 'two-way-stream)
-                 (typep (two-way-stream-input-stream *debug-io*)
-                        'slime-input-stream))
-            (funcall *native-wait-for-terminal*)))))
-
+           (sb-ext:timeout ()))
+         #-linux  
+         (sb-thread:condition-wait (mailbox.waitqueue mbox)
+                                   mutex)))))
   )
 
 (defimplementation quit-lisp ()

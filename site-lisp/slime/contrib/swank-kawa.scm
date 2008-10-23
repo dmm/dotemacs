@@ -375,12 +375,9 @@
           ((_ (':emacs-rex ('|swank:frame-source-location-for-emacs| frame)
                            pkg thread id))
            (send dbg `(frame-src-loc ,thread ,frame ,id)))
-          ((_ (':emacs-rex ('|swank:frame-locals-for-emacs| frame)
+          ((_ (':emacs-rex ('|swank:frame-locals-and-catch-tags| frame)
                            pkg thread id))
-           (send dbg `(frame-locals ,thread ,frame ,id)))
-          ((_ (':emacs-rex ('|swank:frame-catch-tags-for-emacs| frame)
-                           pkg thread id))
-           (send dbg `(frame-catchers ,thread ,frame ,id)))
+           (send dbg `(frame-details ,thread ,frame ,id)))
           ((_ (':emacs-rex ('|swank:sldb-disassemble| frame)
                            pkg thread id))
            (send dbg `(disassemble-frame ,thread ,frame ,id)))
@@ -629,38 +626,40 @@
 
 ;;;; Compilation
 
-(define-constant compilation-messages (<gnu.text.SourceMessages>))
-
 (defslimefun compile-file-for-emacs (env (filename <str>) load?)
   (let ((zip (cat (path-sans-extension (filepath filename)) ".zip")))
     (wrap-compilation 
-     (fun () (kawa.lang.CompileFile:read filename compilation-messages))
+     (fun ((m <gnu.text.SourceMessages>))
+       (kawa.lang.CompileFile:read filename m))
      zip (if (lisp-bool load?) env #f) #f)))
 
 (df wrap-compilation (f zip env delete?)
-  (! clear compilation-messages)
-  (let ((start-time (current-time)))
+  (let ((start-time (current-time))
+        (messages (<gnu.text.SourceMessages>)))
     (try-catch
-     (let ((c (as <gnu.expr.Compilation> (f))))
+     (let ((c (as <gnu.expr.Compilation> (f messages))))
        (! compile-to-archive c (! get-module c) zip))
      (ex <throwable>
          (log "error during compilation: ~a\n" ex)
-         (! error compilation-messages (as <char> #\f)
+         (! error messages (as <char> #\f)
             (to-str (exception-message ex)) #!null)))
     (log "compilation done.\n")
-    (when (and env
-               (zero? (! get-error-count compilation-messages)))
-      (log "loading ...\n")
-      (eval `(load ,zip) env)
-      (log "loading ... done.\n"))
-    (when delete?
-      (ignore-errors (delete-file zip)))
-    (let ((end-time (current-time)))
-      (list 'nil (format "~3f" (/ (- end-time start-time) 1000))))))
+    (let ((success? (zero? (! get-error-count messages))))
+      (when (and env success?)
+        (log "loading ...\n")
+        (eval `(load ,zip) env)
+        (log "loading ... done.\n"))
+      (when delete?
+        (ignore-errors (delete-file zip)))
+      (let ((end-time (current-time)))
+        (list ':compilation-result 
+              (compiler-notes-for-emacs messages)
+              (if success? 't 'nil)
+              (/ (- end-time start-time) 1000.0))))))
 
 (defslimefun compile-string-for-emacs (env string buffer offset dir)
   (wrap-compilation
-   (fun ()
+   (fun ((m <gnu.text.SourceMessages>))
      (let ((c (as <gnu.expr.Compilation>
                   (call-with-input-string 
                    string
@@ -668,7 +667,7 @@
                      (! set-path p 
                         (format "~s" 
                                 `(buffer ,buffer offset ,offset str ,string)))
-                     (kawa.lang.CompileFile:read p compilation-messages))))))
+                     (kawa.lang.CompileFile:read p m))))))
        (let ((o (@ currentOptions c)))
          (! set o "warn-invoke-unknown-method" #t)
          (! set o "warn-undefined-variable" #t))
@@ -677,9 +676,9 @@
        c))
    "/tmp/kawa-tmp.zip" env #t))
 
-(defslimefun compiler-notes-for-emacs (env) 
+(df compiler-notes-for-emacs ((messages <gnu.text.SourceMessages>))
   (packing (pack)
-    (do ((e (! get-errors compilation-messages) (@ next e)))
+    (do ((e (! get-errors messages) (@ next e)))
         ((nul? e))
       (pack (source-error>elisp e)))))
 
@@ -756,6 +755,7 @@
 
 (defslimefun operator-arglist (#!rest y) '())
 (defslimefun buffer-first-change (#!rest y) '())
+(defslimefun swank-require (#!rest y) '())
 
 ;;;; M-.
 
@@ -1176,10 +1176,8 @@
            (set state (thread-continue thread id c state)))
           ((,c . ('frame-src-loc thread frame id))
            (reply c (frame-src-loc thread frame state) id))
-          ((,c . ('frame-locals thread frame id))
-           (reply c (frame-locals thread frame state) id))
-          ((,c . ('frame-catchers thread frame id))
-           (reply c (frame-catchers thread frame state) id))
+          ((,c . ('frame-details thread frame id))
+           (reply c (list (frame-locals thread frame state) '()) id))
           ((,c . ('disassemble-frame thread frame id))
            (reply c (disassemble-frame thread frame state) id))
           ((,c . ('thread-frames thread from to id))
@@ -1328,7 +1326,7 @@
                            (<obj-ref> (! name (! referenceType ex)))
                            (<object> (!! getName getClass ex)))))
            (bt (thread-frames tid from to state)))
-      `((,desc ,type nil) () ,bt ()))))
+      `((,desc ,type nil) (("quit" "terminate current thread")) ,bt ()))))
 
 (df thread-frames ((tid <int>) (from <int>) to state)
   (mlet ((thread level evs) (get state tid #f))
@@ -1450,9 +1448,6 @@
                        (val (as <value> (! getValue e))))
                    (pack (list (! name var) val)))))))
       (<java.lang.StackTraceElement> '()))))
-
-(df frame-catchers ((tid <int>) (frame <int>) state)
-  '())
 
 (df disassemble-frame ((tid <int>) (frame <int>) state)
   (mlet ((frame _) (nth-frame tid frame state))

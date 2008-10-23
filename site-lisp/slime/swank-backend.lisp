@@ -203,6 +203,11 @@ EXCEPT is a list of symbol names which should be ignored."
     :stream-finish-output
     :fundamental-character-input-stream
     :stream-read-char
+    :stream-peek-char
+    :stream-read-line
+    ;; STREAM-FILE-POSITION is not available on all implementations, or
+    ;; partially under a different name.
+    ; :stream-file-posiion
     :stream-listen
     :stream-unread-char
     :stream-clear-input
@@ -305,6 +310,7 @@ that the calling thread is the one that interacts with Emacs."
 (definterface install-sigint-handler (function)
   "Call FUNCTION on SIGINT (instead of invoking the debugger).
 Return old signal handler."
+  (declare (ignore function))
   nil)
 
 (definterface call-with-user-break-handler (handler function)
@@ -313,9 +319,25 @@ Return old signal handler."
     (unwind-protect (funcall function)
       (install-sigint-handler old-handler))))
 
+(definterface quit-lisp ()
+  "Exit the current lisp image.")
+
 (definterface lisp-implementation-type-name ()
   "Return a short name for the Lisp implementation."
   (lisp-implementation-type))
+
+
+;; pathnames are sooo useless
+
+(definterface filename-to-pathname (filename)
+  "Return a pathname for FILENAME.
+A filename in Emacs may for example contain asterisks which should not
+be translated to wildcards."
+  (parse-namestring filename))
+
+(definterface pathname-to-filename (pathname)
+  "Return the filename for PATHNAME."
+  (namestring pathname))
 
 (definterface default-directory ()
   "Return the default directory."
@@ -327,6 +349,7 @@ This is used to resolve filenames without directory component."
   (setf *default-pathname-defaults* (truename (merge-pathnames directory)))
   (default-directory))
 
+
 (definterface call-with-syntax-hooks (fn)
   "Call FN with hooks to handle special syntax."
   (funcall fn))
@@ -334,9 +357,6 @@ This is used to resolve filenames without directory component."
 (definterface default-readtable-alist ()
   "Return a suitable initial value for SWANK:*READTABLE-ALIST*."
   '())
-
-(definterface quit-lisp ()
-  "Exit the current lisp image.")
 
 
 ;;;; Compilation
@@ -349,9 +369,11 @@ This is used to resolve filenames without directory component."
   (declare (ignore ignore))
   `(call-with-compilation-hooks (lambda () (progn ,@body))))
 
-(definterface swank-compile-string (string &key buffer position directory debug)
-  "Compile source from STRING.  During compilation, compiler
-conditions must be trapped and resignalled as COMPILER-CONDITIONs.
+(definterface swank-compile-string (string &key buffer position directory 
+                                           debug)
+  "Compile source from STRING.
+During compilation, compiler conditions must be trapped and
+resignalled as COMPILER-CONDITIONs.
 
 If supplied, BUFFER and POSITION specify the source location in Emacs.
 
@@ -369,13 +391,14 @@ value.
 Should return T on successfull compilation, NIL otherwise.
 ")
 
-(definterface swank-compile-file (filename load-p external-format)
-   "Compile FILENAME signalling COMPILE-CONDITIONs.
+(definterface swank-compile-file (pathname load-p external-format)
+   "Compile PATHNAME signalling COMPILE-CONDITIONs.
 If LOAD-P is true, load the file after compilation.
 EXTERNAL-FORMAT is a value returned by find-external-format or
 :default.
 
-Should return T on successfull compilation, NIL otherwise.")
+Should return OUTPUT-TRUENAME, WARNINGS-P and FAILURE-p
+like `compile-file'")
 
 (deftype severity () 
   '(member :error :read-error :warning :style-warning :note))
@@ -415,11 +438,11 @@ e.g. \"latin-1-unix\"."
       :default
       nil))
 
-(definterface guess-external-format (filename)
-  "Detect the external format for the file with name FILENAME.
+(definterface guess-external-format (pathname)
+  "Detect the external format for the file with name pathname.
 Return nil if the file contains no special markers."
   ;; Look for a Emacs-style -*- coding: ... -*- or Local Variable: section.
-  (with-open-file (s filename :if-does-not-exist nil
+  (with-open-file (s pathname :if-does-not-exist nil
                      :external-format (or (find-external-format "latin-1-unix")
                                           :default))
     (if s 
@@ -453,16 +476,13 @@ Return nil if the file contains no special markers."
 
 ;;;; Streams
 
-(definterface make-fn-streams (input-fn output-fn)
-   "Return character input and output streams backended by functions.
-When input is needed, INPUT-FN is called with no arguments to
-return a string.
-When output is ready, OUTPUT-FN is called with the output as its
-argument.
+(definterface make-output-stream (write-string)
+  "Return a new character output stream.
+The stream calls WRITE-STRING when output is ready.")
 
-Output should be forced to OUTPUT-FN before calling INPUT-FN.
-
-The streams are returned as two values.")
+(definterface make-input-stream (read-string)
+  "Return a new character input stream.
+The stream calls READ-STRING when input is needed.")
 
 
 ;;;; Documentation
@@ -624,39 +644,37 @@ debug the debugger! Instead, such conditions can be reported to the
 user without (re)entering the debugger by wrapping them as
 `sldb-condition's."))
 
-(definterface compute-sane-restarts (condition)
-  "This is an opportunity for Lisps such as CLISP to remove
-unwanted restarts from the output of CL:COMPUTE-RESTARTS,
-otherwise it should simply call CL:COMPUTE-RESTARTS, which is
-what the default implementation does."
-  (compute-restarts condition))
-
 ;;; The following functions in this section are supposed to be called
 ;;; within the dynamic contour of CALL-WITH-DEBUGGING-ENVIRONMENT only.
 
 (definterface compute-backtrace (start end)
    "Returns a backtrace of the condition currently being debugged,
-that is an ordered list consisting of frames. (What constitutes a
-frame is implementation dependent, but PRINT-FRAME must be defined on
-it.)
-
-``Ordered list'' means that the i-th. frame is associated to the
-frame-number i.
+that is an ordered list consisting of frames. ``Ordered list''
+means that an integer I can be mapped back to the i-th frame of this
+backtrace.
 
 START and END are zero-based indices constraining the number of frames
-returned.  Frame zero is defined as the frame which invoked the
-debugger.  If END is nil, return the frames from START to the end of
+returned. Frame zero is defined as the frame which invoked the
+debugger. If END is nil, return the frames from START to the end of
 the stack.")
 
 (definterface print-frame (frame stream)
   "Print frame to stream.")
+
+(definterface frame-restartable-p (frame)
+  "Is the frame FRAME restartable?.
+Return T if `restart-frame' can safely be called on the frame."
+  (declare (ignore frame))
+  nil)
 
 (definterface frame-source-location-for-emacs (frame-number)
   "Return the source location for the frame associated to FRAME-NUMBER.")
 
 (definterface frame-catch-tags (frame-number)
   "Return a list of catch tags for being printed in a debugger stack
-frame.")
+frame."
+  (declare (ignore frame-number))
+  '())
 
 (definterface frame-locals (frame-number)
   "Return a list of ((&key NAME ID VALUE) ...) where each element of
@@ -949,6 +967,7 @@ Ids should be comparable with equal, i.e.:
   "Return the thread for ID.
 ID should be an id previously obtained with THREAD-ID.
 Can return nil if the thread no longer exists."
+  (declare (ignore id))
   (current-thread))
 
 (definterface thread-name (thread)
@@ -992,7 +1011,7 @@ but that thread may hold it more than once."
   0)
 
 (definterface all-threads ()
-  "Return a list of all threads.")
+  "Return a fresh list of all threads.")
 
 (definterface thread-alive-p (thread)
   "Test if THREAD is termintated."
@@ -1016,15 +1035,48 @@ but that thread may hold it more than once."
 (definterface receive-if (predicate &optional timeout)
   "Return the first message satisfiying PREDICATE.")
 
+;; List of delayed interrupts.  
+;; This should only have thread-local bindings, so no init form.
 (defvar *pending-slime-interrupts*)
 
 (defun check-slime-interrupts ()
   "Execute pending interrupts if any.
 This should be called periodically in operations which
-can take a long time to complete."
+can take a long time to complete.
+Return a boolean indicating whether any interrupts was processed."
   (when (and (boundp '*pending-slime-interrupts*)
              *pending-slime-interrupts*)
-    (funcall (pop *pending-slime-interrupts*))))
+    (funcall (pop *pending-slime-interrupts*))
+    t))
+
+(definterface wait-for-input (streams &optional timeout)
+  "Wait for input on a list of streams.  Return those that are ready.
+STREAMS is a list of streams
+TIMEOUT nil, t, or real number. If TIMEOUT is t, return
+those streams which are ready immediately, without waiting.
+If TIMEOUT is a number and no streams is ready after TIMEOUT seconds,
+return nil.
+
+Return :interrupt if an interrupt occurs while waiting."
+  (assert (= (length streams) 1))
+  (let ((stream (car streams)))
+    (case timeout
+      ((nil)
+       (cond ((check-slime-interrupts) :interrupt)
+             (t (peek-char nil stream nil nil) 
+                streams)))
+      ((t) 
+       (let ((c (read-char-no-hang stream nil nil)))
+         (cond (c 
+                (unread-char c stream) 
+                streams)
+               (t '()))))
+      (t 
+       (loop
+        (if (check-slime-interrupts) (return :interrupt))
+        (when (wait-for-input streams t) (return streams))
+        (sleep 0.1)
+        (when (<= (decf timeout 0.1) 0) (return nil)))))))
 
 (definterface toggle-trace (spec)
   "Toggle tracing of the function(s) given with SPEC.

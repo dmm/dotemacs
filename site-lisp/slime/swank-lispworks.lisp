@@ -73,11 +73,34 @@
 
 (defimplementation accept-connection (socket 
                                       &key external-format buffering timeout)
-  (declare (ignore buffering timeout external-format))
+  (declare (ignore buffering))
   (let* ((fd (comm::get-fd-from-socket socket)))
     (assert (/= fd -1))
-    (make-instance 'comm:socket-stream :socket fd :direction :io 
-                   :element-type 'base-char)))
+    (assert (valid-external-format-p external-format))
+    (cond ((member (first external-format) '(:latin-1 :ascii))
+           (make-instance 'comm:socket-stream
+                          :socket fd
+                          :direction :io
+                          :read-timeout timeout
+                          :element-type 'base-char))
+          (t
+           (make-flexi-stream 
+            (make-instance 'comm:socket-stream
+                           :socket fd
+                           :direction :io
+                           :read-timeout timeout
+                           :element-type '(unsigned-byte 8))
+            external-format)))))
+
+(defun make-flexi-stream (stream external-format)
+  (unless (member :flexi-streams *features*)
+    (error "Cannot use external format ~A without having installed flexi-streams in the inferior-lisp."
+           external-format))
+  (funcall (read-from-string "FLEXI-STREAMS:MAKE-FLEXI-STREAM")
+           stream
+           :external-format
+           (apply (read-from-string "FLEXI-STREAMS:MAKE-EXTERNAL-FORMAT")
+                  external-format)))
 
 (defun set-sigint-handler ()
   ;; Set SIGINT handler on Swank request handler thread.
@@ -86,6 +109,10 @@
                            (make-sigint-handler mp:*current-process*)))
 
 ;;; Coding Systems
+
+(defun valid-external-format-p (external-format)
+  (member external-format *external-format-to-coding-system*
+          :test #'equal :key #'car))
 
 (defvar *external-format-to-coding-system*
   '(((:latin-1 :eol-style :lf) 
@@ -154,7 +181,7 @@ Return NIL if the symbol is unbound."
                (let ((pos (position #\newline string)))
                  (if (null pos) string (subseq string 0 pos))))
              (doc (kind &optional (sym symbol))
-               (let ((string (documentation sym kind)))
+               (let ((string (or (documentation sym kind))))
                  (if string 
                      (first-line string)
                      :not-documented)))
@@ -329,10 +356,6 @@ Return NIL if the symbol is unbound."
       (declare (ignore _n _s _l))
       value)))
 
-(defimplementation frame-catch-tags (index)
-  (declare (ignore index))
-  nil)
-
 (defimplementation frame-source-location-for-emacs (frame)
   (let ((frame (nth-frame frame))
         (callee (if (plusp frame) (nth-frame (1- frame)))))
@@ -390,13 +413,16 @@ Return NIL if the symbol is unbound."
   (lw:rebinding (location)
     `(let ((compiler::*error-database* '()))
        (with-compilation-unit ,options
-         ,@body
-         (signal-error-data-base compiler::*error-database* ,location)
-         (signal-undefined-functions compiler::*unknown-functions* ,location)))))
+         (multiple-value-prog1 (progn ,@body)
+           (signal-error-data-base compiler::*error-database* 
+                                   ,location)
+           (signal-undefined-functions compiler::*unknown-functions* 
+                                       ,location))))))
 
 (defimplementation swank-compile-file (filename load-p external-format)
   (with-swank-compilation-unit (filename)
-    (compile-file filename :load load-p :external-format external-format)))
+    (compile-file filename :load load-p 
+                  :external-format external-format)))
 
 (defvar *within-call-with-compilation-hooks* nil
   "Whether COMPILE-FILE was called from within CALL-WITH-COMPILATION-HOOKS.")
@@ -446,25 +472,34 @@ Return NIL if the symbol is unbound."
 		  :location location
 		  :original-condition condition)))
 
+(defvar *temp-file-format* '(:utf-8 :eol-style :lf))
+
 (defun compile-from-temp-file (string filename)
   (unwind-protect
        (progn
-	 (with-open-file (s filename :direction :output :if-exists :supersede)
+	 (with-open-file (s filename :direction :output
+                                     :if-exists :supersede
+                                     :external-format *temp-file-format*)
+
 	   (write-string string s)
 	   (finish-output s))
-	 (let ((binary-filename (compile-file filename :load t)))
+         (multiple-value-bind (binary-filename warnings? failure?)
+             (compile-file filename :load t
+                           :external-format *temp-file-format*)
+           (declare (ignore warnings?))
            (when binary-filename
-             (delete-file binary-filename))))
+             (delete-file binary-filename))
+           (not failure?)))
     (delete-file filename)))
 
-(defun dspec-buffer-position (dspec offset)
+(defun dspec-function-name-position (dspec fallback)
   (etypecase dspec
     (cons (let ((name (dspec:dspec-primary-name dspec)))
             (typecase name
               ((or symbol string) 
                (list :function-name (string name)))
-              (t (list :position offset)))))
-    (null (list :position offset))
+              (t fallback))))
+    (null fallback)
     (symbol (list :function-name (string dspec)))))
 
 (defmacro with-fairly-standard-io-syntax (&body body)
@@ -478,10 +513,17 @@ Return NIL if the symbol is unbound."
               (*readtable* ,readtable))
           ,@body)))))
 
+(defun skip-comments (stream)
+  (let ((pos0 (file-position stream)))
+    (cond ((equal (ignore-errors (list (read-delimited-list #\( stream)))
+                  '(()))
+           (file-position stream (1- (file-position stream))))
+          (t (file-position stream pos0)))))
+
 #-(or lispworks4.1 lispworks4.2) ; no dspec:parse-form-dspec prior to 4.3
 (defun dspec-stream-position (stream dspec)
   (with-fairly-standard-io-syntax
-    (loop (let* ((pos (file-position stream))
+    (loop (let* ((pos (progn (skip-comments stream) (file-position stream)))
                  (form (read stream nil '#1=#:eof)))
             (when (eq form '#1#)
               (return nil))
@@ -515,8 +557,8 @@ Return NIL if the symbol is unbound."
              #-(or lispworks4.1 lispworks4.2)
              (dspec-stream-position stream dspec)))
         (if pos
-            (list :position (1+ pos) t)
-            (dspec-buffer-position dspec 1))))))
+            (list :position (1+ pos))
+            (dspec-function-name-position dspec `(:position 1)))))))
 
 (defun emacs-buffer-location-p (location)
   (and (consp location)
@@ -538,7 +580,7 @@ Return NIL if the symbol is unbound."
      (destructuring-bind (_ buffer offset string) location
        (declare (ignore _ string))
        (make-location `(:buffer ,buffer)
-                      (dspec-buffer-position dspec offset)
+                      (dspec-function-name-position dspec `(:offset ,offset 0))
                       hints)))))
 
 (defun make-dspec-progenitor-location (dspec location)

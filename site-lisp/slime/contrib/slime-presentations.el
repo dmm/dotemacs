@@ -671,10 +671,10 @@ output; otherwise the new input is appended."
     (let ((old-output (buffer-substring beg end))) ;;keep properties
       ;; Append the old input or replace the current input
       (cond (replace (goto-char slime-repl-input-start-mark))
-            (t (goto-char slime-repl-input-end-mark)
+            (t (goto-char (point-max))
                (unless (eq (char-before) ?\ )
                  (insert " "))))
-      (delete-region (point) slime-repl-input-end-mark)
+      (delete-region (point) (point-max))
       (let ((inhibit-read-only t))
         (insert old-output)))))
 
@@ -690,19 +690,15 @@ output; otherwise the new input is appended."
     (?r slime-copy-presentation-at-point-to-repl)
     (?p slime-previous-presentation)
     (?n slime-next-presentation)
-    (?  slime-mark-presentation)))
+    (?\  slime-mark-presentation)))
 
 (defun slime-presentation-init-keymaps ()
   (setq slime-presentation-command-map (make-sparse-keymap))
-  (loop for (key command) in slime-presentation-bindings
-        do (progn
-             ;; We bind both unmodified and with control.
-             (define-key slime-presentation-command-map (vector key) command)
-             (let ((modified (slime-control-modified-char key)))
-	       (define-key slime-presentation-command-map (vector modified) command))))
+  (slime-define-both-key-bindings slime-presentation-command-map 
+				  slime-presentation-bindings)
   (define-key slime-presentation-command-map "\M-o" 'slime-clear-presentations)
   ;; C-c C-v is the prefix for the presentation-command map.
-  (slime-define-key "\C-v" slime-presentation-command-map :prefixed t :inferior t)
+  (slime-define-key "\C-v" slime-presentation-command-map :prefixed t)
   (define-key slime-repl-mode-map "\C-c\C-v" slime-presentation-command-map)
   (define-key sldb-mode-map "\C-c\C-v" slime-presentation-command-map)
   (define-key slime-inspector-mode-map "\C-c\C-v" slime-presentation-command-map))
@@ -793,10 +789,8 @@ output; otherwise the new input is appended."
 The input is the region from after the last prompt to the end of
 buffer. Presentations of old results are expanded into code."
   (slime-buffer-substring-with-reified-output  slime-repl-input-start-mark
-                                               (if (and until-point-p
-                                                        (<= (point) slime-repl-input-end-mark))
-                                                   (point)
-                                                   slime-repl-input-end-mark)))    
+					       (point-max)))
+
 (defun slime-presentation-on-return-pressed ()
   (cond ((and (car (slime-presentation-around-or-before-point (point)))
 	      (< (point) slime-repl-input-start-mark))
@@ -858,8 +852,8 @@ even on Common Lisp implementations without weak hash tables."
 	    (lambda ()
 	      ;; Respect the syntax text properties of presentation.
 	      (set (make-local-variable 'parse-sexp-lookup-properties) t)
-	      (add-local-hook 'after-change-functions 
-			      'slime-after-change-function)))
+	      (slime-add-local-hook 'after-change-functions 
+                                    'slime-after-change-function)))
   (add-hook 'slime-event-hooks 'slime-dispatch-presentation-event)
   (setq slime-write-string-function 'slime-presentation-write)
   (add-hook 'slime-repl-return-hooks 'slime-presentation-on-return-pressed)

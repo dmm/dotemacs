@@ -2,7 +2,7 @@
 (menu-bar-mode -1)
 (tool-bar-mode -1)
 (setq visible-cursor nil)
-(color-theme-comidia)
+(color-theme-euphoria)
 
 (defvar user-temporary-file-directory
   (concat temporary-file-directory user-login-name "/"))

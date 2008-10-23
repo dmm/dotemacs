@@ -455,7 +455,15 @@ the flag if a symbol had to be interned."
     (*print-length*   . 20)
     (*print-escape*   . nil))) ; no package qualifiers.
 
-(defun decoded-arglist-to-string (arglist
+(defslimefun format-arglist-for-echo-area
+    (arglist &rest args
+	     &key operator highlight (package *package*)
+	     print-right-margin print-lines)
+  "Formats ARGLIST (given as string) for Emacs' echo area."
+  (declare (ignore operator highlight package print-right-margin print-lines))
+  (apply #'decoded-arglist-to-string (decode-arglist (read-from-string arglist)) args))
+
+(defun decoded-arglist-to-string (decoded-arglist
                                   &key operator highlight (package *package*)
                                   print-right-margin print-lines)
   "Print the decoded ARGLIST for display in the echo area.  The
@@ -469,16 +477,18 @@ If OPERATOR is non-nil, put it in front of the arglist."
 	(let ((*package* package)
 	      (*print-right-margin* print-right-margin)
 	      (*print-lines* print-lines))       
-	  (print-arglist arglist :operator operator :highlight highlight))))))
+	  (print-arglist decoded-arglist :operator operator :highlight highlight))))))
 
 (defslimefun variable-desc-for-echo-area (variable-name)
   "Return a short description of VARIABLE-NAME, or NIL."
   (with-buffer-syntax ()
     (let ((sym (parse-symbol variable-name)))
       (if (and sym (boundp sym))
-          (let ((*print-pretty* nil) (*print-level* 4)
-                (*print-length* 10) (*print-circle* t))
-             (format nil "~A => ~A" sym (symbol-value sym)))))))
+          (let ((*print-pretty* t) (*print-level* 4)
+                (*print-length* 10) (*print-lines* 1))
+	    (call/truncated-output-to-string 
+	     75 (lambda (s)
+		  (format s "~A => ~A" sym (symbol-value sym)))))))))
 
 (defun decode-required-arg (arg)
   "ARG can be a symbol or a destructuring pattern."
