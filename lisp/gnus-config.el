@@ -4,40 +4,38 @@
 
 (setq gnus-select-method '(nntp "news.kc.sbcglobal.net"))
 
-
-
 (setq gnus-secondary-select-methods
       '(
-	(nnimap "minermail"
-		(nnimap-address "minermail.mst.edu")
-		(nnimap-server-port 993)
-		(nnimap-stream tls)
-		(nnimap-list-pattern "INBOX" "INBOX.*")
-		(nnimap-authinfo-file "/home/dmm/.imap-authinfo"))
-
-	(nnimap "mattli.us"
-		(nnimap-address "mattli.us")
-		(nnimap-server-port 993)
-		(nnimap-stream tls)
+	(nnimap "localhost"
+		(nnimap-address "localhost")
 		(remove-prefix "INBOX.")
-		(nnimap-list-pattern "INBOX" "INBOX.*")
-;		(nnimap-list-pattern "INBOX")
-		(nnimap-authinfo-file "/home/dmm/.imap-authinfo")
-		)
+		(nnimap-authinfo-file "/home/dmm/.imap-authinfo"))))
 
-	)
-      )
+(setq nnimap-split-inbox
+        '("INBOX"))
+
+(setq nnimap-split-predicate "UNDELETED")
+
+(setq nnimap-split-crosspost nil)
+
+(setq nnimap-split-rule
+      '(("INBOX.bitc-dev"
+	 "To:.*\\(bitc-dev@bitc-lang.org\\|bitc-dev@coyotos.org\\)")
+	("INBOX.openbsd-misc"
+	 "\\(\\(C\\|c\\)\\(C\\|c\\)\\|\\(T\\|t\\)\\(O\\|o\\)\\)\\:.*misc@.*openbsd.org.*")
+        ("INBOX.openbsd-tech"
+	 "\\(\\(C\\|c\\)\\(C\\|c\\)\\|\\(T\\|t\\)\\(O\\|o\\)\\)\\:.*tech@.*openbsd.org")
+	("INBOX.cells-devel"
+	 "\\(\\(C\\|c\\)\\(C\\|c\\)\\|\\(T\\|t\\)\\(O\\|o\\)\\)\\:.*cells-devel@common-lisp.net")
+	("INBOX.cells-gtk-devel"
+	 "\\(\\(C\\|c\\)\\(C\\|c\\)\\|\\(T\\|t\\)\\(O\\|o\\)\\)\\:.*cells-gtk-devel@common-lisp.net")
+	("INBOX.gpsd-users"
+	 "\\(\\(C\\|c\\)\\(C\\|c\\)\\|\\(T\\|t\\)\\(O\\|o\\)\\)\\:.*gpsd-users@\\(berlios.de\\|lists.berlios.de\\)")
+	("INBOX.openbsd-ports"
+	 "\\(\\(C\\|c\\)\\(C\\|c\\)\\|\\(T\\|t\\)\\(O\\|o\\)\\)\\:.*ports@openbsd.org")))
 
 
-(setq gnus-secondary-select-methods
-      '(
-	(nnimap "mattli.us"
-		(nnimap-address "mattlimech.com")
-		(nnimap-server-port 993)
-		(nnimap-stream tls))))
-		
-		
 (setq nnimap-expunge-on-close "never")
-(setq gnus-permanently-visible-groups "e") ;Always display subscribed groups with e in name ;)
+(setq gnus-permanently-visible-groups "i") ;Always display subscribed groups with e in name ;)
 
 
