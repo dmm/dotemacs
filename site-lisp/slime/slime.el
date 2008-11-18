@@ -64,7 +64,7 @@
 (when (featurep 'xemacs)
   (require 'overlay))
 (require 'easymenu)
-(eval-when-compile
+(eval-when (compile)
   (require 'arc-mode)
   (require 'apropos)
   (require 'outline)
@@ -1050,12 +1050,13 @@ Restore the window configuration unless it was changed since we
 last activated the buffer."
   (interactive)
   (let ((buffer (current-buffer)))
-    (when (slime-popup-buffer-snapshot-unchanged-p)
-      (slime-popup-buffer-restore-snapshot))
-    (with-current-buffer buffer
-      (setq slime-popup-buffer-saved-emacs-snapshot nil) ; buffer-local var!
-      (cond (kill-buffer-p (kill-buffer nil))
-            (t (bury-buffer))))))
+    ;;(when (slime-popup-buffer-snapshot-unchanged-p)
+    ;;  (slime-popup-buffer-restore-snapshot))
+    (setq slime-popup-buffer-saved-emacs-snapshot nil) ; buffer-local var!
+    (delete-windows-on buffer (selected-frame))
+    (bury-buffer buffer) 
+    (when kill-buffer-p
+      (kill-buffer buffer))))
 
 (defun slime-popup-buffer-snapshot-unchanged-p ()
   (equalp (slime-current-emacs-snapshot-fingerprint)
@@ -2979,11 +2980,10 @@ The input is the region from after the last prompt to the end of
 buffer."
   (or (run-hook-with-args-until-success 'slime-repl-current-input-hooks 
                                         until-point-p)
-      (buffer-substring-no-properties
-       slime-repl-input-start-mark 
-       (if until-point-p 
-           (point) 
-         (point-max)))))
+      (buffer-substring-no-properties slime-repl-input-start-mark 
+                                      (if until-point-p 
+                                          (point) 
+                                        (point-max)))))
 
 (defun slime-property-position (text-property &optional object)
   "Return the first position of TEXT-PROPERTY, or nil."
@@ -3403,7 +3403,8 @@ See `slime-repl-previous-input'."
   (cond ((slime-repl-history-search-in-progress-p)
          slime-repl-history-pattern)
         (use-current-input
-         (let ((str (slime-repl-current-input)))
+         (assert (<= slime-repl-input-start-mark (point)))
+         (let ((str (slime-repl-current-input t)))
            (cond ((string-match "^[ \n]*$" str) nil)
                  (t (concat "^" (regexp-quote str))))))
         (t nil)))
@@ -3815,6 +3816,25 @@ Also rearrange windows."
            (pop-to-buffer buffer)))
     (switch-to-buffer buffer)
     (goto-char (point-max))))
+
+(defun slime-redirect-inferior-output (&optional noerror)
+  "Redirect output of the inferior-process to the REPL buffer."
+  (interactive)
+  (let ((proc (slime-inferior-process)))
+    (cond (proc
+           (let ((filter (slime-rcurry #'slime-inferior-output-filter 
+                                       (slime-current-connection))))
+             (set-process-filter proc filter)))
+	  (noerror)
+	  (t (error "No inferior lisp process")))))
+
+(defun slime-inferior-output-filter (proc string conn)
+  (cond ((eq (process-status conn) 'closed)
+         (message "Connection closed.  Removing inferior output filter.")
+         (message "Lost output: %S" string)
+         (set-process-filter proc nil))
+        (t
+         (slime-output-filter conn string))))
 
 
 ;;;;; Cleanup after a quit
@@ -5384,9 +5404,9 @@ inserted in the current buffer."
   (when msg (slime-insert-transcript-delimiter msg))
   (setq slime-repl-popup-on-output (not no-popups))
   (setq cont (or cont #'slime-display-eval-result))
-  (slime-rex (cont) (form)
-    ((:ok value) (slime-eval-with-transcript-cont t value cont))
-    ((:abort) (slime-eval-with-transcript-cont nil nil nil))))
+  (slime-rex (cont (buffer (current-buffer))) (form)
+    ((:ok value) (slime-eval-with-transcript-cont t value cont buffer))
+    ((:abort) (slime-eval-with-transcript-cont nil nil nil buffer))))
 
 (defun slime-insert-transcript-delimiter (string)
   (with-current-buffer (slime-output-buffer)
@@ -5403,14 +5423,15 @@ inserted in the current buffer."
       (slime-mark-output-start))
     (slime-repl-show-maximum-output)))
 
-(defun slime-eval-with-transcript-cont (ok result cont)
+(defun slime-eval-with-transcript-cont (ok result cont buffer)
   (run-with-timer 0.2 nil (lambda ()
                             (setq slime-repl-popup-on-output nil)))
   (with-current-buffer (slime-output-buffer)
     (save-excursion (slime-repl-insert-prompt))
-    (slime-repl-show-maximum-output)
+    (slime-repl-show-maximum-output))
+  (with-current-buffer buffer
     (cond (ok (funcall cont result))
-        (t (message "Evaluation aborted.")))))
+          (t (message "Evaluation aborted.")))))
 
 (defun slime-eval-describe (form)
   "Evaluate FORM in Lisp and display the result in a new buffer."
@@ -6374,12 +6395,11 @@ This variable specifies both what was expanded and how.")
   (let ((string (or string
                     (car (slime-sexp-at-point-for-macroexpansion)))))
     (setq slime-eval-macroexpand-expression `(,expander ,string))
-    (slime-eval-async slime-eval-macroexpand-expression 
-                      (slime-rcurry #'slime-show-macroexpansion 
-                                    (slime-create-macroexpansion-buffer)))))
+    (slime-eval-async slime-eval-macroexpand-expression
+                      #'slime-show-macroexpansion)))
 
-(defun slime-show-macroexpansion (expansion buffer)
-  (pop-to-buffer buffer)
+(defun slime-show-macroexpansion (expansion &optional buffer)
+  (pop-to-buffer (or buffer (slime-create-macroexpansion-buffer)))
   (let ((inhibit-read-only t))
     (erase-buffer)
     (insert expansion)
@@ -8832,7 +8852,7 @@ BODY returns true if the check succeeds."
            (= orig-pos (point)))))
     (slime-check-top-level))
 
-(def-slime-test find-definition.2
+(def-slime-test (find-definition.2 ("ccl" "allegro"))
     (buffer-content buffer-package snippet)
     "Check that we're able to find definitions even when
 confronted with nasty #.-fu."
@@ -8896,7 +8916,7 @@ Confirm that EXPECTED-ARGLIST is displayed."
       ("swank::compile-string-for-emacs"
        "(swank::compile-string-for-emacs string buffer position directory debug)")
       ("swank::connection.socket-io"
-       "(swank::connection.socket-io \\(struct\\(ure\\)?\\|object\\|instance\\))")
+       "(swank::connection.socket-io \\(struct\\(ure\\)?\\|object\\|instance\\|x\\))")
       ("cl:lisp-implementation-type" "(cl:lisp-implementation-type )")
       ("cl:class-name" 
        "(cl:class-name \\(class\\|object\\|instance\\|structure\\))"))
@@ -8908,7 +8928,7 @@ Confirm that EXPECTED-ARGLIST is displayed."
                        #'string-match))
   (slime-check-top-level))
 
-(def-slime-test (compile-defun ("allegro" "lispworks" "clisp"))
+(def-slime-test (compile-defun ("allegro" "lispworks" "clisp" "ccl"))
     (program subform)
     "Compile PROGRAM containing errors.
 Confirm that SUBFORM is correctly located."
@@ -9483,16 +9503,8 @@ on *DEBUGGER-HOOK*."
                                (get-buffer-window (sldb-get-default-buffer))))
                         5)
   (with-current-buffer (sldb-get-default-buffer)
-    (sldb-invoke-restart (slime-test-find-top-level-restart)))
+    (sldb-quit))
   (slime-sync-to-top-level 5))
-
-(defun slime-test-find-top-level-restart ()
-  (let ((case-fold-search t))
-    (or (loop for i from 0  for (name str) in sldb-restarts 
-              when (string-match "SLIME's top level" str) return i)
-        (loop for i from 0  for (name str) in sldb-restarts 
-              when (and (string-match "abort" name) (string-match "top" str))
-              return i))))
 
 (def-slime-test interrupt-in-blocking-read
     ()
@@ -9545,7 +9557,7 @@ CONTINUES  ... how often the continue restart should be invoked"
                             (lambda () (equal (sldb-level) level))
                             2)))
   (with-current-buffer (sldb-get-default-buffer)
-    (sldb-invoke-restart (slime-test-find-top-level-restart)))
+    (sldb-quit))
   (slime-sync-to-top-level 1))
     
 (def-slime-test disconnect
