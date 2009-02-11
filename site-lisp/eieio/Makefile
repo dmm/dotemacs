@@ -11,7 +11,7 @@ ede_FILES=Project.ede Makefile
 
 eieio_LISP=eieio.el eieio-comp.el eieio-opt.el eieio-custom.el eieio-doc.el eieio-base.el
 EMACS=emacs
-LOADPATH=
+LOADPATH=../*
 examples_LISP=tree.el call-tree.el chart.el eieio-speedbar.el linemark.el
 eieio_info_TEXINFOS=eieio.texi
 MAKEINFO=makeinfo
