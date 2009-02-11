@@ -85,3 +85,16 @@
 ;; yesssssss
 (shell)
 
+(custom-set-variables
+  ;; custom-set-variables was added by Custom.
+  ;; If you edit it by hand, you could mess it up, so be careful.
+  ;; Your init file should contain only one such instance.
+  ;; If there is more than one, they won't work right.
+ '(jde-jdk (quote ("1.6.0")))
+ '(jde-jdk-registry (quote (("1.5.0" . "/usr/local/jdk-1.5.0") ("1.6.0" . "/usr/local/jdk-1.6.0")))))
+(custom-set-faces
+  ;; custom-set-faces was added by Custom.
+  ;; If you edit it by hand, you could mess it up, so be careful.
+  ;; Your init file should contain only one such instance.
+  ;; If there is more than one, they won't work right.
+ )
