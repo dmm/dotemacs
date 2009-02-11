@@ -1,0 +1,457 @@
+hunk ./README 14
+-Version 20 is required.  Download from
++Version 21 is required.  Download from
+hunk ./redshank.el 567
+-        (kill-region-new (point-min) (point-max))
++        (paredit-hack-kill-region (point-min) (point-max))
+hunk ./README 7
+-Redshank is developed and tested with GNU Emacs 22.0.91.1.  Patches to
++Redshank is developed and tested with GNU Emacs 22.2.50.1.  Patches to
+hunk ./README 29
+-with at least SBCL 1.0.10, OpenMCL 1.1-pre-070722 (DarwinX8664), and
++with at least SBCL 1.0.19, OpenMCL 1.1-pre-070722 (DarwinX8664), and
+hunk ./redshank.el 12
+-;;   Called also redleg and _clee_.
++;;   Called also redleg and _CLEE_.
+hunk ./redshank.el 26
+-;;   (add-hook '...-mode-hook 'turn-on-redshank-mode)
++;;   (add-hook 'lisp-mode-hook 'turn-on-redshank-mode)
++;;   (autoload 'asdf-mode "redshank"
++;;     "Minor mode for editing ASDF files." t)
++;;   (autoload 'turn-on-asdf-mode "redshank"
++;;     "Turn on ASDF mode.  Please see function `asdf-mode'." t)
+hunk ./redshank.el 50
+-;;   (add-to-list 'auto-insert-alist '(lisp-mode . redshank-in-package-skeleton))
+-;;   (add-to-list 'auto-insert-alist '(asdf-mode . redshank-asdf-defsystem-skeleton))
++;;   (add-to-list 'auto-insert-alist
++;;                '(lisp-mode . [redshank-mode-line-skeleton
++;;                               redshank-in-package-skeleton]))
++;;   (add-to-list 'auto-insert-alist
++;;                '(asdf-mode . [redshank-mode-line-skeleton
++;;                               redshank-asdf-defsystem-skeleton]))
+hunk ./redshank.el 59
+-;; This code was tested with Paredit 20, and should run at least in
++;; This code was tested with Paredit 21, and should run at least in
+hunk ./redshank.el 118
++(defcustom redshank-canonical-slot-name-function 'identity
++  "*Function which, given a slot-name, returns a canonicalized
++slot name.  Use it to enforce certain slot naming style."
++  :type  '(radio
++           (function-item redshank-canonical-slot-name/%)
++           (function-item identity)
++           (function :tag "Other"))
++  :group 'redshank)
++
+hunk ./redshank.el 132
++           (function-item redshank-accessor-name/ref)
+hunk ./redshank.el 137
+-(defcustom redshank-canonical-slot-name-function 'identity
+-  "*Function which, given a slot-name, returns a canonicalized
+-slot name.  Use it to enforce certain slot naming style."
++(defcustom redshank-initarg-name-function 'redshank-initarg-name/keyword
++  "*Function which, given a slot-name, returns a fitting initarg name."
+hunk ./redshank.el 140
+-           (function-item redshank-canonical-slot-name/%)
+-           (function-item identity)
++           (function-item redshank-initarg-name/keyword)
++           (function-item redshank-initarg-name/symbol)
+hunk ./redshank.el 145
++(defcustom redshank-canonical-package-designator-function
++  'redshank-package-designator/uninterned-symbol
++  "*Function which, given a package-name, returns a canonicalized
++package designator."
++  :type  '(radio
++           (function-item redshank-package-designator/uninterned-symbol)
++           (function-item redshank-package-designator/keyword)
++           (function-item redshank-package-designator/symbol)
++           (function-item redshank-package-designator/string)
++           (function :tag "Other"))
++  :group 'redshank)
+hunk ./redshank.el 231
++    ("I" . redshank-in-package-skeleton)
++    ("M" . redshank-mode-line-skeleton)
+hunk ./redshank.el 275
++(defun redshank-accessor-name/% (slot-name)
++  "Removes preceding percent signs (%) from slot names."
++  (if (string-match "^%+\\(.*\\)$" slot-name)
++      (match-string-no-properties 1 slot-name)
++    slot-name))
++
+hunk ./redshank.el 283
+-  (concat "get-" slot-name))
++  (concat "get-" (redshank-accessor-name/% slot-name)))
+hunk ./redshank.el 287
+-  (concat slot-name "-of"))
++  (concat (redshank-accessor-name/% slot-name) "-of"))
+hunk ./redshank.el 289
+-(defun redshank-accessor-name/% (slot-name)
+-  "Removes preceding percent signs (%) from slot names."
+-  (string-match "^%+\\(.*\\)$" slot-name)
+-  (or (match-string 1 slot-name)
+-      slot-name))
++(defun redshank-accessor-name/ref (slot-name)
++  "SLOT-REF style accessor names."
++  (concat (redshank-accessor-name/% slot-name) "-ref"))
+hunk ./redshank.el 312
++(defun redshank-initarg-name (slot-name)
++  (if (functionp redshank-initarg-name-function)
++      (funcall redshank-initarg-name-function slot-name)
++    (redshank-initarg-name/keyword slot-name)))
++
++(defun redshank-initarg-name/keyword (slot-name)
++  (concat ":" (redshank-accessor-name/% slot-name)))
++
++(defun redshank-initarg-name/symbol (slot-name)
++  (concat "'" (redshank-accessor-name/% slot-name)))
++
++;;;
+hunk ./redshank.el 365
++
++(defun redshank--trim-whitespace (string)
++  (when (string-match "^\\s *\\(.*?\\)\\s *$" string)
++    (match-string-no-properties 1 string)))
++
++(defun redshank-canonical-package-name (package-name)
++  (and package-name (not (string= "" package-name))
++       ;; very naive
++       (lexical-let ((package-name (redshank--trim-whitespace package-name)))
++         (if (string-match "^#?:\\(.*\\)$" package-name)
++             (match-string-no-properties 1 package-name)
++           package-name))))
++
++(defun redshank-canonical-package-designator (package-name)
++  (and package-name (not (string= "" package-name))
++       (funcall redshank-canonical-package-designator-function
++                (redshank-canonical-package-name package-name))))
++
++(defun redshank-package-designator/uninterned-symbol (package-name)
++  (concat "#:" (downcase package-name)))
++
++(defun redshank-package-designator/keyword (package-name)
++  (concat ":" (downcase package-name)))
++
++(defun redshank-package-designator/symbol (package-name)
++  (downcase package-name))
++
++(defun redshank-package-designator/string (package-name)
++  (prin1-to-string (upcase package-name)))
++
+hunk ./redshank.el 456
++;; lenient variant of `slime-read-package-name'
++(defun redshank-read-package-name (prompt &optional initial-value)
++  "Read a package name from the minibuffer, prompting with PROMPT."
++  (let ((completion-ignore-case t))
++    (redshank-canonical-package-name
++     (completing-read prompt (when (featurep 'slime)
++                               (slime-bogus-completion-alist 
++                                (slime-eval 
++                                 `(swank:list-all-package-names t))))
++                      nil nil initial-value nil initial-value))))
++
++(defun redshank-find-potential-buffer-package ()
++  (redshank-canonical-package-name
++   (or slime-buffer-package
++       (and (fboundp 'slime-find-buffer-package)
++            (slime-find-buffer-package))
++       (let ((case-fold-search t)
++             (regexp (concat "^(\\(cl:\\|common-lisp:\\)?defpackage\\>[ \t']*"
++                             "\\([^()]+\\)")))
++         (save-excursion
++           (when (or (re-search-backward regexp nil t)
++                     (re-search-forward  regexp nil t))
++             (match-string-no-properties 2)))))))
++
+hunk ./redshank.el 833
+-    (let ((slot-name (thing-at-point 'symbol)))
++    (let ((slot-name (substring-no-properties (thing-at-point 'symbol))))
+hunk ./redshank.el 843
+-                " :initarg :" slot-name)
++                " :initarg " (redshank-initarg-name slot-name))
+hunk ./redshank.el 907
+-              (concat " Coding:"
+-                      (symbol-name
+-                       (coding-system-get buffer-file-coding-system
+-                                          'mime-charset)))
++              (let ((coding (coding-system-get buffer-file-coding-system
++                                               'mime-charset)))
++                (if coding (concat " Coding:" (symbol-name coding))
++                  ""))
+hunk ./redshank.el 917
+-  (slime-read-package-name "Package: ")
++  (redshank-canonical-package-designator
++   (redshank-read-package-name "Package: "
++                               (redshank-find-potential-buffer-package)))
+hunk ./redshank.el 922
+-  "in-package #:" str
++  "in-package " str
+hunk ./redshank.el 928
+-  (skeleton-read "Package: " (or (ignore-errors
+-                                   (file-name-sans-extension
+-                                    (file-name-nondirectory
+-                                     (buffer-file-name))))
+-                                 "TEMP"))
+-  '(paredit-open-parenthesis) "defpackage #:" str
++  (redshank-canonical-package-designator
++   (skeleton-read "Package: " (or (ignore-errors
++                                    (file-name-sans-extension
++                                     (file-name-nondirectory
++                                      (buffer-file-name))))
++                                  "TEMP")))
++  '(paredit-open-parenthesis) "defpackage " str
+hunk ./redshank.el 936
+-     ":nicknames" ("Nickname: " " #:" str)
++     ":nicknames" ((redshank-canonical-package-designator
++                    (skeleton-read "Nickname: ")) " " str)
+hunk ./redshank.el 943
+-   ":use #:cl" ((downcase (slime-read-package-name "USEd package: ")) " #:" str)
++  ":use " (redshank-canonical-package-designator "cl")
++          ((redshank-canonical-package-designator
++            (redshank-read-package-name "USEd package: ")) " " str)
+hunk ./redshank.el 1002
+-       " :initarg :" str
++       " :initarg " (redshank-initarg-name str)
+hunk ./redshank.el 1020
+-   " :initarg :" str
++   " :initarg " (redshank-initarg-name str)
+hunk ./redshank.el 1041
++;;;###autoload
+hunk ./redshank.el 1049
++;;;###autoload
++(defun turn-on-asdf-mode ()
++  "Turn on ASDF mode.  Please see function `asdf-mode'.
++
++This function is designed to be added to hooks, for example:
++  \(add-hook 'lisp-mode-hook 'turn-on-asdf-mode)"
++  (interactive)
++  (asdf-mode +1))
++
+addfile ./redshank-loader.el
+hunk ./redshank-loader.el 1
++;;; redshank-loader.el --- Loader for Redshank
++
++;; Copyright (C) 2008  Michael Weber
++
++;; Author: Michael Weber <michaelw@foldr.org>
++;; Keywords: languages, lisp
++
++;;; Setup
++;; See file redshank.el
++
++;;; Code
++(let ((redshank-path (file-name-directory load-file-name)))
++  (when redshank-path
++    (add-to-list 'load-path redshank-path)))
++
++(autoload 'redshank-mode "redshank"
++  "Minor mode for editing and refactoring (Common) Lisp code."
++  t)
++(autoload 'turn-on-redshank-mode "redshank"
++  "Turn on Redshank mode.  Please see function `redshank-mode'."
++  t)
++
++(autoload 'asdf-mode "redshank"
++  "Minor mode for editing ASDF files." t)
++(autoload 'turn-on-asdf-mode "redshank"
++  "Turn on ASDF mode.  Please see function `asdf-mode'." t)
++
++;;;###autoload
++(defun redshank-setup (hooks &optional autoinsertp)
++  "Installs `redshank-mode' on major mode hooks listed in HOOKS.
++If AUTOINSERTP is non-nil and `auto-insert-mode' is available,
++activate support for that, too."
++  (dolist (hook hooks)
++    (add-hook hook 'turn-on-redshank-mode))
++  (add-to-list 'auto-mode-alist '("\\.asdf?\\'" . asdf-mode))
++  (when autoinsertp
++    (eval-after-load "autoinsert"
++      '(progn
++         (add-to-list 'auto-insert-alist
++                      '(lisp-mode . [redshank-mode-line-skeleton
++                                     redshank-in-package-skeleton]))
++         (add-to-list 'auto-insert-alist
++                      '(asdf-mode . [redshank-mode-line-skeleton
++                                     redshank-asdf-defsystem-skeleton]))))))
++
++(provide 'redshank-loader)
++;;; redshank-loader.el ends here
+hunk ./redshank.el 4
+-;; Copyright (C) 2006, 2007  Michael Weber
++;; Copyright (C) 2006, 2007, 2008  Michael Weber
+hunk ./redshank.el 19
+-;;   (add-to-list 'load-path "/path/to/redshank/")
+-;;   (autoload 'redshank-mode "redshank"
+-;;     "Minor mode for editing and refactoring (Common) Lisp code."
+-;;     t)
+-;;   (autoload 'turn-on-redshank-mode "redshank"
+-;;     "Turn on Redshank mode.  Please see function `redshank-mode'."
+-;;     t)
+-;;   (add-hook 'lisp-mode-hook 'turn-on-redshank-mode)
+-;;   (autoload 'asdf-mode "redshank"
+-;;     "Minor mode for editing ASDF files." t)
+-;;   (autoload 'turn-on-asdf-mode "redshank"
+-;;     "Turn on ASDF mode.  Please see function `asdf-mode'." t)
++;;   (require 'redshank-loader
++;;            "/path/redshank/redshank-loader")
++;;            
++;;   (eval-after-load "redshank-loader"
++;;      `(redshank-setup '(lisp-mode-hook
++;;                         slime-repl-mode-hook) t))
+hunk ./redshank.el 42
+-;; `redshank-mode-line-skeleton') are good candidates for autoinsert:
+-;;
+-;;   (add-to-list 'auto-insert-alist
+-;;                '(lisp-mode . [redshank-mode-line-skeleton
+-;;                               redshank-in-package-skeleton]))
+-;;   (add-to-list 'auto-insert-alist
+-;;                '(asdf-mode . [redshank-mode-line-skeleton
+-;;                               redshank-asdf-defsystem-skeleton]))
+-;;   (add-to-list 'auto-mode-alist '("\\.asdf?\\'" . asdf-mode))
+-;;
++;; `redshank-mode-line-skeleton') are good candidates for autoinsert.
++;; See `redshank-setup' (in file redshank-loader.el) for examples.
+hunk ./redshank.el 447
+-     (completing-read prompt (when (featurep 'slime)
+-                               (slime-bogus-completion-alist 
+-                                (slime-eval 
++     (completing-read prompt (when (and (featurep 'slime)
++                                        (redshank-connected-p))
++                               (slime-bogus-completion-alist
++                                (slime-eval
+hunk ./redshank.el 985
+-       ;; Ugly, but skeleton-read _must_ have the first str literal 
++       ;; Ugly, but skeleton-read _must_ have the first str literal
+hunk ./redshank.el 987
+-       (redshank-canonical-slot-name str) 
++       (redshank-canonical-slot-name str)
+hunk ./redshank.el 1003
+-   ;; Ugly, but skeleton-read _must_ have the first str literal 
++   ;; Ugly, but skeleton-read _must_ have the first str literal
+hunk ./redshank.el 1005
+-   (redshank-canonical-slot-name str)    
++   (redshank-canonical-slot-name str)
+hunk ./redshank.el 807
+-  (...
+-   (slot-n |)
++  \(...
++   \(slot-n |)
+hunk ./redshank.el 812
+-  (...
+-   (slot-n :accessor get-slot-n :initarg :slot-n)|
++  \(...
++   \(slot-n :accessor get-slot-n :initarg :slot-n)|
+hunk ./redshank.el 876
+-                           (looking-at "\\s-\\|\\s(")))
++                           (looking-at "\\s-\\|\\s\(")))
+hunk ./redshank.el 880
+-               (unless (or (eolp) (looking-at "\\s-\\|\\s)"))
++               (unless (or (eolp) (looking-at "\\s-\\|\\s\)"))
+hunk ./redshank.el 1034
+-  (redshank-mode +1))
++  (add-hook 'asdf-mode-hook 'turn-on-redshank-mode))
+hunk ./redshank.el 1043
+-  (asdf-mode +1))
++  (asdf-mode))
+hunk ./redshank-loader.el 12
+-(let ((redshank-path (file-name-directory load-file-name)))
++(let* ((redshank-file (or (locate-library "redshank")
++                          load-file-name))
++       (redshank-path (and redshank-file
++                           (file-name-directory redshank-file))))
+hunk ./redshank.el 170
++(defvar redshank-form-generator-alist
++  '((lisp-mode
++     ("defclass"   . redshank-defclass-skeleton)
++     ("defpackage" . redshank-defpackage-skeleton)
++     ("in-package" . redshank-in-package-skeleton)
++     ("defsystem"  . redshank-asdf-defsystem-skeleton)
++     (t            . redshank-lisp-generate-form))
++    (emacs-lisp-mode
++     (t . redshank-elisp-generate-form)))
++  "Alist of shape \((MODE . MODE-ALIST)...).  MODE-ALIST is an
++alist of shape \((KEY . GENERATOR)...), where key is a either
++a string, a function, or the symbol T, and GENERATOR a nullary
++function.")
++
+hunk ./redshank.el 245
++    (define-key map (kbd "M-S-<mouse-1>") 'redshank-ignore-event)
++    (define-key map (kbd "M-S-<drag-mouse-1>") 'redshank-ignore-event)
++    (define-key map (kbd "M-S-<down-mouse-1>") 'redshank-generate-thing-at-point)
+hunk ./redshank.el 483
++
++(defun redshank--assoc-match (key alist)
++  (loop for entry in alist do
++        (cond ((stringp (car entry))
++               (when (eq t (compare-strings (car entry) 0 nil
++                                            key 0 nil
++                                            case-fold-search))
++                 (return entry)))
++              ((functionp (car entry))
++               (when (funcall (car entry) key)
++                 (return entry)))
++              ((eq t (car entry))
++               (return entry)))))
+hunk ./redshank.el 918
++;;;
++(defvar redshank-thing-at-point)
++
++(defun redshank-elisp-generate-form (&optional name)
++  (interactive "*")
++  (require 'eldoc)
++  (let* ((sym (intern-soft (or name redshank-thing-at-point)))
++         (args (eldoc-function-argstring sym)))
++    (save-match-data
++      (string-match "\\`[^ )]* ?" args)
++      (setq args (substring args (match-end 0)))
++      (insert (format "(%s " sym))
++      (let ((point (point)))
++        (insert args)
++        (goto-char point)))))
++
++(defun redshank-lisp-generate-form (&optional name)
++  (interactive "*")
++  (insert "(" (or name redshank-thing-at-point) " )")
++  (backward-char +1)
++  (when (fboundp 'slime-complete-form)
++    (slime-complete-form)))
++
++(defun redshank-generate-thing-at-point (event)
++  "Generates a (mode-specific) form corresponding to the symbol at point.
++The actual generator function is determined by
++`redshank-form-generator-alist'.
++
++Generators can access the actual value dispatched on via
++REDSHANK-THING-AT-POINT."
++  (interactive "*e")
++  (let* ((echo-keystrokes 0)
++	 (start-posn (event-start event))
++	 (start-point (posn-point start-posn))
++	 (start-window (posn-window start-posn))
++         (redshank-thing-at-point
++          (with-current-buffer (window-buffer start-window)
++            (save-excursion
++              (goto-char start-point)
++              (thing-at-point 'symbol))))
++         (mode-table (assq major-mode redshank-form-generator-alist))
++         (generator (redshank--assoc-match redshank-thing-at-point
++                                           (cdr mode-table))))
++    (if generator
++        (if (interactive-p)
++            (call-interactively (cdr generator))
++          (funcall (cdr generator)))
++      (message "Don't know a generator for `%s'." redshank-thing-at-point))))
++
+hunk ./redshank.el 904
++                         (minibufferp)
+hunk ./redshank.el 911
+-               (unless (or (eolp) (looking-at "\\s-\\|\\s\)"))
++               (unless (or (eolp)
++                           (minibufferp)
++                           (looking-at "\\s-\\|\\s\)"))
+hunk ./redshank.el 904
+-                         (minibufferp)
++                         (and (minibufferp)
++                              (= (point) (minibuffer-prompt-end)))
+hunk ./redshank.el 913
+-                           (minibufferp)
++                           (and (minibufferp)
++                                (= (point) (minibuffer-prompt-end)))

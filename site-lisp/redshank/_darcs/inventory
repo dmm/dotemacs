@@ -258,3 +258,45 @@ Michael Weber <michaelw@foldr.org>**20080801183140
 ] 
 [redshank.el (redshank-copy-thing-at-point): indent copied region
 Michael Weber <michaelw@foldr.org>**20080801183225] 
+[Follow paredit.el rename of kill-region-new to paredit-hack-kill-region.
+Sasha Kovar <sasha-lisp@arcocene.org>**20080817171127] 
+[README, redshank.el: documentation changes
+Michael Weber <michaelw@foldr.org>**20080930171111] 
+[redshank.el (redshank-canonical-slot-name-function): new customizable variable
+Michael Weber <michaelw@foldr.org>**20080930171924
+ (redshank-initarg-name-function): new customizable variable
+ (redshank-canonical-package-designator-function): new customizable variable
+ 
+ (redshank-read-package-name): new function, provides smarter defaults
+ for redshank-in-package-skeleton
+ 
+ (turn-on-asdf-mode): new function
+ 
+ (redshank-keys): new keybindings for redshank-in-package-skeleton and
+ redshank-mode-line-skeleton
+] 
+[redshank-loader.el: new file
+Michael Weber <michaelw@foldr.org>**20081001092054
+ Simplified installation
+ 
+] 
+[redshank.el: escape parentheses in (doc)strings,
+Michael Weber <michaelw@foldr.org>**20081002070650
+ 
+ (asdf-mode): use add-hook instead of activating redshank-mode
+ directly; asdf-mode has no arguments
+ 
+ 
+] 
+[redshank-loader.el: better detection of installation path
+Michael Weber <michaelw@foldr.org>**20081002071536] 
+[redshank.el (redshank-form-generator-alist): new variable
+Michael Weber <michaelw@foldr.org>**20081002083406
+ (redshank-generate-thing-at-point): new function, bound to M-S-<down-mouse-1>
+] 
+[redshank.el (redshank-copy-thing-at-point): don't add spaces when in minibuffer
+Michael Weber <michaelw@foldr.org>**20081002083617] 
+[redshank.el (redshank-copy-thing-at-point): don't add spaces at the
+Michael Weber <michaelw@foldr.org>**20081002084222
+ beginning of the minibuffer
+] 
