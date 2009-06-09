@@ -35,7 +35,7 @@
            ;; interrupt macro for the backend
            #:*pending-slime-interrupts*
            #:check-slime-interrupts
-           #:slime-interrupt-queued
+           #:*interrupt-queued-handler*
            ;; inspector related symbols
            #:emacs-inspect
            #:label-value-line
@@ -173,8 +173,9 @@ Backends implement these functions using DEFIMPLEMENTATION."
 (defun warn-unimplemented-interfaces ()
   "Warn the user about unimplemented backend features.
 The portable code calls this function at startup."
-  (warn "These Swank interfaces are unimplemented:~% ~:<~{~A~^ ~:_~}~:>"
-        (list (sort (copy-list *unimplemented-interfaces*) #'string<))))
+  (let ((*print-pretty* t))
+    (warn "These Swank interfaces are unimplemented:~% ~:<~{~A~^ ~:_~}~:>"
+          (list (sort (copy-list *unimplemented-interfaces*) #'string<)))))
 
 (defun import-to-swank-mop (symbol-list)
   (dolist (sym symbol-list)
@@ -580,6 +581,10 @@ NIL."
 		   (frob new-form t)
 		   (values new-form expanded)))))
     (frob form env)))
+
+(definterface format-string-expand (control-string)
+  "Expand the format string CONTROL-STRING."
+  (macroexpand `(formatter ,control-string)))
 
 (definterface describe-symbol-for-emacs (symbol)
    "Return a property list describing SYMBOL.
@@ -1065,11 +1070,12 @@ Return a boolean indicating whether any interrupts was processed."
     (funcall (pop *pending-slime-interrupts*))
     t))
 
-(define-condition slime-interrupt-queued () ()
-  (:documentation 
-   "Non-serious condition signalled when an interrupt
-occurs while interrupt handling is disabled.
-Backends can use this to abort blocking operations."))
+(defvar *interrupt-queued-handler* nil
+  "Function to call on queued interrupts.
+Interrupts get queued when an interrupt occurs while interrupt
+handling is disabled.
+
+Backends can use this function to abort slow operations.")
 
 (definterface wait-for-input (streams &optional timeout)
   "Wait for input on a list of streams.  Return those that are ready.

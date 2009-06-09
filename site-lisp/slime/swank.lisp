@@ -427,7 +427,8 @@ Do not set this to T unless you want to debug swank internals.")
                 (check-slime-interrupts))
                (t
                 (log-event "queue-interrupt: ~a" function)
-                (signal 'slime-interrupt-queued))))))
+                (when *interrupt-queued-handler*
+                  (funcall *interrupt-queued-handler*)))))))
 
 (defslimefun simple-break (&optional (datum "Interrupt from Emacs") &rest args)
   (with-simple-restart (continue "Continue from break.")
@@ -1150,8 +1151,14 @@ The processing is done in the extent of the toplevel restart."
   (destructure-case event
     ((:emacs-rex form package thread-id id)
      (let ((thread (thread-for-evaluation thread-id)))
-       (push thread *active-threads*)
-       (send-event thread `(:emacs-rex ,form ,package ,id))))
+       (cond (thread 
+              (push thread *active-threads*)
+              (send-event thread `(:emacs-rex ,form ,package ,id)))
+             (t
+              (encode-message 
+               (list :invalid-rpc id
+                     (format nil "Thread not found: ~s" thread-id))
+               (current-socket-io))))))
     ((:return thread &rest args)
      (let ((tail (member thread *active-threads*)))
        (setq *active-threads* (nconc (ldiff *active-threads* tail)
@@ -2366,7 +2373,9 @@ Returns true if it actually called emacs, or NIL if not."
 FORM is expected, but not required, to be SETF'able."
   ;; FIXME: Can we check FORM for setfability? -luke (12/Mar/2005)
   (with-buffer-syntax ()
-    (prin1-to-string (eval (read-from-string form)))))
+    (let* ((value (eval (read-from-string form)))
+           (*print-length* nil))
+      (prin1-to-string value))))
 
 (defslimefun commit-edited-value (form value)
   "Set the value of a setf'able FORM to VALUE.
@@ -2470,8 +2479,9 @@ after Emacs causes a restart to be invoked."
     (force-user-output)
     (call-with-debugging-environment
      (lambda ()
-       (with-bindings *sldb-printer-bindings*
-         (sldb-loop *sldb-level*))))))
+       ;; We used to have (WITH-BINDING *SLDB-PRINTER-BINDINGS* ...)
+       ;; here, but that truncated the result of an eval-in-frame.
+       (sldb-loop *sldb-level*)))))
 
 (defun sldb-loop (level)
   (unwind-protect
@@ -2479,7 +2489,8 @@ after Emacs causes a restart to be invoked."
         (with-simple-restart (abort "Return to sldb level ~D." level)
           (send-to-emacs 
            (list* :debug (current-thread-id) level
-                  (debugger-info-for-emacs 0 *sldb-initial-frames*)))
+                  (with-bindings *sldb-printer-bindings*
+                    (debugger-info-for-emacs 0 *sldb-initial-frames*))))
           (send-to-emacs 
            (list :debug-activate (current-thread-id) level nil))
           (loop 
@@ -2488,7 +2499,7 @@ after Emacs causes a restart to be invoked."
                                   `(or (:emacs-rex . _)
                                        (:sldb-return ,(1+ level))))
                  ((:emacs-rex &rest args) (apply #'eval-for-emacs args))
-                 ((:sldb-return _) (declare (ignore _)) (return nil))) 
+                 ((:sldb-return _) (declare (ignore _)) (return nil)))
              (sldb-condition (c) 
                (handle-sldb-condition c))))))
     (send-to-emacs `(:debug-return
@@ -2885,6 +2896,9 @@ the filename of the module (or nil if the file doesn't exist).")
 
 (defslimefun swank-compiler-macroexpand (string)
   (apply-macro-expander #'compiler-macroexpand string))
+
+(defslimefun swank-format-string-expand (string)
+  (apply-macro-expander #'format-string-expand string))
 
 (defslimefun disassemble-symbol (name)
   (with-buffer-syntax ()
@@ -3464,6 +3478,12 @@ Return NIL if LIST is circular."
 ;;;;; Hashtables
 
 
+(defun hash-table-to-alist (ht)
+  (let ((result '()))
+    (maphash #'(lambda (key value)
+                 (setq result (acons key value result)))
+             ht)
+    result))
 
 (defmethod emacs-inspect ((ht hash-table))
   (append
@@ -3480,13 +3500,17 @@ Return NIL if LIST is circular."
      `((:action "[clear hashtable]" 
                 ,(lambda () (clrhash ht))) (:newline)
        "Contents: " (:newline)))
-   (loop for key being the hash-keys of ht
-         for value being the hash-values of ht
-         append `((:value ,key) " = " (:value ,value)
-                  " " (:action "[remove entry]"
-                               ,(let ((key key))
-                                     (lambda () (remhash key ht))))
-                  (:newline)))))
+   (let ((content (hash-table-to-alist ht)))
+     (cond ((every (lambda (x) (typep (first x) '(or string symbol))) content)
+            (setf content (sort content 'string< :key #'first)))
+           ((every (lambda (x) (typep (first x) 'number)) content)
+            (setf content (sort content '< :key #'first))))
+     (loop for (key . value) in content appending
+           `((:value ,key) " = " (:value ,value)
+             " " (:action "[remove entry]"
+                          ,(let ((key key))
+                                (lambda () (remhash key ht))))
+             (:newline))))))
 
 ;;;;; Arrays
 

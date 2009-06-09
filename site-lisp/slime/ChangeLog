@@ -1,3 +1,239 @@
+2009-03-04  Tobias C. Rittweiler  <tcr@freebits.de>
+
+	* slime.el (slime-check-fancy-symbol-name): Use
+	`slime-test-expect' instead of `slime-check'.
+	([test] fancy-symbol-names): Extend test case; check for
+	"Foo" in #<Foo| {...}>.
+	(slime-symbol-constituent-at-pos): Check for #<.
+
+2009-03-04  Tobias C. Rittweiler  <tcr@freebits.de>
+
+	* slime.el (slime-wait-condition): Remove `save-excursion'; it
+	made the `repl-test' test case fail because this test tries to set
+	point to the new prompt in vain.
+
+2009-03-03  Helmut Eller  <heller@common-lisp.net>
+
+	* slime.el (slime-pretty-package-name): Simplify.
+
+2009-03-03  Helmut Eller  <heller@common-lisp.net>
+
+	Use a separate key, C-c C-d #, to lookup reader-macros.
+
+	* hyperspec.el (common-lisp-hyperspec-lookup-reader-macro): New
+	command.
+	(common-lisp-hyperspec-reader-macros): New variable.
+	(common-lisp-hyperspec-reader-macro-at-point): Moved over from
+	slime.el
+	* slime.el (slime-doc-bindings): Bind C-c C-d #.
+	(slime-hyperspec-lookup): Don't consider reader-macros.
+
+2009-03-02  Tobias C. Rittweiler  <tcr@freebits.de>
+
+	* hyperspec.el (common-lisp-hyperspec-symbols): Add entries for
+	reader macros even when `common-lisp-hyperspec-symbol-table' is
+	bound to some value.
+
+2009-02-27  Tobias C. Rittweiler  <tcr@freebits.de>
+
+	* slime.el ([test] macroexpand): New test case.
+	(slime-buffer-visible-p): New helper.
+	(slime-execute-as-command): New helper.
+
+2009-02-27  Tobias C. Rittweiler  <tcr@freebits.de>
+
+	* hyperspec.el (common-lisp-hyperspec-symbols): Add links to
+	reader macros.
+
+	* slime.el (slime-reader-macro-at-point): New function.
+	(slime-hyperspec-lookup): Call it.
+
+	Adapted from Stas Boukarev.
+
+2009-02-27  Tobias C. Rittweiler  <tcr@freebits.de>
+
+	* slime.el: Rename `slime-symbol-name-at-point' to
+	`slime-symbol-at-point'.
+
+2009-02-27  Tobias C. Rittweiler  <tcr@freebits.de>
+
+	* slime.el ([portability] lisp-mode-syntax-table): On Emacs21,
+	make @ a prefix character like it's from Emacs22
+	onward. `slime-symbol-name-at-point' was written with that
+	assumption.
+
+2009-02-27  Tobias C. Rittweiler  <tcr@freebits.de>
+
+	* slime.el (slime-current-parser-state): Wrap `syntax-ppss' in a
+	`save-match-data'. This issue has been reported to the Emacs
+	maintainers.
+
+2009-02-27  Tobias C. Rittweiler  <tcr@freebits.de>
+
+	* slime.el (slime-defun-if-undefined),
+	(slime-defmacro-if-undefined): Renamed to
+	`slime-DEFUN-if-undefined' and `slime-DEFMACRO-if-undefined' to
+	better differentiate between the two.
+
+	(slime-indulge-pretty-colors): New function. You can now put a
+	symbol on the plist of `slime-indulge-pretty-colors' to make the
+	symbol be fontified like `defun'. This is done for
+	`slime-def-connection-var', and the two symbols above.
+
+2009-02-27  Tobias C. Rittweiler  <tcr@freebits.de>
+
+	* slime.el (slime-defmacro-if-undefined): New. Analogous to
+	`slime-defun-if-undefined'.
+	([portablity]] with-selected-window) Use it.
+	([portability] with-temo-buffer): Likewise.
+
+	Patch by Theam Yong Chew.
+
+2009-02-27  Tobias C. Rittweiler  <tcr@freebits.de>
+
+	C-c C-c on (defun foo () ,bar) did not result in a compiler note
+	overlay on SBCL.
+
+	* swank-sbcl.lisp (compiler-note-location): Make it take a
+	condition; if the condition is a READER-ERROR, the passed
+	compiler-error-context is very likely NIL---we have not proceeded
+	beyond reading, so we aren't within the compiler yet. In that
+	case, we use the stream position of the stream behind the
+	READER-ERROR instead.
+
+2009-02-26  Tobias C. Rittweiler  <tcr@freebits.de>
+
+	* doc/slime.texi: Fix typos, and add keybindings not listed there.
+
+	Patch by Stas Boukarev.
+
+2009-02-26  Tobias C. Rittweiler  <tcr@freebits.de>
+
+	* slime.el (sldb-backward-frame): Only move backward when we're
+	below the backtrace marker.
+
+2009-02-26  Tobias C. Rittweiler  <tcr@freebits.de>
+
+	* swank.lisp (debug-in-emacs): Moved (WITH-BINDINGS
+	*SLDB-PRINTER-BINDINGS* ...), from here...
+	(sldb-loop): ... to here. Otherwise results from a user doing an
+	eval-in-frame were truncated.
+
+	Reported by Jeff Workman.
+
+2009-02-26  Tobias C. Rittweiler  <tcr@freebits.de>
+
+	* swank.lisp (hash-table-to-alist): New function.
+	([method] emacs-inspect (hash-table)): Sort keys if they're all
+	numbers, symbols, or strings.
+
+	Adapted from Willem Broekema.
+
+2009-02-26  Tobias C. Rittweiler  <tcr@freebits.de>
+
+	* swank-backend.lisp (warn-unimplemented-interfaces):
+	Bind *PRINT-PRETTY* to T. Otherwise no sugar formatting on CCL.
+
+2009-02-26  Tobias C. Rittweiler  <tcr@freebits.de>
+
+	* slime.el (slime-pretty-package-name): Signalled an error on
+	simple symbols; fix that!
+
+	Reported by Geoff Wozniak.
+
+2009-02-26  Tobias C. Rittweiler  <tcr@freebits.de>
+
+	* slime.el (slime-current-form-path): Use
+	`slime-current-parser-state'.
+
+2009-02-26  Tobias C. Rittweiler  <tcr@freebits.de>
+
+	* slime.el ([test] fancy-symbol-names): New, hopefully
+	comprehensive, test for funky symbol names.
+	(slime-check-fancy-symbol-name): Helper.
+	(slime-exit-vertical-bars): New function to move out from |foo|.
+	(slime-symbol-constituent-at): New predicate to test whether the
+	character at point is a valid symbol constituent.
+	(slime-beginning-of-symbol, slime-end-of-symbol): Rewritten using
+	above two functions and `forward-sexp' that correctly parses
+	escapes etc.
+	(slime-sexp-at-point): Consider thing at point a symbol first.
+
+2009-02-24  Tobias C. Rittweiler  <tcr@freebits.de>
+
+	* slime.el (slime-forward-cruft): Forward whitespace, reader
+	conditonals, comments. Splitted from `slime-forward-sexp'.
+	(slime-pretty-package-name): Use it.
+
+2009-02-24  Tobias C. Rittweiler  <tcr@freebits.de>
+
+	Re-checkin my change from 2009-02-14. It seems I didn't actually
+	commit it.
+
+2009-02-22  Tobias C. Rittweiler  <tcr@freebits.de>
+
+        `M-x slime-format-string-expand' displays the expansion of a
+        format string.
+
+        * slime.el (slime-string-at-point) New.
+        (slime-string-at-point-or-error): New.
+        (slime-format-string-expand): New; use them.
+
+        * swank-backend.lisp (format-string-expand): New interface.
+        * swank.lisp (swank-format-string-expand): New; use it.
+
+2009-02-17  Helmut Eller  <heller@common-lisp.net>
+
+	* swank.lisp (dispatch-event [:emacs-rex]): Reply a :invalid-rpc
+	message if the specified thread doesn't exist.
+	* slime.el (slime-dispatch-event): Handle :invalid-rpc.
+	(slime-init-connection-state): Bind slime-current-thread
+	to avoid problems with dead threads.
+
+2009-02-14  Tobias C. Rittweiler  <tcr@freebits.de>
+
+	* slime.el (slime-reader-conditionals-regexp): New variable. Taken
+	from `slime-forward-reader-conditional'.
+	(slime-pretty-package-name): Fix modeline display for buffer
+	containing forms like (in-package "#+foo :A #-foo :B"). Also do
+	not call `read' on the name; the function does not need to return
+	a symbol, and `read' may choke on non-elisp syntax.
+
+2009-02-14  Helmut Eller  <heller@common-lisp.net>
+
+	Don't signal conditions in interrupt handler to
+	avoid problems with naive code like
+	 (handler-case foo (condition bar))
+
+	* swank-backend.lisp (*interrupt-queued-handler*): Use a dynamic
+	variable instead.
+	(slime-interrupt-queued): Deleted.
+	* swank-cmucl.lisp, swank.lisp: Ditto.
+
+2009-02-14  Helmut Eller  <heller@common-lisp.net>
+
+	* slime.el (slime-restart-or-init-modeline-update-timer): Don't
+	run the timer repeatedly.
+	(slime-change-directory): Also change the directory in the
+	connection-buffer.
+
+2009-02-11  Tobias C. Rittweiler  <tcr@freebits.de>
+
+	* slime.el (slime-current-tlf, slime-current-form-path): New
+	functions; can be handy when inspecting source-locations while
+	debugging M-.
+
+2009-02-11  Tobias C. Rittweiler  <tcr@freebits.de>
+
+	* slime.el: Barf if emacs-major-version <= 20. We support 21 and up.
+	(slime-emacs-20-p): Removed.
+
+	* slime.el (slime-forward-reader-comment): Removed.
+	(slime-forward-any-comment): New; superset of above.
+	(slime-forward-reader-conditional): Make it understand SBCL's
+	#!+,#!- so it works in source files of SBCL itself, too.
+	(slime-current-parser-state): New.
+
 2009-02-07  Tobias C. Rittweiler  <tcr@freebits.de>
 
 	In Xref, list IR1-conversion functions with :DEF-IR1-TRANSLATOR as
