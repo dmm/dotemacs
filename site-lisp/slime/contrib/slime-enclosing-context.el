@@ -5,6 +5,9 @@
 ;; License: GNU GPL (same license as Emacs)
 ;;
 
+;;; TODO: with the removal of `slime-enclosing-form-specs' this
+;;; contrib won't work anymore.
+
 (require 'slime-parse)
 
 (defvar slime-variable-binding-ops-alist
@@ -92,6 +95,15 @@ points where their bindings are established as second value."
       (values (nreverse names)
 	      (nreverse arglists) 
 	      (nreverse start-points)))))
+
+
+(defun slime-enclosing-bound-macros ()
+  (multiple-value-call #'slime-find-bound-macros (slime-enclosing-form-specs)))
+
+(defun slime-find-bound-macros (ops indices points)
+  ;; Kludgy!
+  (let ((slime-function-binding-ops-alist '((macrolet &bindings &body))))
+    (slime-find-bound-functions ops indices points)))
 
 
 (def-slime-test enclosing-context.1

@@ -8,9 +8,10 @@
 (setq gnus-secondary-select-methods
       '(
 	(nnimap "mattli.us"
-		(nnimap-address "mattli.us")
+		(nnimap-address "codezen.org")
 ;		(remove-prefix "INBOX.")
 ;		(nnimap-authinfo-file "/home/dmm/.imap-authinfo")
+		(nnimap-stream ssl)
 		)))
 
 (setq nnmail-split-methods
@@ -32,6 +33,6 @@
 	 "")))
 
 (setq nnimap-expunge-on-close "never")
-(setq gnus-permanently-visible-groups "e") ;Always display subscribed groups with e in name ;)
+(setq gnus-permanently-visible-groups "I") ;Always display subscribed groups with e in name ;)
 
 

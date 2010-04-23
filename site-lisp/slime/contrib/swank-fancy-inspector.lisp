@@ -16,10 +16,16 @@
 	;;
 	;; Value 
 	(cond ((boundp symbol)
-               (label-value-line (if (constantp symbol)
-                                     "It is a constant of value"
-                                     "It is a global variable bound to")
-                                 (symbol-value symbol)))
+               (append
+                (label-value-line (if (constantp symbol)
+                                      "It is a constant of value"
+                                      "It is a global variable bound to")
+                                  (symbol-value symbol) :newline nil)
+                ;; unbinding constants might be not a good idea, but
+                ;; implementations usually provide a restart.
+                `(" " (:action "[unbind it]"
+                               ,(lambda () (makunbound symbol))))
+                '((:newline))))
 	      (t '("It is unbound." (:newline))))
 	(docstring-ispec "Documentation" symbol 'variable)
 	(multiple-value-bind (expansion definedp) (macroexpand symbol)
@@ -34,14 +40,20 @@
 			  (:value ,(macro-function symbol)))
 			`("It is a function: " 
 			  (:value ,(symbol-function symbol))))
-		    `(" " (:action "[make funbound]"
+		    `(" " (:action "[unbind it]"
 				   ,(lambda () (fmakunbound symbol))))
 		    `((:newline)))
 	    `("It has no function value." (:newline)))
 	(docstring-ispec "Function Documentation" symbol 'function)
-	(if (compiler-macro-function symbol)
-	    (label-value-line "It also names the compiler macro"
-			      (compiler-macro-function symbol)))
+	(when (compiler-macro-function symbol)
+          
+	    (append
+             (label-value-line "It also names the compiler macro"
+                               (compiler-macro-function symbol) :newline nil)
+             `(" " (:action "[remove it]"
+                            ,(lambda ()
+                                     (setf (compiler-macro-function symbol) nil)))
+                   (:newline))))
 	(docstring-ispec "Compiler Macro Documentation" 
 			 symbol 'compiler-macro)
 	;;
@@ -162,66 +174,220 @@ See `methods-by-applicability'.")
 		     maxlen
 		     (length doc))))
 
-(defgeneric inspect-slot-for-emacs (class object slot)
-  (:method (class object slot)
-           (let ((slot-name (swank-mop:slot-definition-name slot))
-                 (boundp (swank-mop:slot-boundp-using-class class object slot)))
-             `(,@(if boundp
-                     `((:value ,(swank-mop:slot-value-using-class class object slot)))
-                     `("#<unbound>"))
-               " "
-               (:action "[set value]"
-                ,(lambda () (with-simple-restart
-                                (abort "Abort setting slot ~S" slot-name)
-                              (let ((value-string (eval-in-emacs
-                                                   `(condition-case c
-                                                     (slime-read-from-minibuffer
-                                                      ,(format nil "Set slot ~S to (evaluated) : " slot-name))
-                                                     (quit nil)))))
-                                (when (and value-string
-                                           (not (string= value-string "")))
-                                  (setf (swank-mop:slot-value-using-class class object slot)
-                                        (eval (read-from-string value-string))))))))
-               ,@(when boundp
-                   `(" " (:action "[make unbound]"
-                          ,(lambda () (swank-mop:slot-makunbound-using-class class object slot)))))))))
+(defstruct (inspector-checklist (:conc-name checklist.)
+                                 (:constructor %make-checklist (buttons)))
+  (buttons nil :type (or null simple-vector))
+  (count   0))
 
-(defgeneric all-slots-for-inspector (object)
-  (:method ((object standard-object))
-    (append '("--------------------" (:newline)
-              "All Slots:" (:newline))
-            (let* ((class (class-of object))
-                   (direct-slots (swank-mop:class-direct-slots class))
-                   (effective-slots (sort (copy-seq (swank-mop:class-slots class))
-                                          #'string< :key #'swank-mop:slot-definition-name))
-                   (slot-presentations (loop for effective-slot :in effective-slots
-                                             collect (inspect-slot-for-emacs
-                                                      class object effective-slot)))
-                   (longest-slot-name-length
-                    (loop for slot :in effective-slots
-                          maximize (length (symbol-name
-                                            (swank-mop:slot-definition-name slot))))))
-              (loop
-                  for effective-slot :in effective-slots
-                  for slot-presentation :in slot-presentations
-                  for direct-slot = (find (swank-mop:slot-definition-name effective-slot)
-                                          direct-slots :key #'swank-mop:slot-definition-name)
-                  for slot-name = (inspector-princ
-                                   (swank-mop:slot-definition-name effective-slot))
-                  for padding-length = (- longest-slot-name-length
-                                          (length (symbol-name
-                                                   (swank-mop:slot-definition-name
-                                                    effective-slot))))
-                  collect `(:value ,(if direct-slot
-                                        (list direct-slot effective-slot)
-                                        effective-slot)
-                            ,slot-name)
-                  collect (make-array padding-length
-                                      :element-type 'character
-                                      :initial-element #\Space)
-                  collect " = "
-                  append slot-presentation
-                  collect '(:newline))))))
+(defun make-checklist (n)
+  (%make-checklist (make-array n :initial-element nil)))
+
+(defun reinitialize-checklist (checklist)
+  ;; Along this counter the buttons are created, so we have to
+  ;; initialize it to 0 everytime the inspector page is redisplayed.
+  (setf (checklist.count checklist) 0)
+  checklist)
+
+(defun make-checklist-button (checklist)
+  (let ((buttons (checklist.buttons checklist))
+        (i (checklist.count checklist)))
+    (incf (checklist.count checklist))
+    `(:action ,(if (svref buttons i)
+                   "[X]"
+                   "[ ]")
+              ,#'(lambda ()
+                   (setf (svref buttons i) (not (svref buttons i))))
+              :refreshp t)))
+
+(defmacro do-checklist ((idx checklist) &body body)
+  "Iterate over all set buttons in CHECKLIST."
+  (let ((buttons (gensym "buttons")))
+    `(let ((,buttons (checklist.buttons ,checklist)))
+       (dotimes (,idx (length ,buttons))
+          (when (svref ,buttons ,idx)
+            ,@body)))))
+
+(defun box (thing) (cons :box thing))
+(defun ref (box)
+  (assert (eq (car box) :box))
+  (cdr box))
+(defun (setf ref) (value box)
+  (assert (eq (car box) :box))
+  (setf (cdr box) value))
+
+(defvar *inspector-slots-default-order* :alphabetically
+  "Accepted values: :alphabetically and :unsorted")
+
+(defvar *inspector-slots-default-grouping* :all
+  "Accepted values: :inheritance and :all")
+
+(defgeneric all-slots-for-inspector (object))
+
+(defmethod all-slots-for-inspector ((object standard-object))
+  (let* ((class           (class-of object))
+         (direct-slots    (swank-mop:class-direct-slots class))
+         (effective-slots (swank-mop:class-slots class))
+         (longest-slot-name-length
+          (loop for slot :in effective-slots
+                maximize (length (symbol-name
+                                  (swank-mop:slot-definition-name slot)))))
+         (checklist
+          (reinitialize-checklist
+           (ensure-istate-metadata object :checklist
+                                   (make-checklist (length effective-slots)))))
+         (grouping-kind
+          ;; We box the value so we can re-set it.
+          (ensure-istate-metadata object :grouping-kind
+                                  (box *inspector-slots-default-grouping*)))
+         (sort-order
+          (ensure-istate-metadata object :sort-order
+                                  (box *inspector-slots-default-order*)))
+         (sort-predicate (ecase (ref sort-order)
+                           (:alphabetically #'string<)
+                           (:unsorted (constantly nil))))
+         (sorted-slots (sort (copy-seq effective-slots)
+                             sort-predicate
+                             :key #'swank-mop:slot-definition-name))
+         (effective-slots
+          (ecase (ref grouping-kind)
+            (:all sorted-slots)
+            (:inheritance (stable-sort-by-inheritance sorted-slots class sort-predicate)))))
+    `("--------------------"
+      (:newline)
+      " Group slots by inheritance "
+      (:action ,(ecase (ref grouping-kind)
+                       (:all "[ ]")
+                       (:inheritance "[X]"))
+               ,(lambda ()
+                        ;; We have to do this as the order of slots will
+                        ;; be sorted differently.
+                        (fill (checklist.buttons checklist) nil)
+                        (setf (ref grouping-kind)
+                              (ecase (ref grouping-kind)
+                                (:all :inheritance)
+                                (:inheritance :all))))
+               :refreshp t)
+      (:newline)
+      " Sort slots alphabetically  "
+      (:action ,(ecase (ref sort-order)
+                       (:unsorted "[ ]")
+                       (:alphabetically "[X]"))
+               ,(lambda ()
+                        (fill (checklist.buttons checklist) nil)
+                        (setf (ref sort-order)
+                              (ecase (ref sort-order)
+                                (:unsorted :alphabetically)
+                                (:alphabetically :unsorted))))
+               :refreshp t)
+      (:newline)
+      ,@ (case (ref grouping-kind)
+           (:all
+            `((:newline)
+              "All Slots:"
+              (:newline)
+              ,@(make-slot-listing checklist object class
+                                   effective-slots direct-slots
+                                   longest-slot-name-length)))
+           (:inheritance
+            (list-all-slots-by-inheritance checklist object class
+                                           effective-slots direct-slots
+                                           longest-slot-name-length)))
+      (:newline)
+      (:action "[set value]"
+               ,(lambda ()
+                        (do-checklist (idx checklist)
+                          (query-and-set-slot class object
+                                              (nth idx effective-slots))))
+               :refreshp t)
+      "  "
+      (:action "[make unbound]"
+               ,(lambda ()
+                        (do-checklist (idx checklist)
+                          (swank-mop:slot-makunbound-using-class
+                           class object (nth idx effective-slots))))
+               :refreshp t)
+      (:newline))))
+
+(defun list-all-slots-by-inheritance (checklist object class effective-slots
+                                      direct-slots longest-slot-name-length)
+  (flet ((slot-home-class (slot)
+           (slot-home-class-using-class slot class)))
+    (let ((current-slots '()))
+      (append
+       (loop for slot in effective-slots
+             for previous-home-class = (slot-home-class slot) then home-class
+             for home-class = previous-home-class then (slot-home-class slot)
+             if (eq home-class previous-home-class)
+               do (push slot current-slots)
+             else
+               collect '(:newline)
+               and collect (format nil "~A:" (class-name previous-home-class))
+               and collect '(:newline)
+               and append (make-slot-listing checklist object class
+                                             (nreverse current-slots) direct-slots
+                                             longest-slot-name-length)
+               and do (setf current-slots (list slot)))
+       (and current-slots
+            `((:newline)
+              ,(format nil "~A:"
+                       (class-name (slot-home-class-using-class
+                                    (car current-slots) class)))
+              (:newline)
+              ,@(make-slot-listing checklist object class
+                                   (nreverse current-slots) direct-slots
+                                   longest-slot-name-length)))))))
+
+(defun make-slot-listing (checklist object class effective-slots direct-slots
+                          longest-slot-name-length)
+  (flet ((padding-for (slot-name)
+           (make-string (- longest-slot-name-length (length slot-name))
+                        :initial-element #\Space)))
+    (loop
+      for effective-slot :in effective-slots
+      for direct-slot = (find (swank-mop:slot-definition-name effective-slot)
+                              direct-slots :key #'swank-mop:slot-definition-name)
+      for slot-name   = (inspector-princ
+                         (swank-mop:slot-definition-name effective-slot))
+      collect (make-checklist-button checklist)
+      collect "  "
+      collect `(:value ,(if direct-slot
+                            (list direct-slot effective-slot)
+                            effective-slot)
+                       ,slot-name)
+      collect (padding-for slot-name)
+      collect " = "
+      collect (slot-value-for-inspector class object effective-slot)
+      collect '(:newline))))
+
+(defgeneric slot-value-for-inspector (class object slot)
+  (:method (class object slot)
+    (let ((boundp (swank-mop:slot-boundp-using-class class object slot)))
+      (if boundp
+          `(:value ,(swank-mop:slot-value-using-class class object slot))
+          "#<unbound>"))))
+
+(defun slot-home-class-using-class (slot class)
+  (let ((slot-name (swank-mop:slot-definition-name slot)))
+    (loop for class in (reverse (swank-mop:class-precedence-list class))
+          thereis (and (member slot-name (swank-mop:class-direct-slots class)
+                               :key #'swank-mop:slot-definition-name :test #'eq)
+                       class))))
+
+(defun stable-sort-by-inheritance (slots class predicate)
+  (stable-sort slots predicate
+               :key #'(lambda (s)
+                        (class-name (slot-home-class-using-class s class)))))
+
+(defun query-and-set-slot (class object slot)
+  (let* ((slot-name (swank-mop:slot-definition-name slot))
+         (value-string (read-from-minibuffer-in-emacs
+                        (format nil "Set slot ~S to (evaluated) : "
+                                slot-name))))
+    (when (and value-string (not (string= value-string "")))
+      (with-simple-restart (abort "Abort setting slot ~S" slot-name)
+        (setf (swank-mop:slot-value-using-class class object slot)
+              (eval (read-from-string value-string)))))))
+
 
 (defmethod emacs-inspect ((gf standard-generic-function)) 
   (flet ((lv (label value) (label-value-line label value)))
@@ -361,29 +527,25 @@ See `methods-by-applicability'.")
   "Returns an object renderable by Emacs' inspector side that
 alphabetically lists all the symbols in SYMBOLS together with a
 concise string representation of what each symbol
-represents (cf. CLASSIFY-SYMBOL & Fuzzy Completion.)"
+represents (see SYMBOL-CLASSIFICATION-STRING)"
   (let ((max-length (loop for s in symbols maximizing (length (symbol-name s))))
         (distance 10)) ; empty distance between name and classification
     (flet ((string-representations (symbol)
              (let* ((name (symbol-name symbol))
                     (length (length name))
-                    (padding (- max-length length))                    
-                    (classification (classify-symbol symbol)))
+                    (padding (- max-length length)))
                (values
                 (concatenate 'string
                              name
                              (make-string (+ padding distance) :initial-element #\Space))
-                (symbol-classification->string classification)))))
+                (symbol-classification-string symbol)))))
       `(""                           ; 8 is (length "Symbols:")
         "Symbols:" ,(make-string (+ -8 max-length distance) :initial-element #\Space) "Flags:"
         (:newline)
         ,(concatenate 'string        ; underlining dashes
                       (make-string (+ max-length distance -1) :initial-element #\-)
                       " "
-                      (let* ((dummy (classify-symbol :foo))
-                             (dummy (symbol-classification->string dummy))
-                             (classification-length (length dummy)))
-                        (make-string classification-length :initial-element #\-)))
+                      (symbol-classification-string '#:foo))
         (:newline)          
         ,@(loop for symbol in symbols appending
                (multiple-value-bind (symbol-string classification-string)
@@ -657,6 +819,12 @@ SPECIAL-OPERATOR groups."
                 (label-value-line "Digits" (float-digits f))
                 (label-value-line "Precision" (float-precision f)))))))
 
+(defun make-visit-file-thunk (stream)
+  (let ((pathname (pathname stream))
+        (position (file-position stream)))
+    (lambda ()
+      (ed-in-emacs `(,pathname :charpos ,position)))))
+
 (defmethod emacs-inspect ((stream file-stream))
   (multiple-value-bind (content)
       (call-next-method)
@@ -664,13 +832,11 @@ SPECIAL-OPERATOR groups."
              `("Pathname: "
                (:value ,(pathname stream))
                (:newline) "  "
-               (:action "[visit file and show current position]"
-                        ,(let ((pathname (pathname stream))
-                               (position (file-position stream)))
-                           (lambda ()
-                             (ed-in-emacs `(,pathname :charpos ,position))))
-                        :refreshp nil)
-               (:newline))
+               ,@(when (open-stream-p stream)
+                   `((:action "[visit file and show current position]"
+                              ,(make-visit-file-thunk stream)
+                              :refreshp nil)
+                     (:newline))))
              content)))
 
 (defmethod emacs-inspect ((condition stream-error))
@@ -684,12 +850,9 @@ SPECIAL-OPERATOR groups."
                      (:newline) "  "
                      ,@(when (open-stream-p stream)
                          `((:action "[visit file and show current position]"
-                                    ,(let ((pathname (pathname stream))
-                                           (position (file-position stream)))
-                                          (lambda ()
-                                            (ed-in-emacs `(,pathname :charpos ,position))))
-                                    :refreshp nil)))
-                     (:newline))
+                                    ,(make-visit-file-thunk stream)
+                                    :refreshp nil)
+                           (:newline))))
                    content)
           content))))
 

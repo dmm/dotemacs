@@ -1,5 +1,1511 @@
 #   -*- mode: org; fill-column: 65 -*-
 
+#+begin_html
+<a href="/"><img src="http://orgmode.org/img/org-mode-unicorn.png" class="logo-link" /></a>
+#+end_html
+
+#+STARTUP: indent hidestars
+
+* Version 6.35
+ :PROPERTIES:
+ :VISIBILITY: content
+ :CUSTOM_ID: v6.35
+ :END:
+
+** Incompatible Changes
+
+*** Changes to the intended use of =org-export-latex-classes=
+
+So far this variable has been used to specify the complete header
+of the LaTeX document, including all the =\usepackage= calls
+necessary for the document.  This setup makes it difficult to
+maintain the list of packages that Org itself would like to call,
+for example for the special symbol support it needs.  Each time I
+have to add a package, I have to ask people to revise the
+configuration of this variable.  In this release, I have tried to
+fix this.
+
+First of all, you can *opt out of this change* in the following
+way: You can say: /I want to have full control over headers, and
+I will take responsibility to include the packages Org needs/.
+If that is what you want, add this to your configuration and skip
+the rest of this section (except maybe for the description of the
+=[EXTRA]= place holder):
+
+#+begin_src emacs-lisp
+  (setq org-export-latex-default-packages-alist nil
+        org-export-latex-packages-alist nil)
+#+end_src
+
+/Continue to read here if you want to go along with the modified
+setup./
+
+There are now two variables that should be used to list the LaTeX
+packages that need to be included in all classes.  The header
+definition in =org-export-latex-classes= should then not contain
+the corresponding =\usepackage= calls (see below).
+
+The two new variables are:
+
+1. =org-export-latex-default-packages-alist= :: This is the
+     variable where Org-mode itself puts the packages it needs.
+     Normally you should not change this variable.  The only
+     reason to change it anyway is when one of these packages
+     causes a conflict with another package you want to use.
+     Then you can remove that packages and hope that you are not
+     using Org-mode functionality that needs it.
+
+2. =org-export-latex-packages-alist= :: This is the variable
+     where you can put the packages that you'd like to use across
+     all classes.  For example, I am putting =amsmath= and =tikz=
+     here, because I always want to have them.
+
+The sequence how these customizations will show up in the LaTeX
+document are:
+1. Header from =org-export-latex-classes=
+2. =org-export-latex-default-packages-alist=
+3. =org-export-latex-packages-alist=
+4. Buffer-specific things set with =#+LaTeX_HEADER:=
+
+If you want more control about which segment is placed where, or
+if you want, for a specific class, have full control over the
+header and exclude some of the automatic building blocks, you can
+put the following macro-like place holders into the header:
+
+#+begin_example
+[DEFAULT-PACKAGES]      \usepackage statements for default packages
+[NO-DEFAULT-PACKAGES]   do not include any of the default packages
+[PACKAGES]              \usepackage statements for packages 
+[NO-PACKAGES]           do not include the packages
+[EXTRA]                 the stuff from #+LaTeX_HEADER
+[NO-EXTRA]              do not include #+LaTeX_HEADER stuff
+#+end_example
+
+If you have currently customized =org-export-latex-classes=, you
+should revise that customization and remove any package calls that
+are covered by =org-export-latex-default-packages-alist=.  This
+applies to the following packages:
+
+- inputenc
+- fontenc
+- fixltx2e
+- graphicx
+- longtable
+- float
+- wrapfig
+- soul
+- t1enc
+- textcomp
+- marvosym
+- wasysym
+- latexsym
+- amssymb
+- hyperref
+
+If one of these packages creates a conflict with another package
+you are using, you can remove it from
+=org-export-latex-default-packages-alist=.  But then you risk
+that some of the advertised export features of Org will not work
+properly.
+
+You can also consider moving packages that you use in all classes
+to =org-export-latex-packages-alist=.  If necessary, put the
+place holders so that the packages get loaded in the right
+sequence.  As said above, for backward compatibility, if you omit
+the place holders, all the variables will dump their content at
+the end of the header.
+
+Damn, this has become more complex than I wanted it to be.  I
+hope that in practice, this will not be complicated at all.
+
+*** The constant =org-html-entities= is obsolete
+
+Its content is now part of the new constant =org-entities=, which
+is defined in the file org-entities.el.  =org-html-entities= was
+an internal variable, but it is possible that some users did
+write code using it - this is why I am mentioning it here.
+
+** Editing Convenience and Appearance
+
+*** New faces for title, date, author and email address lines.
+    
+The keywords in these lines are now dimmed out, and the title is
+displayed in a larger font, and a special font is also used for
+author, date, and email information.  This is implemented by the
+following new faces:
+    
+org-document-title
+org-document-info
+org-document-info-keyword
+    
+In addition, the variable =org-hidden-keywords= can be used to
+make the corresponding keywords disappear.
+
+Thanks to Dan Davison for this feature.
+
+*** Simpler way to specify faces for tags and todo keywords
+    
+The variables =org-todo-keyword-faces=, =org-tag-faces=, and
+=org-priority-faces= now accept simple color names as
+specifications.  The colors will be used as either foreground or
+background color for the corresponding keyword.  See also the
+variable =org-faces-easy-properties=, which governs which face
+property is affected by this setting.
+
+This is really a great simplification for setting keyword faces.
+The change is based on an idea and patch by Ryan Thompson.
+
+*** <N> in tables now means fixed width, not maximum width
+    
+Requested by Michael Brand.
+
+*** Better level cycling function
+
+=TAB= in an empty headline cycles the level of that headline
+through likely states.  Ryan Thompson implemented an improved
+version of this function, which does not depend upon when exactly
+this command is used.  Thanks to Ryan for this improvement.
+
+*** Adaptive filling
+    
+For paragraph text, =org-adaptive-fill-function= did not handle the
+base case of regular text which needed to be filled.  This is now
+fixed.  Among other things, it allows email-style ">" comments
+to be filled correctly.
+
+Thanks to Dan Hackney for this patch.    
+
+*** `org-reveal' (=C-c C-r=) also decrypts encrypted entries (org-crypt.el)
+    
+Thanks to Richard Riley for triggering this change.
+
+*** Better automatic letter selection for TODO keywords
+    
+When all first letters of keywords have been used, Org now assigns
+more meaningful characters based on the keywords.
+
+Thanks to Mikael Fornius for this patch.
+
+** Export
+
+*** Much better handling of entities for LaTeX export
+
+Special entities like =\therefore= and =\alpha= now know if
+they need to be in LaTeX math mode and are formatted accordingly.
+
+Thanks to Ulf Stegemann for the tedious work to make this
+possible.
+    
+*** LaTeX export: Set coding system automatically
+
+The coding system of the LaTeX class will now be set to the value
+corresponding to the buffer's file coding system.  This happens
+if your setup sets up the file to have a line
+=\usepackage[AUTO]{inputenc}= (the default setup does this).
+
+*** New exporters to Latin-1 and UTF-8
+
+While Ulf Stegemann was going through the entities list to
+improve the LaTeX export, he had the great idea to provide
+representations for many of the entities in Latin-1, and for all
+of them in UTF-8.  This means that we can now export files rich
+in special symbols to Latin-1 and to UTF-8 files.  These new
+exporters can be reached with the commands =C-c C-e n= and =C-c
+C-e u=, respectively.
+
+When there is no representation for a given symbol in the
+targeted coding system, you can choose to keep the TeX-macro-like
+representation, or to get an "explanatory" representation.  For
+example, =\simeq= could be represented as "[approx. equal to]".
+Please use the variable =org-entities-ascii-explanatory= to state
+your preference.
+
+*** Full label/reference support in HTML, Docbook, and LaTeX backends
+
+=#+LABEL= definitions for tables and figures are now fully
+implemented in the LaTeX, Docbook, and HTML interfaces.
+=\ref{xxx}= is expanded to a valid link in all backends.
+
+*** BEAMER export: Title of the outline frame is now customizable
+    
+The new option =org-outline-frame-title= allows to set the 
+title for outline frames in Beamer presentations.
+
+Patch by Lukasz Stelmach.
+    
+*** BEAMER export: fragile frames are better recognized
+
+A =lstlisting= environment now also triggers the fragile option in
+a beamer frame, just like =verbatim= environments do.
+
+Thanks to Eric Schulte for this patch.
+
+*** BEAMER export: Protect <...> macro arguments
+
+Macros for the BEAMER package can have arguments in angular
+brackets.  These are now protected just like normal arguments.
+
+Requested by Bill Jackson.
+
+*** HTML export: Add class to outline containers using property
+    
+The =HTML_CONTAINER_CLASS= property can now be used to add a
+class name to the outline container of a node in HTML export.
+
+*** New option =org-export-email-info= to turn off export of the email address
+    
+Default is actually off now.
+
+*** Throw an error when creating an image from a LaTeX snippet fails
+
+This behavior can be configured with the new option variable
+=org-format-latex-signal-error=.
+
+** Index generation
+    
+Org-mode can now produce a 2-level subject index spanning an
+entire publishing project.  Write index entries in your files as
+
+#+begin_src org
+,* What is org-mode?
+#+index: Org-mode
+#+index: Definitions!Org-mode
+#+end_src
+
+where the first line will produce an index entry /Org-mode/,
+while the second line will create /Definitions/ with a sub-item
+/Org-mode/.  Three-level entries are not supported.
+
+To produce the index, set
+
+#+begin_src emacs-lisp
+:makeindex t
+#+end_src
+
+in the project definition in =org-publish-project-alist=.  You
+may have to force re-export of all files to get the index by
+using a =C-u= prefix to the publishing command:
+
+#+begin_example
+C-u M-x org-publish-all
+#+end_example
+
+Whenever an Org file is published in this project, a new file
+with the extension "orgx" will be written.  It contains the index
+entries and corresponding jump target names.  When all project
+files are published, Org will produce a new file "theindex.inc"
+containing the index as a to-level tree.  This file can be
+included into any project file using
+
+#+begin_src org
+  ,#+include: "theindex.inc"
+#+end_src
+
+Org-mode will also create a file "theindex.org" with this include
+statement, and you can build a more complex structure (for
+example style definitions, top and home links, etc) around this
+statement.  When this file already exists, it will not be
+overwritten by Org.
+
+Thanks to Stefan Vollmar for initiating and driving this feature.
+
+*** TODO Still need to do the LaTeX portion
+
+** MobileOrg
+
+*** Encrypting stage files for MobileOrg
+
+Since the use of (often pubic) servers is needed for MobileOrg,
+it is now possible to encrypt the files to be staged for
+MobileOrg.  Version 1.2 of MobileOrg will be needed for this
+feature, and Richard Moreland will show instructions on his
+website once that is available.  Basically, on the Org-side this
+will require the following settings:
+
+#+begin_src emacs-lisp
+  (setq org-mobile-use-encryption t
+        org-mobile-encryption-password "My_MobileOrg_Password")
+#+end_src
+
+So the password will be visible in your local setup, but since
+the encryption is only for the public server, this seems
+acceptable.
+
+** Agenda
+
+*** Specify entry types as an option
+    
+Custom Agenda commands can now limit the sets of entry types
+considered for this command by binding =org-agenda-entry-types=
+temporarily in the options section of the command.  This can lead
+to significant speedups, because instead of laboriously finding
+entries and then rejecting them, a whole search cycle is skipped.
+For more information see the new section in
+[[http://orgmode.org/worg/org-tutorials/org-custom-agenda-commands.php#sec-5][Matt Lundin's agenda custom command tutorial]].
+
+Thanks to Matt Lundin for this feature.
+
+*** Speed up multiple calls to org-diary by only doing buffer prep once
+    
+Also a patch by Matt Lundin.
+
+*** Show and hide deadlines in the agenda
+
+You can now hide all deadline entries in the agenda by pressing
+=!=.
+
+Thanks to John Wiegley for this feature.
+
+*** Agenda: Allow to suppress deadline warnings for entries also scheduled
+
+The the docstring of the variable
+=org-agenda-skip-deadline-prewarning-if-scheduled=.
+
+*** Expand file names in org-agenda-files (external file case)
+    
+If you are using a file to manage the list of agenda files, the
+names in this file can now contain environment variables and "~"
+to write them more compactly and portable.
+
+Thanks to Mikael Fornius for a patch to this effect.
+
+*** Agenda: Allow TODO conditions in the skip functions
+
+The agenda skip function has now special support for skipping
+based on the TODO state.  Here are just two examples, see the
+manual for more information.
+
+#+begin_src emacs-lisp
+(org-agenda-skip-entry-if 'todo '(\"TODO\" \"WAITING\"))
+(org-agenda-skip-entry-if 'nottodo 'done)
+#+end_src
+
+Thanks to Lukasz Stelmach for this patch.
+
+*** Extracting the time-of-day when adding diary entries
+
+The time of day can now be extracted from new diary entries made
+from the agenda with (for example) =i d=.  When
+=org-agenda-insert-diary-extract-time= is set, this is done, and
+the time is moved into the time stamp.
+
+Thanks to Stephen Eglen for this feature.
+
+*** The customization group org-font-lock has been renamed
+
+The new name is `org-appearance'.
+
+Thanks to Dan Davison for a patch to this effect.
+
+*** The TODO list: Allow skipping scheduled or deadlined entries
+
+Skipping TODO entries in the global TODO list based on whether
+they are scheduled or have a deadline can now be controlled in
+more detail.  Please see the docstrings of
+=org-agenda-todo-ignore-scheduled= and
+=org-agenda-todo-ignore-deadline=.
+
+Thanks to Lukasz Stelmach for patches to this effect.
+
+** Hyperlinks
+
+*** Make =org-store-link= point to directory in a dired buffer
+    
+When, in a dired buffer, the cursor is not in a line listing a
+file, `org-store-link' will store a link to the directory.
+
+Patch by Stephen Eglen.
+
+*** Allow regexps in =org-file-apps= to capture link parameters
+    
+The way extension regexps in =org-file-apps= are handled has
+changed.  Instead of matching against the file name, the regexps
+are now matched against the whole link, and you can use grouping
+to extract link parameters which you can then use in a command
+string to be executed.
+
+For example, to allow linking to PDF files using the syntax
+=file:/doc.pdf::<page number>=, you can add the following entry to
+org-file-apps:
+
+#+begin_example
+Extension: \.pdf::\([0-9]+\)\'
+Command:   evince "%s" -p %1
+#+end_example
+
+Thanks to Jan Böcker for a patch to this effect.
+
+** Clocking
+
+*** Show clock overruns in mode line
+
+When clocking an item with a planned effort, overrunning the
+planned time is now made visible in the mode line, for example
+using the new face =org-mode-line-clock-overrun=, or by adding an
+extra string given by =org-task-overrun-text=.
+
+Thanks to Richard Riley for a patch to this effect.
+
+** Tables
+
+*** Repair the broken support for table.el tables again.
+    
+Tables created with the table.el package now finally work again
+in Org-mode.  While you cannot edit the table directly in the
+buffer, you can use  =C-c '= to edit it nicely in a temporary
+buffer.
+
+Export of these tables to HTML seem to work without problems.
+Export to LaTeX is imperfect.  If fails if the table contains
+special characters that will be replaced by the exporter before
+formatting the table.  The replacement operation changes the
+length of some lines, breaking the alignment of the table fields.
+Unfortunately this is not easy to fix.  It is also not an option
+to not do these replacements.  The table.el LaTeX exporter will
+for example not escape "&" in table fields, causing the exported
+tables to be broken.
+
+** Misc
+
+*** New logging support for refiling
+
+Whenever you refile an item, a time stamp and even a note can be
+added to this entry.  For details, see the new option
+=org-log-refile=.
+    
+Thanks to Charles Cave for this idea.
+
+*** New helper functions in org-table.el
+
+There are new functions to access and write to a specific table
+field.  This is for hackers, and maybe for the org-babel people.
+
+#+begin_example
+org-table-get
+org-table-put
+org-table-current-line
+org-table-goto-line
+#+end_example
+
+*** Tables: Field coordinates for formulas, and improved docs
+    
+Calc and Emacs-Lisp formulas for tables can access the current
+field coordinates with =@#= and =$#= for row and column,
+respectively.  These can be useful in some formulas.  For
+example, to sequentially number the fields in a column, use
+~=@#~ as column equation.
+
+One application is to copy a column from a different table.  See
+the manual for details.
+
+Thanks to Michael Brand for this feature.
+
+*** Archiving: Allow to reverse order in target node
+    
+The new option =org-archive-reversed-order= allows to have
+archived entries inserted in a last-on-top fashion in the target
+node.
+    
+Requested by Tom.
+
+*** Better documentation on calc accuracy in tables
+    
+Thanks to Michael Brand for this fix.
+
+*** Clock reports can now include the running, incomplete clock
+
+If you have a clock running, and the entry being clocked falls
+into the scope when creating a clock table, the time so far spent
+can be added to the total.  This behavior depends on the setting
+of =org-clock-report-include-clocking-task=.  The default is
+=nil=.
+    
+Thanks to Bernt Hansen for this useful addition.
+
+*** American-style dates are now understood by =org-read-date=
+
+So when you are prompted for a date, you can now answer like this
+
+#+begin_example
+2/5/3         --> 2003-02-05
+2/5           --> <CURRENT-YEAR>-02-05
+#+end_example    
+
+*** org-timer.el now allows just one timer
+
+There is now only a single free timer supported by org-timer.el.
+Thanks to Bastien for cleaning this up, after a bug report in
+this area by Frédéric Couchet.
+
+*** Remember: Allow to file as sibling of current clock
+    
+=C-3 C-c C-c= will file the remember entry as a sibling of the
+last filed entry.
+
+Patch by Lukasz Stelmach.
+
+*** Org-reveal: Double prefix arg shows the entire subtree of the parent
+    
+This can help to get out of an inconsistent state produced for
+example by viewing from the agenda.
+
+This was a request by Matt Lundin.
+
+*** Add org-secretary.el by Juan Reyero to the contrib directory
+
+org-secretary.el is a possible setup for group work using
+Org-mode.
+
+Thanks to Juan Reyero for this contribution.
+
+** Babel
+
+Eric and Dan have compiled the following list of changes in and
+around org-babel.
+
+- Added support for Matlab and Octave.
+- Added support for C and C++ code blocks.
+- Added support for the Oz programming language.
+  Thanks to Torsten Anders for this contribution
+- Can now force literal interpretation of table cell contents
+  with extra "$" in table formula.
+  Thanks to Maurizio Vitale for this suggestion.
+- Variable references which look like lisp forms are now
+  evaluated.
+- No longer adding extension during tangling when filename is
+  provided.
+  Thanks to Martin G. Skjæveland and Nicolas Girard for prompting this.
+- Added `org-babel-execute-hook' which runs after code block
+  execution.
+- Working directories and remote execution
+
+  This introduces a new header argument :dir. For the duration of
+  source block execution, default-directory is set to the value
+  of this header argument. Consequences include:
+
+  - external interpreter processes run in that directory
+  - new session processes run in that directory (but existing
+    ones are unaffected)
+  - relative paths for file output are relative to that directory
+
+  The name of a directory on a remote machine may be specified
+  with tramp syntax (/user@host:path), in which case the
+  interpreter executable will be sought in tramp-remote-path, and
+  if found will execute on the remote machine in the specified
+  remote directory.
+- Tramp syntax can be used to tangle to remote files.
+  Thanks to Maurizio Vitale and Rémi Vanicat.
+- org-R removed from contrib.
+- gnuplot can now return it's string output -- when session is
+  set to "none".
+- Now including source code block arguments w/source name on
+  export.
+- Now able to reference file links as results.
+- Allow pdf/png generation directly from latex source blocks
+  with :file header argument.
+
+
+* Version 6.34
+ :PROPERTIES:
+ :CUSTOM_ID: v6.34
+ :END:
+
+** Incompatible changes
+
+*** Tags in org-agenda-auto-exclude-function must be lower case.
+
+When defining an =org-agenda-auto-exclude-function=, you need to
+be aware that tag that is being passed into the function is
+always lower case - even if it was defined in upper case
+originally.
+
+** Details
+
+*** Support for creating BEAMER presentations from Org-mode documents
+
+Org-mode documents or subtrees can now be converted directly in
+to BEAMER presentation.  Turning a tree into a simple
+presentations is straight forward, and there is also quite some
+support to make richer presentations as well.  See the [[http://orgmode.org/manual/Beamer-class-export.html#Beamer-class-export][BEAMER
+section]] in the manual for more details.
+
+Thanks to everyone who has contributed to the discussion about
+BEAMER support and how it should work.  This was a great example
+for how this community can achieve a much better result than any
+individual could.
+
+*** Hyperlinks
+
+**** Add Paul Sexton's org-ctags.el
+
+Targets like =<<my target>>= can now be found by Emacs' etag
+functionality, and Org-mode links can be used to to link to
+etags, also in non-Org-mode files.  For details, see the file
+/org-ctags.el/.
+
+This feature uses a new hook =org-open-link-functions= which will
+call function to do something special with text links.
+
+Thanks to Paul Sexton for this contribution.
+
+**** Add Jan Böcker's org-docview.el
+
+This new module allows links to various file types using docview,
+where Emacs displays images of document pages.  Docview link
+types can point to a specific page in a document, for example to
+page 131 of the Org-mode manual:
+
+: [[docview:~/.elisp/org/doc/org.pdf::131][Org-Mode Manual]]
+
+Thanks to Jan Böcker for this contribution.
+    
+**** New link types that force special ways of opening the file
+    
+- =file+sys:/path/to/file=  will use the system to open the file,
+  like double-clicking would.
+- file+emacs:/path/to/file will force opening the linked file
+  with Emacs.
+
+This was a request by John Wiegley.
+
+**** Open all links in a node
+
+When using =C-c C-o= on a headline to get a list of links in the
+entry, pressing =RET= will open *all* links.  This allows
+something like projects to be defined, with a number of files
+that have to be opened by different applications.
+
+This was a request by John Wiegley.
+
+*** Agenda Views
+
+**** Improve the logic of the search view.
+
+The logic of search views is changed a bit.  See the docstring of
+the function =or-search-view=.
+
+These changes resulted from a discussion with Matt Lundin.
+
+**** New face for entries from the Emacs diary
+
+Entries that enter the Agenda through the Emacs diary now get the
+face =org-agenda-diary=.
+
+This was a request by Thierry Volpiatto.
+
+**** New function `org-diary-class' to schedule classes with skipped weeks.
+
+This was a request by Daniel Martins.
+
+**** Empty matcher means prompt in agenda custom commands
+    
+When an agenda custom command has an empty string as MATCH
+element, so far this would lead to a meaningless search using an
+empty matcher.  Now an empty (or white) string will be
+interpreted just like a nil matcher, i.e. the user will be
+prompted for the match.
+
+**** Agenda: Selectively remove some tags from agenda display
+
+If you use tags very extensively, you might want to exclude some
+from being displayed in the agenda, in order to keep the display
+compact.  See the new option =org-agenda-hide-tags-regexp= for
+details.
+    
+This was largely a patch by Martin Pohlack.
+
+*** Export
+
+**** Direct export of only the current subtree
+
+Pressing =1= after =C-c C-e= and before the key that selects the
+export backend, only the current subtree will be exported,
+exactly as it you had selected it first with =C-c @=.  So for
+example, =C-c C-e 1 b= will export the current subtree to HTML
+and open the result in the browser.
+
+**** Direct export of enclosing node
+
+Pressing =SPC= after =C-c C-e= and before the key that selects
+the export backend, the enclosing subree that is set up for
+subtree export will be exported, exactly as it you had selected
+it first with =C-c @=.  So for example, =C-c C-e SPC d= will find
+the enclosing node with a LaTeX_CLASS property or an
+EXPORT_FILE_NAME property and export that.
+
+**** Caching export images
+
+Images that are created for example using LaTeX or ditaa for
+inclusion into exported files are now cached.  This works by
+adding a hash to the image name, that reflects the source code
+and all relevant settings.  So as long as the hash does not
+change, the image does not have to be made again.  His can lead
+to a substantial reduction in export/publishing times.
+
+Thanks to Eric Schulte for a patch to this effect.
+
+**** Preserving line breaks for export no longer works
+    
+ASCII export always preserves them - no other export format
+does.  We had attempted to use =\obeylines= for this in LaTeX,
+but that does create too many problems.
+
+**** New symbols =\EUR= and =\checkmark=
+
+=\EUR= symbols from Marvosym package, and =\checkmark= are now
+supported symbols in Org-mode, i.e. they will be exported
+properly to the various backends.
+
+**** Allow LaTeX_CLASS_OPTIONS to set options, also from a property
+
+You can set the options to the =\documentclass= command on a
+per-file basis, using
+
+: #+LaTeX_CLASS_OPTIONS: [11pt]
+
+or on a per-tree basis using the corresponding property.  The
+defined string will replace the default options entirely.
+
+**** The encoding of LaTeX files is now handled property
+
+Org now makes sure that the encoding used by the file created
+through the export mechanism is reflected correctly in the
+
+: \usepackage[CODINGSYSTEM]{inputenc}
+
+command.  So as long as the =org-export-latex-classes= definition
+contains an =\usepackage[utf8]{inputenc}= statement, that
+statement will be modified so that the correct option is used.
+
+If you wan to use special encodings, for example =utf8x= instead
+of =utf8=, see the variable =org-export-latex-inputenc-alist=.
+
+This was a request by Francesco Pizzolante.
+
+*** Property API enhancements
+    
+**** Make a new special property BLOCKED, indicating if entry is blocked
+
+A new special property BLOCKED returns "t" when the entry is
+blocked from switching the TODO state to a DONE state.
+
+This was a request by John Wiegley.
+
+**** New hooks for external support for allowed property values
+
+It is now possible to hook into Org in order to provide the
+allowed values for any property with a lisp function.  See the
+docstring of the variable =org-property-allowed-value-functions=
+
+**** Allow unrestricted completion on properties
+
+When listing the allowed values for a property, for example with
+a =:name_ALL:= property, completion on these values enforces that
+one of the values will be chosen.  Now, if you add ":ETC" to the
+list of allowed values, it will be interpreted as a switch, and
+the completion will be non-restrictive, so you can also choose to
+type a new value.
+
+*** Changes to Org-babel
+
+- The documentation for Org-babel has been drastically improved
+  and is available on Worg at
+  http://orgmode.org/worg/org-contrib/babel/
+- Source-code block names are now exported to HTML and LaTeX
+- Org-babel functions are now bound to keys behind a common key
+  prefix (see
+  http://orgmode.org/worg/org-contrib/babel/reference.php#sec-5)
+- Results are now foldable with TAB
+- Header argument values can now be lisp forms
+- Readable aliases for #+srcname: and #+resname:
+- Sha1 hash based caching of results in buffer
+- Can now index into variable values
+- org-babel-clojure now supports multiple named sessions
+
+*** Miscellaneous changes
+
+**** Make =C-c r C= customize remember templates
+
+=C-c r C= is now a shortcut for
+
+:  M-x customize-variable RET org-remember-templates RET
+
+This was a proposal by Adam Spiers.
+
+**** Use John Gruber's regular expression for URL's
+
+We now use a better regexp to spot plain links in text.  This
+regexp is adopted from [[http://daringfireball.net/2009/11/liberal_regex_for_matching_urls][John Gruber's blogpost]].
+
+Thanks to William Henney for the pointer.
+
+**** Implement tag completion of all tags in all agenda files
+    
+The new option =org-complete-tags-always-offer-all-agenda-tags=
+makes Org complete all tags from all agenda files if non-nil.
+Usually, setting it locally to t in org-remember buffers is the
+most useful application of this new feature.
+
+Thanks to Tassilo Horn for a patch to this effect.
+
+* Version 6.33
+ :PROPERTIES:
+ :CUSTOM_ID: v6.33
+ :END:
+
+** Incompatible changes
+
+*** Reorganize key bindings for archiving
+    
+The following keys now do archiving
+
+- C-c C-x C-a :: archive using the command specified in
+     =org-archive-default-command=.  This variable is by default
+     set to =org-archive-subtree=, which means arching to the
+     archive file.
+    
+The three specific archiving commands are available through
+
+- C-c C-x C-s ::    archive to archive file
+- C-c C-x a ::     toggle the archive tag
+- C-c C-x A ::   move to archive sibling
+
+These bindings work the same in an Org file, and in the agenda.
+
+In addition:
+    
+- In the agenda you can also use =a= to call the default archiving
+  command, but you need to confirm the command with =y= so that this
+  cannot easily happen by accident.
+  
+- For backward compatibility, =C-c $= in an org-mode file, and
+  =$= in the agenda buffer continue to archive to archive file.
+
+
+** Details
+
+*** Level indentation cycling new empty entries and plain list items
+:PROPERTIES:
+:ID: 1CBF16C9-031C-4A03-A5EE-09B6AAB6209C
+:END:
+
+To speed up data entry, TAB now behaves special in an empty
+headline, i.e. if the current line only contains the headline
+starter stars, maybe a TOD keyword, but no further content.  This
+is usually the situation just after creating a new headline with
+=M-RET= or =M-S-RET=.
+
+Then, TAB will first make the current entry a child of the
+entry above, then a parent, then a grand parent etc until it
+reaches top level.  Yet another TAB and you will be back at the
+initial level at which the headline was created.
+
+New plain list items behave in just the same way.
+
+Sounds strange?  Try it, it is insanely fast when entering data.
+If you still don't like it, turn it off by customizing
+=org-cycle-level-after-item/entry-creation=.
+
+Thanks to [[http://thread.gmane.org/gmane.emacs.orgmode/18236][Samuel Wales]] and [[http://thread.gmane.org/gmane.emacs.orgmode/18447/focus%3D19015][John Wiegley]] for ideas that
+contributed to this new feature.
+
+*** Speed commands at the start of a headline
+
+If you set the variable =org-use-speed-commands=, the cursor
+position at the beginning of a headline (i.e. before the first
+star) becomes special.  Single keys execute special commands in
+this place, for example outline navigation with =f=, =b=, =n=,
+and =p=, equivalent to the corresponding =C-c C-f=, =C-c C-b=,
+=C-c C-n=, and =C-c C-f= commands.  The full list of commands can
+be seen by pressing =?= at the special location.  More commands
+can be added and existing ones modified by configuring the
+variable =org-speed-commands-user=.
+
+This was a request by John Wiegley, based on similar speed
+navigation in /allout.el/.
+
+*** Logging changes in scheduling and deadline time stamps
+
+Setting the variables =org-log-reschedule= and
+=org-log-redeadline= to either =time= or =note= will arrange for
+recording a logbook entry whenever a scheduling date or deadline
+is changed.
+
+This was a request by Rick Moynihan.
+
+*** File remember notes into a date tree
+
+Remember notes can now be filed to a location in a date tree.  A
+date tree is an outline tree with years as top levels, months as
+level 2 headings, and days as level three headings.  These are
+great for journals and for recording appointments and other loose
+dates because it will be easy to find all entries referencing a
+particular date, and it will be easy to archive all such entry
+from last year, for example.
+
+To select date tree filing, set the HEADLINE part of the remember
+template to the symbol =date-tree=.  The date tree will be build
+in the file on top level.  However, if the file contains an entry
+with a non-nil =DATE_TREE= property, then the tree will be build
+under that headline.
+
+*** New commands to create entries from agenda and calendar
+
+If you make the variable =org-agenda-diary-file= point to an
+org-mode file, the =i= key in both the agenda buffer and in the
+Emacs calendar will be made to insert entries into that Org file.
+The dates at the cursor and the mark are being used when making
+entries for specific dates or blocks.  In the new file,
+anniversaries will be collected under a special headline, and
+day/block entries will be filed into a date tree (see previous
+section).
+
+This was a request by Stephen Eglen.
+
+*** A new freemind exporter has been integrated with Org-mode
+
+org-freemind.el has a number of entry points (for details, see
+the source code), but you can also use Org's =C-c C-e m= to
+export a file or a selected subtree.
+
+Thanks to Lennart Borgman for this contribution.  An earlier
+version of this file was part of the nxhtml package, under the
+name /freemind.el/.
+
+*** Drawers are now exported properly
+
+Drawers are now exported when the configuration requires it,
+i.e. if the variable `org-export-with-drawers' is t or a list
+containing the drawers to export.
+
+*** Min/Max/Mean age operators in Column View.
+    
+This lets you see how much time has passed since the specified
+timestamp property each entry. The three operators (=@min=,
+=@max=, =@mean=) show either the age of the youngest or oldest
+entry or the average age of the children.
+
+Thanks to James TD Smith for a patch to this effect.
+    
+*** Allow source code block indentation to be preserved
+    
+If =org-src-preserve-indentation= is non-nil, or if a block has a
+=-i= switch, then the behavior of org-exp-blocks is altered as
+follows:
+
+1. Indentation is not removed before passing the block contents
+   to the block-transforming plugin.
+   
+2. The result returned by the plugin is not re-indented.
+
+3. Editing the source code block with =C-c '= preserves it's
+   indentation.
+
+Thanks to Dan Davison for this feature.
+
+*** Frame/window control when switching to source code edit buffer.
+    
+When switching to a source code editing buffer with =C-c '=, you
+can now control the frame / window setup using the new variable
+=org-src-window-setup=.
+
+Thanks to Dan Davison for this feature.
+
+*** Refile an entry to the current clock
+
+You can now quickly refile an entry to become a child of the
+entry currently being clocked.  The keys for doing this are
+=C-2 C-c C-w=.
+
+This was a request by Bernt Hansen.
+
+*** Make =C-c C-o= open the attachment directory is there are no links
+
+If there is no link in an entry, =C-c C-o= will now open the
+attachment directory instead.
+
+This was a request/patch by John Wiegley.
+
+*** org-mac-iCal.el: work with calendar "groups"
+    
+Some calendar systems (Google, Zimbra) handle subscriptions to
+multiple calendars (or to an account) by grouping them under a
+single caldav directory in the calendar tree.  org-mac-iCal used
+to assumes there is only one ics file created per caldav
+directory, so while it *creates* all of the needed merged ics
+files, it only copies one of them to ~/Library/Calendar before
+importing the contents into the diary.
+
+Thanks to Doug Hellmann for a patch to fix this.
+
+*** New module /org-learn.el/ in the contrib directory
+
+The file implements the learning algorithm described at
+http://supermemo.com/english/ol/sm5.htm, which is a system for reading
+material according to "spaced repetition".  See
+http://en.wikipedia.org/wiki/Spaced_repetition for more details.
+
+Thanks to John Wiegley for this contribution.
+
+*** New contributed package /org-git-link.el/
+
+/org-git-link.el/ defines two new link types. The =git= link type
+is meant to be used in the typical scenario and mimics the =file=
+link syntax as closely as possible.  The =gitbare= link type
+exists mostly for debugging reasons, but also allows e.g.
+linking to files in a bare git repository for the experts.
+
+Thanks to Raimar Finken for this contribution.
+
+*** /org-annotation-helper.el/ and /org-browser-url.e./ have been removed
+Please switch to /org-protocol.el/, into which contains the same
+functionality in a more general framework.
+*** The contributed /org-export-freemind/ package has been removed.
+Org now contains a new freemind exporter, /org-freemind.el/.
+
+** Org-babel Changes
+- Clojure is supported [Thanks to Joel Boehland]
+- Perl is supported
+- Ruby and Python now respond to the :file header argument
+- Added :results_switches header argument for passing switches
+  through to raw src blocks
+- Preserve indentation in source blocks on export and tangle
+- Possible to evaluate noweb reference on tangling or code block
+  evaluation
+- Allowing multiple noweb references on a single line
+- Cleaned up the passing of parameter values from Org-babel to
+  language specific functions
+
+* Version 6.32
+ :PROPERTIES:
+ :CUSTOM_ID: v6.32
+ :END:
+
+** Rewrite of org-mobile.org, for MobileOrg 1.0 (build 20)
+
+MobileOrg is currently under review at the iPhone App Store.  You
+will need Org-mode version 6.32 to interact with it.
+
+** Added support for habit consistency tracking
+    
+/org-habit.el/ contains new code to track habits.  Please
+configure the variable org-modules to activate it.  When active,
+habits (a special TODO entry) will be displayed in the agenda
+together with a "consistency graph".  Habit tracking is described
+in a new [[http://orgmode.org/manual/Tracking-your-habits.html][manual section]].
+
+Thanks to John Wiegley for this contribution.
+    
+** New context-aware tag auto-exclusion 
+
+After writing a function relating to location and context
+information, you will be able to press =/ RET= in the agenda to
+exclude tasks that cannot be done in the current context. 
+For details, see the information about filtering in the manual.
+
+Thanks to John Wiegley for a patch to this effect.
+
+** New clock resolving tools
+
+When clocking into a new task while no clock is running, Org now
+checks for orphaned CLOCK lines and offers to repair these before
+starting the clock.  You can also configure this feature to check
+for idle time and prompt you to subtract that time from the
+running timer.
+    
+See the new [[http://orgmode.org/manual/Resolving-idle-time.html][manual section]] for more details.
+    
+Thanks to John Wiegley for a patch to this effect.
+
+** Mutually exclusive tag groups can now have a name in the tags interface
+
+The customize interface allows to optionally add a string to the
+beginning or end of such a group.
+    
+Thanks to James TD Smith for a patch to this effect.
+
+** Agenda Search view: Search for substrings
+    
+The default in search view (/C-c a s/)is now that the search
+expression is searched for as a /substring/, i.e. the different
+words must occur in direct sequence, and it may be only part of
+a word.  If you want to look for a number of separate keywords
+with Boolean logic, all words must be preceded by =+= or =-=.
+
+This was, more-or-less, requested by John Wiegley.
+
+** Make space and backspace scroll the show window in the agenda
+
+Pressing SPC again after using it to show an agenda item in
+another window will make the entire subtree visible, and show
+scroll it.  Backspace and DEL will scroll back.
+
+This was a request by Eric Fraga.
+    
+** File tags are now offered for completion during a tag prompts
+
+Requested by Matt Lundin.
+
+** Make `- SPC' an agenda filter that selects entries without any tags
+    
+Request by John Wiegley.
+
+** Better way to edit multi-line macro definitions
+
+The editing tool key =C-c '= now also edits =#+MACRO=
+definitions, including multiline macros.
+
+** Restructured Manual
+
+The manual has been slightly reorganized.  The archiving stuff,
+which was - somewhat obscurely - hidden in the /Document
+Structure/ chapter, has been moved into the new chapter
+/Capture-Refile-Archive/.  Also, there is a new chapter /Markup/
+which contains both the markup rules (moved there from the Export
+chapter) and the documentation for embedded LaTeX.
+
+** Improved figure placement in LaTeX and HTML export
+    
+Text can now be wrapped around figures.  See the manual for
+details.
+
+** Allow date to be shifted into the future if time given is earlier than now
+    
+By setting
+
+:     (setq org-read-date-prefer-future 'time)
+
+you indicate to Org that, if you only give a time at the
+date/time prompt, and if this time is earlier then the current
+time, then the date of tomorrow will be assumed to be valid for
+this event.  A similar mechanism was already in place for dates,
+but now you can make it work for times as well.
+
+** Collected changes in org-babel
+- Source blocks can now reference source-blocks in other files
+  using =filepath:srcname= syntax.
+- Inline code blocks like =src_python{2+2}= are now exported
+- Remote source block calls using the =#+lob: srcname(arg=val)=
+  syntax can now be exported.
+- When =:file= is supplied with an =R= block, graphics are
+  automatically sent to file and linked from the org buffer, thus
+  appearing on export.  The image format is obtained from the
+  filename extension.  Possible values are =.png, .jpg, .jpeg,
+  .tiff, .bmp, .pdf, .ps, .postscript=, defaulting to =png=.
+- Results can be returned as parseable code using =:results code=,
+  and as pretty-printed code using =:results pp= (emacs-lisp,
+  python, ruby).  Thanks to Benny Andresen for the idea and patch
+  for emacs-lisp.
+- When =:file filename= is supplied, =:exports file= is unnecessary
+- Header args are taken from org-file-properties in addition to
+  properties active in the subtree.
+- =:noweb= header argument now expands noweb references before
+  source-block evaluation.
+- Tangling honours the new org variable
+  org-src-preserve-indentation, so that correct code is output for
+  a language like python that depends on indentation.
+
+** Changes in org-exp-blocks.el
+- Interblocks export has been simplified.
+- Support for R code (=begin_R= blocks and inline =\R{}=) has been
+  removed.  Please use org-babel instead.
+
+* Version 6.31
+ :PROPERTIES:
+ :CUSTOM_ID: v6.31
+ :END:
+
+** Org-babel is now part of the Org distribution
+
+Org-babel provides the ability to execute source code in many
+different languages within org-mode documents.  The results of
+code execution -- text, tables and graphics -- can be integrated
+into Org-mode documents and can be automatically updated during
+publishing.  Since Org-babel allows execution of arbitrary code,
+the range of tasks that can be addressed from within an Org mode
+file becomes very large.  Examples of ways in which Org-babel
+might be used include
+
+- Documenting a task that involves some programming so that it is
+  automatically repeatable
+- Creating dynamic (executable) reports that respond to changes
+  in the underlying data (Reproducible Research)
+- Exportation of code contained in an Org-mode document into
+  regular source code files (Literate Programming)
+
+Additionally, Org-babel provides a programming environment within
+Org files, in which data can be transmitted between parameterised
+source code blocks in different languages, as well as between
+source code blocks and Org-mode tables.
+
+A simple API is defined so that users can add support for new
+"languages" (broadly construed).  Languages currently supported
+are:
+
+- asymptote
+- css
+- ditaa
+- dot
+- emacs-lisp
+- gnuplot
+- haskell
+- ocaml
+- python
+- R
+- ruby
+- sass
+- sh
+- sql
+
+Org-babel was designed and implemented Eric Schulte with continued
+significant help on both accounts from Dan Davison.
+
+** MobileOrg support
+
+Richard Morelands iPhone/iPod Touch program [[http://mobileorg.ncogni.to/][MobileOrg]] can view
+Org files, mark entries as DONE, flag entries for later
+attention, and capture new entries on the road.  Org-mode has now
+support to produce a staging area where MobileOrg can download
+its files, and to integrate changes done on the phone in a half
+automatic, half interactive way.  See the new appendix B in the
+manual for more information.
+
+
+** Indented lines starting with "#+ " are treated as comments
+
+To allow comments in plain lists without breaking the list
+structure, you can now have indented comment lines that start
+with "#+ ".
+
+** New STARTUP keyword `showeverything'
+    
+This will make even drawer contents visible upon startup.
+Requested by Jeff Kowalczyk.
+
+** New contributed package org-invoice.el
+
+This package collects clocking information for billing
+customers.
+
+Thanks to Peter Jones for this contribution.
+
+** Encrypting subtrees
+
+/org-crypt.el/ by John Wiegley and Peter Jones allows encryption
+of individual subtrees in Org-mode outlines.  Thanks to John and
+Peter for this contribution.
+
+** Agenda: Support for including a link in the category string
+    
+The category (as specified by an #+CATEGORY line or CATEGORY
+property can contain a bracket link.  While this sort-of worked
+in the past, it now is officially supported and should cause no
+problems in agenda display or update.  The link can be followed
+by clicking on it, or with =C-c C-o 0=.
+
+This was a request by Peter Westlake.
+
+* Version 6.30
+ :PROPERTIES:
+ :CUSTOM_ID: v6.30
+ :END:
+
+** Inconsistent changes
+
+*** Agenda now uses =f= and =b= to move through time
+
+Up to now, the Org-mode agenda used the cursor keys =left= and
+=right= to switch the agenda view forward an backward through
+time.  However, many people found this confusing, and others
+wanted to be able to do cursor motion in the agenda, for example
+to select text.  Therefore, after an extensive discussion on
+=emacs-orgmode@gnu.org=, it was decided to use the =b= and 
+=f= keys instead, and to let the cursor keys do cursor motion
+again.
+
+*** Agenda follow mode is now on the =F= key
+
+This was necessary to free up the =f= key, see above.
+
+** Details
+
+*** Maintenance
+
+**** New command to submit a bug report
+
+There is now a special command =M-x org-submit-bug-report=.  This
+command will create a mail buffer with lots of useful details.
+In particular, it contains complete version information for Emacs
+and Org-mode.  It will also (if you agree to it) contain all
+non-standard settings of org-mode and outline-mode related
+variables.  Even if you do not sent your emails from within
+Emacs, please still use this command to generate the information
+and then copy it into your mail program.
+
+The command will not generate and include a =*Backtrace*= buffer,
+please do this yourself if you have hit an error.  For more
+information, see the [[http://orgmode.org/manual/Feedback.html#Feedback][feedback section]] of the manual.
+
+**** New contributed package org-track.el
+
+This package allows to keep up-to-date with current Org
+development, using only Emacs on-board means.  So if you don't
+want or cannot use =git=, but still want to run the latest and
+hottest Org-mode, this is for you.
+
+Thanks to Sebastian Rose for this contribution.
+
+*** Agenda
+
+**** Agenda now uses =f= and =b= to move through time
+
+Up to now, the Org-mode agenda used the cursor keys =left= and
+=right= to switch the agenda view forward an backward through
+time.  However, many people found this confusing, and others
+wanted to be able to do cursor motion in the agenda, for example
+to select text.  Therefore, after an extensive discussion on
+=emacs-orgmode@gnu.org=, it was decided to use the =b= and 
+=f= keys instead, and to let the cursor keys do cursor motion
+again.
+
+**** Agenda follow mode is now on the =F= key
+
+This was necessary to free up the =f= key, see above.
+
+**** The agenda can be put into a dedicated frame
+
+When the variable =org-agenda-window-setup= has the value
+=other-frame=, then the new frame created to show the agenda
+will now have the window marked as /dedicated/.  As a
+consequence, exiting the agenda while the agenda is the only
+window on the frame will kill that frame.
+
+This was a request by Henry Atting.
+
+**** New mode to show some entry body text in the agenda
+
+There is now a new agenda sub-mode called
+=org-agenda-entry-text-mode=.  It is toggled with the =E= key.
+When active, all entries in the agenda will be accompanied by a
+few lines from the outline entry.  The amount of text can be
+customized with the variable =org-agenda-entry-text-maxlines=.
+
+This was a request by Anthony Fairchild, Manish, and others.
+
+**** Improve following links from the agenda
+    
+=C-c C-o= in the agenda will now offer all links in the headline
+and text of an entry.  If there is only a single link, it will be
+followed immediately.
+
+**** Avoid some duplicate entries
+
+There is a new variable that can be used to avoid some duplicate
+agenda entries: =org-agenda-skip-scheduled-if-deadline-is-shown=
+If that is set, it avoids that an entry shows up in the agenda for
+today for both a scheduling and a deadline entry.  See the
+docstring of the variables for more details.
+
+This partially addresses a request by Samuel Wales. 
+
+**** Mark the running clock in the agenda.
+
+If the entry currently being clocked is present in the agenda, it
+will be highlighted with the face =org-agenda-clocking=.
+
+This was a request by Rainer Stengele.
+
+
+*** Export
+
+**** Allow LaTeX export to use the listings package
+
+The LaTeX =listings= package can now be used for formatting
+fontified source code in many programming languages.  For more
+information, see
+http://thread.gmane.org/gmane.emacs.orgmode/16269 and
+http://orgmode.org/worg/org-faq.php#fontified_source_code_w_latex
+
+Thanks to Eric Schulte for this patch.
+
+**** Remove table rows that only contain width and alignment markers
+    
+The width and alignment in table columns can be set with a cookie
+like "<10>" or "<r>" or "<r10>".  In order to keep Org from
+exporting such lines, the first column of a line should contain
+only "/".  However, for convenience, there is now a special case:
+If the entire row contains only such markers, the line will
+automatically be discarded during export, even is the first
+column is not "/".
+
+**** Allow Macro calls to span several lines.
+
+Macro calls may now span several lines, to write several
+arguments in a cleaner way.  The result of a macro call can also
+span several lines, by inserting the string "\n" (backslash
+followed by n) into the value in the macro definition.
+
+These were requests by Stefan Vollmar.
+
+*** Misc
+
+**** Quick access to all links in an entry
+
+If =C-c C-o= is called while the cursor is in a headline, but not
+directly on a link, then all links in the entry will be offered
+in a small menu.  If there is only a single link, it will be
+followed without a prompt.
+
+**** Visibility Cycling: Allow to show all empty lines after a headline
+    
+=org-cycle-separator-lines= can now be set to a negative value,
+to indicate that, if the number of empty lines before a visible
+entry is greater than the specified number, then *all* empty
+lines should be shown.
+
+This was a request by "PT" whatever this means.
+
+**** Allow language names to replace some strange major mode names
+
+Sometimes a language uses a major mode which can't be guessed
+from it's name.  There is now a new variable =org-src-lang-modes=
+which can be used to map language names to major modes when this
+is the case.  This is used when editing a source-code 
+block, or when exporting fontified source-code with htmlize.
+
+Thanks to Eric Schulte for a patch to this effect.
+
+**** iswitchb support for many completion prompts
+    
+This is enabled using =org-completion-use-iswitchb=, and follows
+the same model of usage as for ido users.
+
+Thanks to John Wiegley for a patch to this effect.
+
+**** New commands to set the effort property of an entry
+
+There is now a special command, =C-c C-x e= to set the =Effort=
+property of an entry.  From the agenda you can even use =e=.
+If you have set up allowed values for the =Effort= property, then
+using a prefix argument will directly select the nth allowed
+value.  For example, in the agenda, =5 e= will select the 5th
+allowed value.
+
+This was a request by Michael Gilbert
+
+**** Edit src works now better with killing buffer
+
+Thanks to Dan Davison for a patch to this effect
+
+
+* Older changes
+
+  For older Changes, see [[file:Changes_old.org]]
+
+
+
+* COMMENT Setup
+
 #+STARTUP: showstars
 
 #+TITLE: Org-mode list of user-visible changes
@@ -9,1655 +1515,3 @@
 #+INFOJS_OPT: view:info toc:1 path:org-info.js tdepth:2 ftoc:t
 #+LINK_UP: index.html
 #+LINK_HOME: http://orgmode.org
-
-* Version 6.21
- :PROPERTIES:
- :VISIBILITY: content
- :END:
-
-** Details
-
-*** Changes to some default values of variables:
-
-Here are the new default values:
-
-#+begin_example
-(setq org-return-follows-link t)
-
-(setq org-use-fast-todo-selection t)
-
-(setq org-yank-adjusted-subtrees nil)
-
-(setq org-tags-column -77)
-
-(setq org-agenda-sorting-strategy
-     '((agenda time-up priority-down category-keep)
-	(todo time-up priority-down category-keep)
-	(tags time-up priority-down category-keep)
-	(search category-keep)))
-#+end_example
-
-*** Final cleanup for Emacs 21.1 pretest
-
-* Version 6.20
-
-** Details
-
-*** Support for simple TODO dependencies
-
-John Wiegley's code for enforcing simple TODO dependencies has
-been integrated into Org-mode.  Thanks John!
-
-The structure of Org files (hierarchy and lists) makes it easy to
-define TODO dependencies.  A parent TODO task should not be
-marked DONE until all subtasks (defined as children tasks) are
-marked as DONE.  And sometimes there is a logical sequence to a
-number of (sub)tasks, so that one task cannot be acted upon
-before all siblings above it are done.  If you customize the
-variable =org-enforce-todo-dependencies=, Org will block entries
-from changing state while they have children that are not DONE.
-Furthermore, if an entry has a property =ORDERED=, each of its
-children will be blocked until all earlier siblings are marked
-DONE.  Here is an example:
-
-#+begin_src org
-,* TODO Blocked until (two) is done
-,** DONE one
-,** TODO two
-
-,* Parent
-,  :PROPERTIES:
-,    :ORDERED: t
-,  :END:
-,** TODO a
-,** TODO b, needs to wait for (a)
-,** TODO c, needs to wait for (a) and (b)
-#+end_src
-
-The command =C-c C-x o= toggles the value of the =ORDERED=
-property.
-
-The variable =org-agenda-dim-blocked-tasks= controls how blocked
-entries should appear in the agenda, where they can be dimmed or
-even made invisible.
-
-Furthermore, you can use the variable
-=org-enforce-todo-checkbox-dependencies= to block TODO entries
-from switching to DONE while any checkboxes are unchecked in the entry.
-
-*** Support for shift-selection in Emacs 23
-
-Customize the variable =org-support-shift-select= to use S-cursor
-key for selecting text.  Make sure that you carefully read the
-docstring of that variable first.
-
-*** Adding and removing checkboxes from many lines
-
-The command =C-c C-x C-b= normally toggles checkbox status in the
-current line, or in all lines in the region.  With prefix
-argument it now either adds or removes the checkbox.
-
-This was a requested by Daniel Clemente.
-
-* Version 6.19
-
-** Overview
-   
-- Improved behavior of conversion commands =C-c -= and =C-c *=
-- Table formulas may now reference fields in other tables
-- A final hline is imagined in each table, for the sake of references
-- A tags-todo search can now ignore timestamped items
-- =\par= can be used to force a paragraph break, also in footnotes
-
-** Details
-   
-
-*** Improved behavior of conversion commands =C-c -= and =C-c *=
-
-    The conversion commands =C-c -= and =C-c *= are now better
-    behaved and therefore more useful, I hope.
-
-    If there is an active region, these commands will act on the
-    region, otherwise on the current line.
-
-    - C-c - :: This command turns headings or normal lines into
-         items, or items into normal lines.  When there is a
-         region, everything depends on the first line of the
-         region:
-	 - if it is a item, turn all items in the region into
-	   normal lines.
-         - if it is a headline, turn all headlines in the region
-	   into items. 
-	 - if it is a normal line, turn all lines into items.
-	 - special case: if there is no active region and the
-	   current line is an item, cycle the bullet type of the
-           current list.
-    - C-c * :: This command turns items and normal lines into
-         headings, or headings into normal lines.  When there is
-         a region, everything depends on the first line of the
-         region:
-	 - if it is a item, turn all items in the region into
-	   headlines.
-         - if it is a headline, turn all headlines in the region
-	   into normal lines. 
-	 - if it is a normal line, turn all lines into headlines.
-
-*** Table formulas may now reference fields in other tables
-
-You may now reference constants, fields and ranges from a
-different table, either in the current file or even in a
-different file.  The syntax is
-
-: remote(NAME-OR-ID,REF)
-
-where /NAME/ can be the name of a table in the current file as
-set by a =#+TBLNAME: NAME= line before the table.  It can also be
-the ID of an entry, even in a different file, and the reference
-then refers to the first table in that entry.  /REF/ is an
-absolute field or range reference, valid in the referenced table.
-Note that since there is no "current filed" for the remote table,
-all row and column references must be absolute, not relative.
-
-*** A final hline is imagined in each table, for the sake of references
-
-Even if a table does not end with a hline (mine never do because I
-think it is not pretty), for the sake of references you can
-assume there is one.  So in the following table
-
-#+begin_src org
-| a | b |
-|---+---|
-| 1 | 2 |
-| 3 | 4 |
-#+end_src
-
-a reference like =@I$1..@II$2= will now work.
-
-*** A tags-todo search can now ignore timestamped items
-    The variables =org-agenda-todo-ignore-with-date=,
-    =org-agenda-todo-ignore-with-date=, and
-    =org-agenda-todo-ignore-with-date= make it possible to
-    exclude TODO entries which have this kind of planning info
-    associated with them.  This is most useful for people who
-    schedule everything, and who use the TODO list mainly to find
-    things that are not yet scheduled.  Thomas Morgan pointed out
-    that also the tags-todo search may serve exactly this
-    purpose, and that it might be good to have a way to make
-    these variables also apply to the tags-todo search.  I can
-    see that, but could not convince myself to make this the
-    default.  A new variable must be set to make this happen:
-    =org-agenda-tags-todo-honor-ignore-options=.
-
-*** =\par= can be used to force a paragraph break, also in footnotes
-
-The LaTeX idiom =\par= will insert a paragraph break at that
-location.  Normally you would simply leave an empty line to get
-such a break, but this is useful for footnotes whose
-definitions may not contain empty lines.
-
-* Version 6.18
-** Incompatible changes
-
-*** Short examples must have a space after the colon
-
-    Short literal examples can be created by preceding lines
-    with a colon.  Such lines must now have a space after the
-    colon.  I believe this is already general practice, but now
-    it must be like this.  The only exception are lines what are
-    empty except for the colon.    
-
-** Details
-
-*** Include files can now also process switches
-
-    The example and src switches like =-n= can now also be added
-    to include file statements:
-
-: #+INCLUDE "~/.emacs" src emacs-lisp -n -r
-
-    Thanks to Manish for pointing out that this was not yet
-    supported.
-
-*** Examples can be exported to HTML as text areas
-    
-    You can now specify a =-t= switch to an example or src block,
-    to make it export to HTML as a text area.  To change the
-    defaults for height (number of lines in the example) and
-    width of this area (80), use the =-h= and =-w= switches.
-
-    Thanks to Ulf Stegemann for driving this development.
-
-*** LaTeX_CLASS can be given as a property
-
-    When exporting a single subtree by selecting it as a region
-    before export, the LaTeX class for the export will be taken
-    from the =LaTeX_CLASS= property of the entry if present.
-
-    Thanks to Robert Goldman for this request.
-
-*** Better handling of inlined images in different backends
-
-    Two new variables govern which kind of files can be inlined
-    during export.  These are
-    =org-export-html-inline-image-extensions= and
-    =org-export-latex-inline-image-extensions=.  Remember that
-    links are turned into an inline image if they are a pure link
-    with no description.  HTML files can inline /.png/, /.jpg/,
-    and /.gif/ files, while LaTeX files, when processed with
-    /pdflatex/, can inline /.png/, /.jpg/, and /.pdf/ files.
-    These also represent the default settings for the new
-    variables.  Note that this means that pure links to /.pdf/
-    files will be inlined - to avoid this for a particular link,
-    make sure that the link has a description part which is not
-    equal to the link part.
-
-*** Links by ID now continue to work in HTML exported files
-
-    If you make links by ID, these links will now still work in
-    HTML exported files, provided that you keep the relative path
-    from link to target file the same.
-
-    Thanks to Friedrich Delgado Friedrichs for pushing this over
-    the line.
-
-*** The relative timer can be paused
-
-    The new command `C-c C-x ,' will pause the relative timer.
-    When the relative timer is running, its value will be shown
-    in the mode line.  To get rid of this display, you need to
-    really stop the timer with `C-u C-c C-x ,'.
-
-    Thanks to Alan Davis for driving this change.
-
-*** The attachment directory may now be chosen by the user
-
-    Instead of using the automatic, unique directory related to
-    the entry ID, you can also use a chosen directory for the
-    attachments of an entry.  This directory is specified by the
-    ATTACH_DIR property.  You can use `C-c C-a s' to set this
-    property.
-
-    Thanks to Jason Jackson for this proposal.
-
-*** You can use a single attachment directory for a subtree
-
-    By setting the property ATTACH_DIR_INHERIT, you can now tell
-    Org that children of the entry should use the same directory
-    for attachments, unless a child explicitly defines its own
-    directory with the ATTACH_DIR property.  You can use the
-    command `C-c C-a i' to set this property in an entry.
-
-* Version 6.17
-
-** Overview
-
-- Footnote support
-- Line numbers and references in literal examples 
-- New hooks for export preprocessing 
-- Capture column view into a different file
-
-** Details
-
-*** Footnote support
-
-Org-mode now directly supports the creation of footnotes.  In
-contrast to the /footnote.el/ package, Org-mode's footnotes are
-designed for work on a larger document, not only for one-off
-documents like emails.  The basic syntax is similar to the one
-used by /footnote.el/, i.e. a footnote is defined in a paragraph
-that is started by a footnote marker in square brackets in column
-0, no indentation allowed.  The footnote reference is simply the
-marker in square brackets inside text.  For example:
-
-#+begin_src org
-The Org homepage[fn:1] now looks a lot better than it used to.
-...
-[fn:1] The link is: http://orgmode.org
-#+end_src
-
-Org-mode extends the number-based syntax to /named/ footnotes and
-optional inline definition.  Using plain numbers as markers is
-supported for backward compatibility, but not encouraged because
-of possible conflicts with LaTeX syntax.  Here are the valid
-references:
-
-- [1] ::  A plain numeric footnote marker.
-	 
-- [fn:name] :: A named footnote reference, where `name' is a
-     unique label word or, for simplicity of automatic creation,
-     a number. 
-     
-- [fn:: This is the inline definition of this footnote] :: A
-     LaTeX-like anonymous footnote where the definition is given
-     directly at the reference point.
-
-- [fn:name: a definition] :: An inline definition of a footnote,
-     which also specifies a name for the note.  Since Org allows
-     multiple references to the same note, you can then use use
-     `[fn:name]' to create additional references.
-
-Footnote labels can be created automatically, or you create names
-yourself.  This is handled by the variable
-=org-footnote-auto-label= and its corresponding =#+STARTUP=
-keywords, see the docstring of that variable for details.
-
-The following command handles footnotes:
-
-- C-c C-x f :: The footnote action command.  When the cursor is
-     on a footnote reference, jump to the definition.  When it is
-     at a definition, jump to the (first) reference.  Otherwise,
-     create a new footnote.  Depending on the variable
-     `org-footnote-define-inline' (with associated =#+STARTUP=
-     options =fninline= and =nofninline=), the definitions will
-     be placed right into the text as part of the reference, or
-     separately into the location determined by the variable
-     =org-footnote-section=.
-     When this command is called with a prefix argument, a menu
-     of additional options is offered:
-     - s :: Sort the footnote definitions by reference sequence.
-            During editing, Org makes no effort to sort footnote
-            definitions into a particular sequence.  If you want
-            them sorted, use this command, which will also move
-            entries according to =org-footnote-section=.
-     - n :: Normalize the footnotes by collecting all
-            definitions (including inline definitions) into a
-            special section, and then numbering them in
-            sequence.  The references will then also be
-            numbers.  This is meant to be the final step before
-            finishing a document (e.g. sending off an email).
-            The exporters do this automatically, and so could 
-            something like `message-send-hook'.
-     - d :: Delete the footnote at point, and all references to it.
-	    
-- C-c C-c :: If the cursor is on a footnote reference, jump to
-     the definition.  If it is a the definition, jump back to the
-     reference.  When called with a prefix argument at either
-     location, offer the same menu as `C-u C-c C-x f'.
-
-- C-c C-o or mouse-1/2 :: Footnote labels are also links to the
-     corresponding definition/reference, and you can use the
-     usual commands to follow these links.
-
-Org-mode's footnote support is designed so that it should also
-work in buffers that are not in Org-mode, for example in email
-messages.  Just bind =org-footnote-action= to a global key like
-=C-c f=.
-
-The main trigger for this development came from a hook function
-written by Paul Rivier, to implement named footnotes and to
-convert them to numbered ones before export.  Thanks, Paul!
-
-Thanks also to Scot Becker for a thoughtful post bringing this
-subject back onto the discussion table, and to Matt Lundin for
-the idea of named footnotes and his prompt testing of the new
-features.
-
-*** Line numbers and references in literal examples
-
-Literal examples introduced with =#+BEGIN_EXAMPLE= or =#+BEGIN_SRC=
-do now allow optional line numbering in the example.
-Furthermore, links to specific code lines are supported, greatly
-increasing Org-mode's utility for writing tutorials and other
-similar documents.
-
-Code references use special labels embedded directly into the
-source code.  Such labels look like "(ref:name)" and must be
-unique within a document.  Org-mode links with "(name)" in the
-link part will be correctly interpreted, both while working with
-an Org file (internal links), and while exporting to the
-different backends.  Line numbering and code references are
-supported for all three major backends, HTML, LaTeX, and ASCII.
-In the HTML backend, hovering the mouse over a link to a source
-line will remote-highlight the referenced code line.
-
-The options for the BEGIN lines are:
-
- - -n :: Number the lines in the example
- - +n :: Like -n, but continue numbering from where the previous
-         example left off.
- - -r :: Remove the coderef cookies from the example, and replace
-         links to this reference with line numbers.  This option
-         takes only effect if either -n or +n are given as well.
-         If -r is not given, coderefs simply use the label name.
- - -l "fmt" :: Define a local format for coderef labels, see the
-      variable =org-coderef-label-format= for details.  Use this
-      of the default syntax causes conflicts with the code in the
-      code snippet you are using.
-
-Here is an example:
-
-#+begin_example -k
-#+begin_src emacs-lisp -n -r
-(defmacro org-unmodified (&rest body)                   (ref:def)
-  "Execute body without changing `buffer-modified-p'."
-  `(set-buffer-modified-p                              (ref:back)
-    (prog1 (buffer-modified-p) ,@body)))
-#+end_src
-[[(def)][Line (def)]] contains the macro name.  Later at line [[(back)]],
-backquoting is used.
-#+end_example
-
-When exported, this is translated to:
-#+begin_src emacs-lisp -n -r
-(defmacro org-unmodified (&rest body)                   (ref:def)
-  "Execute body without changing `buffer-modified-p'."
-  `(set-buffer-modified-p                              (ref:back)
-    (prog1 (buffer-modified-p) ,@body)))
-#+end_src
-[[(def)][Line (def)]] contains the macro name.  Later at line [[(back)]],
-backquoting is used.
-
-Thanks to Ilya Shlyakhter for proposing this feature set.  Thanks
-to Sebastian Rose for the key Javascript element that made the
-remote highlighting possible.
-
-*** New hooks for export preprocessing
-    The export preprocessor now runs more hooks, to allow
-    better-timed tweaking by user functions:
-
-- =org-export-preprocess-hook= ::
-  Pretty much the first thing in the preprocessor.  But org-mode
-  is already active in the preprocessing buffer.
-
-- =org-export-preprocess-after-include-files-hook= ::
-  This is run after the contents of included files have been inserted.
-
-- =org-export-preprocess-after-tree-selection-hook= ::
-  This is run after selection of trees to be exported has
-  happened.  This selection includes tags-based selection, as
-  well as removal of commented and archived trees.
-
-- =org-export-preprocess-before-backend-specifics-hook= ::
-  Hook run before backend-specific functions are called during preprocessing.
-
-- =org-export-preprocess-final-hook= ::
-  Hook for preprocessing an export buffer.  This is run as the
-  last thing in the preprocessing buffer, just before returning
-  the buffer string to the backend.
-
-*** Capture column view into a different file
-
-    The :id parameter for the dynamic block capturing column view
-    can now truly be an ID that will also be found in a
-    different file.  Also, it can be like =file:path/to/file=, to
-    capture the global column view from a different file.
-
-    Thanks to Francois Lagarde for his report that IDs outside
-    the current file would not work.
-
-* Version 6.16
-  Cleanup of many small bugs, and one new feature.
-
-** Details
-
-*** References to last table row with special names
-
-    Fields in the last row of a table can now be referenced with
-    $LR1, $LR2, etc.  These references can appear both on the
-    left hand side and right hand side of a formula.
-
-* Version 6.15f
-
-  This version reverses the introduction of @0 as a reference to
-  the last rwo in a table, because of a conflict with the use of
-  @0 for the current row.
-
-* Version 6.15
-** Overview
-
-- All known LaTeX export issues fixed 
-- Captions and attributes for figures and tables. 
-- Better implementation for entry IDs 
-- Spreadsheet references to the last table line. 
-- Old syntax for link attributes abandoned 
-
-** Incompatible changes
-*** Old syntax for link attributes abandoned
-
-There used to be a syntax for setting link attributes for
-HTML export by enclosing the attributes into double braces
-and adding them to the link itself, like
-
-#+begin_example
-[[./img/a.jpg{{alt="an image"}}] ]
-#+end_example
-
-This syntax is not longer supported, use instead
-
-#+begin_src org
-,#+ATTR_HTML: alt="an image"
-[[./img/a.jpg] ]
-#+end_src
-
-** Details
-
-*** All known LaTeX export issues fixed
-
-All the remaining issues with the LaTeX exporter have hopefully
-been addressed in this release.  In particular, this covers
-quoting of special characters in tables and problems with
-exporting files where the headline is in the first line, or with
-an active region.
-
-*** Captions and attributes for figures and tables.
-
-Tables, and Hyperlinks that represent inlined images, can now be
-equipped with additional information that will be used during
-export.  The information will be taken from the following special
-lines in the buffer and apply to the first following table or
-link.
-
-- #+CAPTION: :: The caption of the image or table.  This string
-     should be processed according to the export backend, but
-     this is not yet done.
-
-- #+LABEL: :: A label to identify the figure/table for cross
-     references.  For HTML export, this string will become the
-     ID for the ~<div class="figure">~ element that encapsulates
-     the image tag and the caption.  For LaTeX export, this
-     string will be used as the argument of a ~\label{...}~
-     macro.  These labels will be available for internal links
-     like ~[[label][Table] ]~.
-
-- #+ATTR_HTML: :: Attributes for HTML export of image, to be
-     added as attributes into the ~<img...>~ tag.  This string
-     will not be processed, so it should have immediately the
-     right format.
-
-- #+ATTR_LaTeX: :: Attributes for LaTeX export of images and
-     tables.\\
-     For /images/, this string is directly inserted into
-     the optional argument of the ~\includegraphics[...]{file}~
-     command, to specify scaling, clipping and other options.
-     This string will not be processed, so it should have
-     immediately the right format, like =width=5cm,angle=90=.\\       
-     For /tables/, this can currently contain the keyword
-     =longtable=, to request typesetting of the table using the
-     longtable package, which automatically distributes the table
-     over several pages if needed.  Also, the attributes line may
-     contain an alignment string for the tabular environment, like
-     =longtable,align=l|lrl=
-
-For LaTeX export, if either a caption or a label is given, the element
-will be exported as a float, i.e. wrapped into a figure or table
-environment.
-
-*** Better implementation for entry IDs
-    
-Unique identifiers for entries can now be used more efficiently.
-Internally, a hash array has replaced the alist used so far to
-keep track of the files in which an ID is defined.  This makes it
-quite fast to find an entry by ID.
-
-There is a new link type which looks like this:
-
-#+begin_example
-id:GLOBALLY-UNIQUE-IDENTIFIER
-#+end_example
-
-This link points to a specific entry.  When you move the entry to
-a different file, for example if you move it to an archive
-file, the link will continue to work.
-
-The file /org-id.el/ contains an API that can be used to write
-code using these identifiers, including creating IDs and finding
-them wherever they are.
-
-Org has its own method to create unique identifiers, but if the system
-has /uuidgen/ command installed (Mac's and Linux systems generally
-do), it will be used by default (a change compared to the earlier
-implmentation, where you explicitdly had to opt for uuidgen).  You can
-also select the method by hand, using the variable =org-id-method=.
-
-If the ID system ever gets confused about where a certain ID is, it
-initiates a global scan of all agenda files with associated archives,
-all files previously known containing any IDs, and all currently
-visited Org-mode files to rebuild the hash.  You can also initiate
-this by hand: =M-x org-id-update-id-locations=.  Running this command
-will also dump into the =*Messages*= buffer information about any
-duplicate IDs.  These should not exist, and Org will never /make/ the
-same ID twice, but if you /copy/ an entry with its properties,
-duplicate IDs will inevitably be produced.  Unfortunately, this is
-unavoidable in a plain text system that allows you to edit the text in
-arbitrary ways, and a portion of care on your side is needed to keep
-this system clean.
-
-The hash is stored in the file =~/.emacs.d/.org-id-locations=.
-This is also a change from previous versions where the file was
-=~/.org=id-locations=.  Therefore, you can remove this old file
-if you have it.  I am not sure what will happen if the =.emacs.d=
-directory does not exists in your setup, but in modern Emacsen, I
-believe it should exist.  If you do not want to use IDs across
-files, you can avoid the overhead with tracking IDs by
-customizing the variable =org-id-track-globally=.  IDs can then
-still be used for links inside a single file.
-
-IDs will also be used when you create a new link to an Org-mode
-buffer.  If you use =org-store-link= (normally at =C-c l=) inside
-en entry in an Org-mode buffer, and ID property will be created
-if it does not exist, and the stored link will be an =id:= link.
-If you prefer the much less secure linking to headline text, you
-can configure the variable =org-link-to-org-use-id=.  The default
-setting for this variable is =create-if-interactive=, meaning
-that an ID will be created when you store a link interactively,
-but not if you happen to be in an Org-mode file while you create
-a remember note (which usually has a link to the place where you
-were when starting remember).
-
-*** Spreadsheet references to the last table line.
-
-You may now use =@0= to reference the last dataline in a table
-in a stable way.  This is useful in particular for automatically
-generated tables like the ones using /org-collector.el/ by Eric
-Schulte.
-
-* Version 6.14
-** Overview
-
-   - New relative timer to support timed notes 
-   - Special faces can be set for individual tags 
-   - The agenda shows now all tags, including inherited ones. 
-   - Exclude some tags from inheritance. 
-   - More special values for time comparisons in property searches 
-   - Control for exporting meta data 
-   - Cut and Paste with hot links from w3m to Org 
-   - LOCATION can be inherited for iCalendar export 
-   - Relative row references crossing hlines now throw an error 
-
-** Incompatible Changes
-
-*** Relative row references crossing hlines now throw an error
-    
-    Relative row references in tables look like this: "@-4" which
-    means the forth row above this one.  These row references are
-    not allowed to cross horizontal separator lines (hlines).  So
-    far, when a row reference violates this policy, Org would
-    silently choose the field just next to the hline.
-
-    Tassilo Horn pointed out that this kind of hidden magic is
-    actually confusing and may cause incorrect formulas, and I do
-    agree.  Therefore, trying to cross a hline with a relative
-    reference will now throw an error.
-    
-    If you need the old behavior, customize the variable
-    `org-table-error-on-row-ref-crossing-hline'.
-
-** Details
-
-*** New relative timer to support timed notes
-
-    Org now supports taking timed notes, useful for example while
-    watching a video, or during a meeting which is also recorded.
-
-    - =C-c C-x .= :: 
-      Insert a relative time into the buffer.  The first time
-      you use this, the timer will be started.  When called
-      with a prefix argument, the timer is reset to 0.
-
-    - =C-c C-x -= :: 
-      Insert a description list item with the current relative
-      time.  With a prefix argument, first reset the timer to 0.
-
-    - =M-RET= ::
-      Once the time list has been initiated, you can also use the
-      normal item-creating command to insert the next timer item.
-
-    - =C-c C-x 0= :: 
-      Reset the timer without inserting anything into the buffer.
-      By default, the timer is reset to 0.  When called with a
-      =C-u= prefix, reset the timer to specific starting
-      offset.  The user is prompted for the offset, with a
-      default taken from a timer string at point, if any, So this
-      can be used to restart taking notes after a break in the
-      process.  When called with a double prefix argument
-      =C-c C-u=, change all timer strings in the active
-      region by a certain amount.  This can be used to fix timer
-      strings if the timer was not started at exactly the right
-      moment.
-
-    Thanks to Alan Dove, Adam Spiers, and Alan Davis for
-    contributions to this idea.
-
-*** Special faces can be set for individual tags
-
-    You may now use the variable =org-tag-faces= to define the
-    face used for specific tags, much in the same way as you can
-    do for TODO keywords.
-
-    Thanks to Samuel Wales for this proposal.
-
-*** The agenda shows now all tags, including inherited ones.
-
-    This request has come up often, most recently it was
-    formulated by Tassilo Horn.
-
-    If you prefer the old behavior of only showing the local
-    tags, customize the variable =org-agenda-show-inherited-tags=.
-
-*** Exclude some tags from inheritance.
-
-    So far, the only way to select tags for inheritance was to
-    allow it for all tags, or to do a positive selection using
-    one of the more complex settings for
-    `org-use-tag-inheritance'.  It may actually be better to
-    allow inheritance for all but a few tags, which was difficult
-    to achieve with this methodology.
-
-    A new option, `org-tags-exclude-from-inheritance', allows to
-    specify an exclusion list for inherited tags.
-
-*** More special values for time comparisons in property searches
-
-    In addition to =<now>=, =<today>=, =<yesterday>=, and
-    =<tomorrow>=, there are more special values accepted now in
-    time comparisons in property searches:  You may use strings
-    like =<+3d>= or =<-2w>=, with units d, w, m, and y for day,
-    week, month, and year, respectively
-
-    Thanks to Linday Todd for this proposal.
-
-*** Control for exporting meta data
-
-    All the metadata in a headline, i.e. the TODO keyword, the
-    priority cookie, and the tags, can now be excluded from
-    export with appropriate options:
-
-    | Variable                      | Publishing property | OPTIONS switch |
-    |-------------------------------+---------------------+----------------|
-    | org-export-with-todo-keywords | :todo-keywords      | todo:          |
-    | org-export-with-tags          | :tags               | tags:          |
-    | org-export-with-priority      | :priority           | pri:           |
-
-*** Cut and Paste with hot links from w3m to Org
-
-    You can now use the key =C-c C-x M-w= in a w3m buffer with
-    HTML content to copy either the region or the entire file in
-    a special way.  When you yank this text back into an Org-mode
-    buffer, all links from the w3m buffer will continue to work
-    under Org-mode.
-
-    For this to work you need to load the new file /org-w3m.el./
-    Please check your org-modules variable to make sure that this
-    is turned on.
-
-    Thanks for Richard Riley for the idea and to Andy Stewart for
-    the implementation.
-
-*** LOCATION can be inherited for iCalendar export
-
-    The LOCATION property can now be inherited during iCalendar
-    export if you configure =org-use-property-inheritance= like
-    this:
-
-#+begin_src emacs-lisp
-(setq org-use-property-inheritance '("LOCATION"))
-#+end_src
-
-* Version 6.13
-
-** Overview
-
-   - Keybindings in Remember buffers can be configured
-   - Support for ido completion
-   - New face for date lines in agenda column view
-   - Invisible targets become now anchors in headlines.
-   - New contributed file /org-exp-blocks.el/
-   - New contributed file /org-eval-light.el/
-   - Link translation
-   - BBDB links may use regular expressions.
-   - Link abbreviations can use %h to insert a url-encoded target value
-   - Improved XHTML compliance
-
-** Details
-
-*** Keybindings in Remember buffers can be configured
-
-    The remember buffers created with Org's extensions are in
-    Org-mode, which is nice to prepare snippets that will
-    actually be stored in Org-mode files.  However, this makes it
-    hard to configure key bindings without modifying the Org-mode
-    keymap.  There is now a minor mode active in these buffers,
-    `org-remember-mode', and its keymap org-remember-mode-map can
-    be used for key bindings.  By default, this map only contains
-    the bindings for =C-c C-c= to store the note, and =C-c C-k=
-    to abort it.  Use `org-remember-mode-hook' to define your own
-    bindings like
-
-#+begin_src emacs-lisp
-(add-hook
- 'org-remember-mode-hook
- (lambda ()
-   (define-key org-remember-mode-map
-     "\C-x\C-s" 'org-remember-finalize)))
-#+end_src
-
-    If you wish, you can also use this to free the =C-c C-c=
-    binding (by binding this key to nil in the minor mode map),
-    so that you can use =C-c C-c= again to set tags.
-
-    This modification is based on a request by Tim O'Callaghan.
-
-*** Support for ido completion
-
-    You can now get the completion interface from /ido.el/ for
-    many of Org's internal completion commands by turning on the
-    variable =org-completion-use-ido=. =ido-mode= must also be
-    active before you can use this.
-
-    This change is based upon a request by Samuel Wales.
-
-*** New face for date lines in agenda column view
-
-    When column view is active in the agenda, and when you have
-    summarizing properties, the date lines become normal column
-    lines and the separation between different days becomes
-    harder to see.  If this bothers you, you can now customize
-    the face =org-agenda-column-dateline=.
-
-    This is based on a request by George Pearson.
-
-*** Invisible targets become now anchors in headlines.
-
-    These anchors can be used to jump to a directly with an HTML
-    link, just like the =sec-xxx= IDs.  For example, the
-    following will make a http link
-    =//domain/path-to-my-file.html#dummy= work:
-
-#+begin_src org
-,# <<dummy>>
-,*** a headline
-#+end_src
-
-    This is based on a request by Matt Lundin.
-
-*** New contributed file /org-exp-blocks.el/
-
-    This new file implements special export behavior of
-    user-defined blocks.  The currently supported blocks are
-
-    - comment :: Comment blocks with author-specific markup
-    - ditaa ::  conversion of ASCII art into pretty png files
-	 using Stathis  Sideris' /ditaa.jar/ program
-    - dot :: creation of graphs in the /dot/ language
-    - R :: Sweave type exporting using the R program
-
-    For more details and examples, see the file commentary in
-    /org-exp-blocks.el/.
-
-    Kudos to Eric Schulte for this new functionality, after
-    /org-plot.el/ already his second major contribution.  Thanks
-    to Stathis for this excellent program, and for allowing us to
-    bundle it with Org-mode.
-
-*** New contributed file /org-eval-light.el/
-
-    This module gives control over execution Emacs Lisp code
-    blocks included in a file.
-
-    Thanks to Eric Schulte also for this file.
-
-*** Link translation
-
-    You can now configure Org to understand many links created
-    with the Emacs Planner package, so you can cut text from
-    planner pages and paste them into Org-mode files without
-    having to re-write the links.  Among other things, this means
-    that the command =org-open-at-point-global= which follows
-    links not only in Org-mode, but in arbitrary files like
-    source code files etc, will work also with links created by
-    planner. The following customization is needed to make all of
-    this work
-
-#+begin_src emacs-lisp
-(setq org-link-translation-function
-      'org-translate-link-from-planner)
-#+end_src
-
-   I guess an inverse translator could be written and integrated
-   into Planner.
-
-*** BBDB links may use regular expressions.
-
-    This did work all along, but only now I have documented it.
-
-*** =yank-pop= works again after yanking an outline tree
-
-    Samuel Wales had noticed that =org-yank= did mess up this
-    functionality.  Now you can use =yank-pop= again, the only
-    restriction is that the so-yanked text will not be
-    pro/demoted or folded.
-
-*** Link abbreviations can use %h to insert a url-encoded target value
-
-    Thanks to Steve Purcell for a patch to this effect.
-
-*** Improved XHTML compliance
-
-    Thanks to Sebastian Rose for pushing this.
-
-*** Many bug fixes again.
-    
-* Version 6.12
-** Overview
-
-   - A region of entries can now be refiled with a single command
-   - Fine-tuning the behavior of `org-yank'
-   - Formulas for clocktables
-   - Better implementation of footnotes for HTML export
-   - More languages for HTML export.
-
-** Details
-
-*** A region of entries can now be refiled with a single command
-    
-    With =transient-make-mode= active (=zmacs-regions= under
-    XEmacs), you can now select a region of entries and refile
-    them all with a single =C-c C-w= command.
-
-    Thanks to Samuel Wales for this useful proposal.
-
-*** Fine-tuning the behavior of =org-yank=
-
-    The behavior of Org's yanking command has been further
-    fine-tuned in order to avoid some of the small annoyances
-    this command caused.
-
-    - Calling =org-yank= with a prefix arg will stop any special
-      treatment and directly pass through to the normal =yank=
-      command.  Therefore, you can now force a normal yank with
-      =C-u C-y=.
-
-    - Subtrees will only be folded after a yank if doing so will
-      now swallow any non-white characters after the yanked text.
-      This is, I think a really important change to make the
-      command work more sanely.
-
-*** Formulas for clocktables
-
-    You can now add formulas to a clock table, either by hand, or
-    with a =:formula= parameter.  These formulas can be used to
-    create additional columns with further analysis of the
-    measured times.
-
-    Thanks to Jurgen Defurne for triggering this addition.
-
-*** Better implementation of footnotes for HTML export
-    
-    The footnote export in 6.11 really was not good enough.  Now
-    it works fine.  If you have customized
-    =footnote-section-tag=, make sure that your customization is
-    matched by =footnote-section-tag-regexp=.
-
-    Thanks to Sebastian Rose for pushing this change.
-
-*** More languages for HTML export.
-
-    More languages are supported during HTML export.  This is
-    only relevant for the few special words Org inserts, like
-    "Table of Contents", or "Footnotes".  Also the encoding
-    issues with this feature seem to be solved now.
-
-    Thanks to Sebastian Rose for pushing me to fix the encoding
-    problems.
-
-* Version 6.11
-
-** Overview
-
-   - Yanking subtree with =C-y= now adjusts the tree level
-   - State changes can now be shown in the log mode in the agenda
-   - Footnote in HTML export are now collected at the end of the document
-   - HTML export now validates again as XHTML
-   - The clock can now be resumed after exiting and re-starting Emacs
-   - Clock-related data can be saved and resumed across Emacs sessions
-   - Following file links can now use C-u C-u to force use of an external app
-   - Inserting absolute files names now abbreviates links with "~"
-   - Links to attachment files
-   - Completed repeated tasks listed briefly in agenda
-   - Remove buffers created during publishing are removed
-
-** Details
-
-*** Yanking subtree with =C-y= now adjusts the tree level
-    When yanking a cut/copied subtree or a series of trees, the
-    normal yank key =C-y= now adjusts the level of the tree to
-    make it fit into the current outline position, without losing
-    its identity, and without swallowing other subtrees.
-
-    This uses the command =org-past-subtree=.  An additional
-    change in that command has been implemented: Normally, this
-    command picks the right outline level from the surrounding
-    *visible* headlines, and uses the smaller one.  So if the
-    cursor is between a level 4 and a level 3 headline, the tree
-    will be pasted as level 3.  If the cursor is actually *at*
-    the beginning of a headline, the level of that headline will
-    be used.  For example, lets say you have a tree like this:
-
-#+begin_src org
-,* Level one
-,** Level two
-,(1)
-,(2)* Level one again
-#+end_src
-
-    with (1) and (2) indicating possible cursor positions for the
-    insertion.  When at (1), the tree will be pasted as level 2.
-    When at (2), it will be pasted as level 1.
-
-    If you do not want =C-y= to behave like this, configure the
-    variable =org-yank-adjusted-subtrees=.
-
-    Thanks to Samuel Wales for this idea and a partial implementation.
-
-*** State changes can now be shown in the log mode in the agenda
-
-    If you configure the variable =org-agenda-log-mode-items=,
-    you can now request that all logged state changes be included
-    in the agenda when log mode is active.  If you find this too
-    much for normal applications, you can also temporarily
-    request the inclusion of state changes by pressing =C-u l= in
-    the agenda.
-
-    This was a request by Hsiu-Khuern Tang.
-
-    You can also press `C-u C-u l' to get *only* log items in the
-    agenda, withour any timestamps/deadlines etc.
-
-*** Footnote in HTML export are now collected at the end of the document
-    Previously, footnotes would be left in the document where
-    they are defined, now they are all collected and put into a
-    special =<div>= at the end of the document.
-
-    Thanks to Sebastian Rose for this request.
-
-*** HTML export now validates again as XHTML.
-
-    Thanks to Sebastian Rose for pushing this cleanup.
-
-*** The clock can now be resumed after exiting and re-starting Emacs
-
-    If the option =org-clock-in-resume= is t, and the first clock
-    line in an entry is unclosed, clocking into that task resumes
-    the clock from that time.
-
-    Thanks to James TD Smith for a patch to this effect.
-
-*** Clock-related data can be saved and resumed across Emacs sessions
-    
-    The data saved include the contents of =org-clock-history=,
-    and the running clock, if there is one.
-    
-    To use this, you will need to add to your .emacs
-
-#+begin_src emacs-lisp
-(setq org-clock-persist t)
-(setq org-clock-in-resume t)
-(org-clock-persistence-insinuate)
-#+end_src
-
-    Thanks to James TD Smith for a patch to this effect.
-
-*** Following file links can now use C-u C-u to force use of an external app.
-
-    So far you could only bypass your setup in `org-file-apps'
-    and force opening a file link in Emacs by using a =C-u= prefix arg
-    with =C-c C-o=.  Now you can call =C-u C-u C-c C-o= to force
-    an external application.  Which external application depends
-    on your system.  On Mac OS X and Windows, =open= is used.  On
-    a GNU/Linux system, the mailcap settings are used.
-
-    This was a proposal by Samuel Wales.
-
-*** Inserting absolute files names now abbreviates links with "~".
-
-    Inserting file links with =C-u C-c C-l= was buggy if the
-    setting of `org-link-file-path-type' was `adaptive' (the
-    default).  Absolute file paths were not abbreviated relative
-    to the users home directory.  This bug has been fixed.
-
-    Thanks to Matt Lundin for the report.
-
-*** Links to attachment files
-
-    Even though one of the purposes of entry attachments was to
-    reduce the number of links in an entry, one might still want
-    to have the occasional link to one of those files.  You can
-    now use link abbreviations to set up a special link type that
-    points to attachments in the current entry.  Note that such
-    links will only work from within the same entry that has the
-    attachment, because the directory path is entry specific.
-    Here is the setup you need:
-
-#+begin_src emacs-lisp
-(setq org-link-abbrev-alist '(("att" . org-attach-expand-link)))
-#+end_src
-
-    After this, a link like this will work
-
-#+BEGIN_EXAMPLE
-     [[att:some-attached-file.txt]]
-#+END_EXAMPLE
-    This was a proposal by Lindsay Todd.
-
-*** Completed repeated tasks listed briefly in agenda
-
-    When a repeating task, listed in the daily/weekly agenda under
-    today's date, is completed from the agenda, it is listed as
-    DONE in the agenda until the next update happens.  After the
-    next update, the task will have disappeared, of course,
-    because the new date is no longer today.
-    
-*** Remove buffers created during publishing are removed
-
-    Buffers that are created during publishing are now deleted
-    when the publishing is over.  At least I hope it works like this.
-
-* Version 6.10
-
-** Overview
-
-   - Secondary agenda filtering is becoming a killer feature
-   - Setting tags has now its own binding, =C-c C-q=
-   - Todo state changes can trigger tag changes
-   - C-RET will now always insert a new headline, never an item.
-   - Customize org-mouse.el feature set to free up mouse events
-   - New commands for export all the way to PDF (through LaTeX)
-   - Some bug fixed for LaTeX export, more bugs remain.
-
-** Details
-
-*** Enhancements to secondary agenda filtering
-
-    This is, I believe, becoming a killer feature.  It allows you
-    to define fewer and more general custom agenda commands, and
-    then to do the final narrowing to specific tasks you are
-    looking for very quickly, much faster than calling a new
-    agenda command.
-
-    If you have not tries this yet, you should!
-
-**** You can now refining the current filter by an additional criterion
-      When filtering an existing agenda view with =/=, you can
-      now narrow down the existing selection by an additional
-      condition.  Do do this, use =\= instead of =/= to add the
-      additional criterion.  You can also press =+= or =-= after
-      =/= to add a positive or negative condition.  A condition
-      can be a TAG, or an effort estimate limit, see below.
-
-**** It is now possible to filter for effort estimates
-     This means to filter the agenda for the value of the Effort
-     property.  For this you should best set up global allowed
-     values for effort estimates, with
-
-#+begin_src emacs-lisp
-(setq org-global-properties
-      '(("Effort_ALL" . "0 0:10 0:30 1:00 2:00 3:00 4:00")))
-#+end_src
-      
-     You may then select effort limits with single keys in the
-     filter.  It works like this:  After =/= or =\=, first select
-     the operator which you want to use to compare effort
-     estimates:
-
-     : <   Select entries with effort smaller than or equal to the limit
-     : >   Select entries with effort larger than or equal to the limit
-     : =   Select entries with effort equal to the limit
-
-     After that, you can press a single digit number which is
-     used as an index to the allowed effort estimates.
-
-     If you do not use digits to fast-select tags, you can even
-     skip the operator, which will then default to
-     `org-agenda-filter-effort-default-operator', which is by
-     default =<=.
-
-     Thanks to Manish for the great idea to include fast effort
-     filtering into the agenda filtering process.
-
-**** The mode line will show the active filter
-     For example, if there is a filter in place that does select
-     for HOME tags, against EMAIL tags, and for tasks with an
-     estimated effort smaller than 30 minutes, the mode-line with
-     show =+HOME-EMAIL+<0:30=
-
-**** The filter now persists when the agenda view is refreshed
-     All normal refresh commands, including those that move the
-     weekly agenda from one week to the next, now keep the
-     current filter in place.
-
-     You need to press =/ /= to turn off the filter.  However,
-     when you run a new agenda command, for example going from
-     the weekly agenda to the TODO list, the filter will be
-     switched off.
-   
-*** Setting tags has now its own binding, =C-c C-q=
-
-    You can still use =C-c C-c= on a headline, but the new
-    binding should be considered as the main binding for this
-    command.  The reasons for this change are:
-
-    - Using =C-c C-c= for tags is really out of line with other
-      uses of =C-c C-c=.
-
-    - I hate it in Remember buffers when I try to set tags and I
-      cannot, because =C-c C-c= exits the buffer :-(
-
-    - =C-c C-q= will also work when the cursor is somewhere down
-      in the entry, it does not have to be on the headline.
-
-*** Todo state changes can trigger tag changes
-
-    The new option =org-todo-state-tags-triggers= can be used to
-    define automatic changes to tags when a TODO state changes.
-    For example, the setting
-
-    : (setq org-todo-state-tags-triggers
-    :       '((done ("Today" . nil) ("NEXT" . nil))
-    :         ("WAITING" ("Today" . t))))    
-
-    will make sure that any change to any of the DONE states will
-    remove tags "Today" and "NEXT", while switching to the
-    "WAITING" state will trigger the tag "Today" to be added.
-
-    I use this mostly to get rid of TODAY and NEXT tags which I
-    apply to select an entry for execution in the near future,
-    which I often prefer to specific time scheduling.
-
-*** C-RET will now always insert a new headline, never an item.
-    The new headline is inserted after the current subtree.
-
-    Thanks to Peter Jones for patches to fine-tune this behavior.
-
-*** Customize org-mouse.el feature set
-    There is a new variable =org-mouse-features= which gives you
-    some control about what features of org-mouse you want to
-    use.  Turning off some of the feature will free up the
-    corresponding mouse events, or will avoid activating special
-    regions for mouse clicks.  By default I have urned off the
-    feature to use drag mouse events to move or promote/demote
-    entries.  You can of course turn them back on if you wish.
-
-    This variable may still change in the future, allowing more
-    fine-grained control.
-
-*** New commands for export to PDF
-
-    This is using LaTeX export, and then processes it to PDF
-    using pdflatex.
-
-    : C-c C-e p     process to PDF.
-    : C-c C-e d     process to PDF, and open the file.
-
-*** LaTeX export
-    - \usepackage{graphicx} is now part of the standard class
-      definitions.
-    - Several bugs fixed, but definitely not all of them :-(
-
-*** New option `org-log-state-notes-insert-after-drawers'
-
-    Set this to =t= if you want state change notes to be inserted
-    after any initial drawers, i.e drawers the immediately follow
-    the headline and the planning line (the one with
-    DEADLINE/SCHEDULED/CLOSED information).
-
-* Version 6.09
-** Incompatible
-*** =org-file-apps= now uses regular expressions, see [[*%20org%20file%20apps%20now%20uses%20regular%20repressions%20instead%20of%20extensions][below]]
-
-** Details
-
-*** =org-file-apps= now uses regular repressions instead of extensions
-    Just like in =auto-mode-alist=, car's in the variable
-    =org-file-apps= that are strings are now interpreted as
-    regular expressions that are matched against a file name.  So
-    instead of "txt", you should now write "\\.txt\\'" to make
-    sure the matching is done correctly (even though "txt" will
-    be recognized and still be interpreted as an extension).
-
-    There is now a shortcut to get many file types visited by
-    Emacs.  If org-file-apps contains `(auto-mode . emacs)', then
-    any files that are matched by `auto-mode-alist' will be
-    visited in emacs.
-
-*** Changes to the attachment system
-
-    - The default method to attach a file is now to copy it
-      instead of moving it.
-    - You can modify the default method using the variable
-      `org-attach-method'.  I believe that most Unix people want
-      to set it to `ln' to create hard links.
-    - The keys =c=, =m=, and =l= specifically select =copy=,
-      =move=, or =link=, respectively, as the attachment method
-      for a file, overruling  `org-attach-method'.
-    - To create a new attachment as an Emacs buffer, you have not
-      now use =n= instead of =c=.
-    - The file list is now always retrieved from the directory
-      itself, not from the "Attachments" property.  We still
-      keep this property by default, but you can turn it off, by
-      customizing the variable =org-attach-file-list-property=.
-
-* Version 6.08
-
-** Incompatible changes
-
-   - Changes in the structure of IDs, see [[*The%20default%20structure%20of%20IDs%20has%20changed][here]] for details.
-
-   - C-c C-a has been redefined, see [[*%20C%20c%20C%20a%20no%20longer%20calls%20show%20all][here]] for details.
-
-** Details
-
-*** The default structure of IDs has changed
-
-    IDs created by Org have changed a bit:
-    - By default, there is no prefix on the ID.  There used to be
-      an "Org" prefix, but I now think this is not necessary.
-    - IDs use only lower-case letters, no upper-case letters
-      anymore.  The reason for this is that IDs are now also used
-      as directory names for org-attach, and some systems do not
-      distinguish upper and lower case in the file system.
-    - The ID string derived from the current time is now
-      /reversed/ to become an ID.  This assures that the first
-      two letters of the ID change fast, so hat it makes sense to
-      split them off to create subdirectories to balance load.
-    - You can now set the `org-id-method' to `uuidgen' on systems
-      which support it.
-
-*** =C-c C-a= no longer calls `show-all'
-
-    The reason for this is that =C-c C-a= is now used for the
-    attachment system.  On the rare occasions that this command
-    is needed, use =M-x show-all=, or =C-u C-u C-u TAB=.
-
-*** New attachment system
-
-    You can now attach files to each node in the outline tree.
-    This works by creating special directories based on the ID of
-    an entry, and storing files in these directories.  Org can
-    keep track of changes to the attachments by automatically
-    committing changes to git.  See the manual for more
-    information.
-
-    Thanks to John Wiegley who contributed this fantastic new
-    concept and wrote org-attach.el to implement it.
-
-*** New remember template escapes
-
-    : %^{prop}p   to insert a property
-    : %k          the heading of the item currently being clocked
-    : %K          a link to the heading of the item currently being clocked
-
-    Also, when you exit remember with =C-2 C-c C-c=, the item
-    will be filed as a child of the item currently being
-    clocked.  So the idea is, if you are working on something and
-    think of a new task related to this or a new note to be
-    added, you can use this to quickly add information to that
-    task.
-
-    Thanks to James TD Smith for a patch to this effect.
-
-*** Clicking with mouse-2 on clock info in mode-line visits the clock.
-    
-    Thanks to James TD Smith for a patch to this effect.
-
-*** New file in contrib: lisp/org-checklist.el
-
-    This module deals with repeated tasks that have checkbox
-    lists below them.
-
-    Thanks to James TD Smith for this contribution.
-
-*** New in-buffer setting #+STYLE
-
-    It can be used to locally set the variable
-    `org-export-html-style-extra'.  Several such lines are
-    allowed-, they will all be concatenated.  For an example on
-    how to use it, see the [[http://orgmode.org/worg/org-tutorials/org-publish-html-tutorial.php][publishing tutorial]].
-
-* Version 6.07
-
-** Overview
-
-   - Filtering existing agenda views with respect to a tag
-   - Editing fixed-width regions with picture or artist mode
-   - /org-plot.el/ is now part of Org
-   - Tags can be used to select the export part of a document
-   - Prefix interpretation when storing remember notes
-   - Yanking inserts folded subtrees
-   - Column view capture tables can have formulas, plotting info
-   - In column view, date stamps can be changed with S-cursor keys
-   - The note buffer for clocking out now mentions the task
-   - Sorting entries alphabetically ignores TODO keyword and priority
-   - Agenda views can sort entries by TODO state
-   - New face =org-scheduled= for entries scheduled in the future.
-   - Remember templates for gnus links can use the :to escape.
-   - The file specification in a remember template may be a function
-   - Categories in iCalendar export include local tags
-   - It is possible to define filters for column view
-   - Disabling integer increment during table Field copy
-   - Capturing column view is on `C-c C-x i'
-   - And tons of bugs fixed.  
-
-
-** Incompatible changes
-
-*** Prefix interpretation when storing remember notes has changed
-
-    The prefix argument to the `C-c C-c' command that finishes a
-    remember process is now interpreted differently:
-
-    : C-c C-c       Store the note to predefined file and headline
-    : C-u C-c C-c   Like C-c C-c, but immediately visit the note
-    :               in its new location.
-    : C-1 C-c C-c   Select the storage location interactively
-    : C-0 C-c C-c   Re-use the last used location
-
-    This was requested by John Wiegley.
-
-*** Capturing column view is now on `C-c C-x i'
-
-    The reason for this change was that `C-c C-x r' is also used
-    as a tty key replacement.
-
-*** Categories in iCalendar export now include local tags
-
-    The locally defined tags are now listed as categories when
-    exporting to iCalendar format.  Org's traditional file/tree
-    category is now the last category in this list.  Configure
-    the variable =org-icalendar-categories= to modify or revert
-    this behavior.
-
-    This was a request by Charles Philip Chan.
-
-** Details
-
-*** Secondary filtering of agenda views.
-
-    You can now easily and interactively filter an existing
-    agenda view with respect to a tag.  This command is executed
-    with the =/= key in the agenda.  You will be prompted for a
-    tag selection key, and all entries that do not contain or
-    inherit the corresponding tag will be hidden.  With a prefix
-    argument, the opposite filter is applied: entries that
-    do have the tag will be hidden.
-
-    This operation only /hides/ lines in the agenda buffer, it
-    does not remove them.  Changing the secondary filtering does
-    not require a new search and is very fast.
-
-    If you press TAB at the tag selection prompt, you will be
-    switched to a completion interface to select a tag.  This is
-    useful when you want to select a tag that does not have a
-    direct access character.
-
-    A double =/ /= will restore the original agenda view by
-    unhiding any hidden lines.
-
-    This functionality was John Wiegley's idea.  It is a simpler
-    implementation of some of the query-editing features proposed
-    and implemented some time ago by Christopher League (see the
-    file contrib/lisp/org-interactive-query.el).
-
-*** Editing fixed-width regions with picture or artist mode
-
-    The command @<code>C-c '@</code> (that is =C-c= followed by a
-    single quote) can now also be used to switch to a special
-    editing mode for fixed-width sections.  The default mode is
-    =artist-mode= which allows you to create ASCII drawings.
-
-    It works like this: Enter the editing mode with
-    @<code>C-c '@</code>.  An indirect buffer will be created and
-    narrowed to the fixed-width region.  Edit the drawing, and
-    press @<code>C-c '@</code> again to exit.
-
-    Lines in a fixed-width region should be preceded by a colon
-    followed by at least one space.  These will be removed during
-    editing, and then added back when you exit the editing mode.
-
-    Using the command in an empty line will create a new
-    fixed-width region.
-
-    This new feature arose from a discussion involving Scott
-    Otterson, Sebastian Rose and Will Henney.
-
-*** /org-plot.el/ is now part of Org.
-
-    You can run it by simple calling org-plot/gnuplot.
-    Documentation is not yet included with Org, please refer to
-    http://github.com/eschulte/org-plot/tree/master until we have
-    moved the docs into Org or Worg.
-
-    Thanks to Eric Schulte for this great contribution.
-
-*** Tags can be used to select the export part of a document
-
-    You may now use tags to select parts of a document for
-    inclusion into the export, and to exclude other parts.  This
-    behavior is governed by two new variables:
-    =org-export-select-tags= and =org-export-exclude-tags=.
-    These default to =("export")= and =("noexport")=, but can be
-    changed, even to include a list of several tags.
-
-    Org first checks if any of the /select/ tags is present in
-    the buffer.  If yes, all trees that do not carry one of these
-    tags will be excluded.  If a selected tree is a subtree, the
-    heading hierarchy above it will also be selected for export,
-    but not the text below those headings.  If none of the select
-    tags is found anywhere in the buffer, the whole buffer will
-    be selected for export.  Finally, all subtrees that are
-    marked by any of the /exclude/ tags will be removed from the
-    export buffer.
-
-    You may set these tags with in-buffer options
-    =EXPORT_SELECT_TAGS= and =EXPORT_EXCLUDE_TAGS=.
-
-    I love this feature.  Thanks to Richard G Riley for coming
-    up with the idea.
-
-*** Prefix interpretation when storing remember notes
-
-    The prefix argument to the `C-c C-c' command that finishes a
-    remember process is now interpreted differently:
-
-    : C-c C-c       Store the note to predefined file and headline
-    : C-u C-c C-c   Like C-c C-c, but immediately visit the note
-    :               in its new location.
-    : C-1 C-c C-c   Select the storage location interactively
-    : C-0 C-c C-c   Re-use the last used location
-
-    This was requested by John Wiegley.
-
-*** Yanking inserts folded subtrees
-
-    If the kill is a subtree or a sequence of subtrees, yanking
-    them with =C-y= will leave all the subtrees in a folded
-    state.  This basically means, that kill and yank are now
-    much more useful in moving stuff around in your outline.  If
-    you do not like this, customize the variable
-    =org-yank-folded-subtrees=.
-
-    Right now, I am only binding =C-y= to this new function,
-    should I modify all bindings of yank?  Do we need to amend
-    =yank-pop= as well?
-
-    This feature was requested by John Wiegley.
-
-*** Column view capture tables can have formulas, plotting info
-
-    If you attach formulas and plotting instructions to a table
-    capturing column view, these extra lines will now survive an
-    update of the column view capture, and any formulas will be
-    re-applied to the captured table.  This works by keeping any
-    continuous block of comments before and after the actual
-    table.
-
-*** In column view, date stamps can be changed with S-cursor keys
-
-    If a property value is a time stamp, S-left and S-right can
-    now be used to shift this date around while in column view.
-
-    This was a request by Chris Randle.
-
-*** The note buffer for clocking out now mentions the task
-    
-    This was a request by Peter Frings.
-
-*** Sorting entries alphabetically ignores TODO keyword and priority
-
-    Numerical and alphanumerical sorting now skips any TODO
-    keyword or priority cookie when constructing the comparison
-    string.  This was a request by Wanrong Lin.
-
-*** Agenda views can sort entries by TODO state
-
-    You can now define a sorting strategy for agenda entries that
-    does look at the TODO state of the entries.  Sorting by TODO
-    entry does first separate the non-done from the done states.
-    Within each class, the entries are sorted not alphabetically,
-    but in definition order.  So if you have a sequence of TODO
-    entries defined, the entries will be sorted according to the
-    position of the keyword in this sequence.
-
-    This follows an idea and sample implementation by Christian
-    Egli.
-
-*** New face =org-scheduled= for entries scheduled in the future.
-
-    This was a request by Richard G Riley.
-
-*** Remember templates for gnus links can now use the :to escape.
-
-    Thanks to Tommy Lindgren for a patch to this effect.
-*** The file specification in a remember template may now be a function
-
-    Thanks to Gregory Sullivan for a patch to this effect.
-
-*** Categories in iCalendar export now include local tags
-
-    The locally defined tags are now listed as categories when
-    exporting to iCalendar format.  Org's traditional file/tree
-    category is now the last category in this list.  Configure
-    the variable =org-icalendar-categories= to modify or revert
-    this behavior.
-
-    This was a request by Charles Philip Chan.
-
-*** It is now possible to define filters for column view
-
-    The filter can modify the value that will be displayed in a
-    column, for example it can cut out a part of a time stamp.
-    For more information, look at the variable
-    =org-columns-modify-value-for-display-function=.
-
-*** Disabling integer increment during table field copy
-
-    Prefix arg 0 to S-RET does the trick.
-
-    This was a request by Chris Randle.
-
-
-* Older changes
-
-  For older Changes, see [[file:Changes_old.org]]
-
-
-     

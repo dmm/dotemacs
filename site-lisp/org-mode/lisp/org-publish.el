@@ -1,10 +1,11 @@
 ;;; org-publish.el --- publish related org-mode files as a website
-;; Copyright (C) 2006, 2007, 2008, 2009  Free Software Foundation, Inc.
+;; Copyright (C) 2006, 2007, 2008, 2009, 2010
+;;          Free Software Foundation, Inc.
 
 ;; Author: David O'Toole <dto@gnu.org>
-;; Maintainer: Bastien Guerry <bzg AT altern DOT org>
+;; Maintainer: Carsten Dominik <carsten DOT dominik AT gmail DOT com>
 ;; Keywords: hypermedia, outlines, wp
-;; Version: 6.21trans
+;; Version: 6.35trans
 
 ;; This file is part of GNU Emacs.
 ;;
@@ -28,122 +29,27 @@
 ;;
 ;; org-publish.el can do the following:
 ;;
-;; + Publish all one's org-files to HTML or LaTeX
+;; + Publish all one's org-files to HTML or PDF
 ;; + Upload HTML, images, attachments and other files to a web server
 ;; + Exclude selected private pages from publishing
-;; + Publish a clickable index of pages
+;; + Publish a clickable sitemap of pages
 ;; + Manage local timestamps for publishing only changed files
 ;; + Accept plugin functions to extend range of publishable content
 ;;
-;; Special thanks to the org-mode maintainer Carsten Dominik for his
-;; ideas, enthusiasm, and cooperation.
-
-;;; Installation:
-
-;; Put org-publish.el in your load path, byte-compile it, and then add
-;; the following lines to your emacs initialization file:
-
-;; (autoload 'org-publish "org-publish" nil t)
-;; (autoload 'org-publish "org-publish-all" nil t)
-;; (autoload 'org-publish "org-publish-current-file" nil t)
-;; (autoload 'org-publish "org-publish-current-project" nil t)
-
-;; NOTE: When org-publish.el is included with org.el, those forms are
-;; already in the file org-install.el, and hence don't need to be put
-;; in your emacs initialization file in this case.
-
-;;; Usage:
-;;
-;; The program's main configuration variable is
-;; `org-publish-project-alist'. See below for example configurations
-;; with commentary.
-
-;; The main interactive functions are:
-;;
-;; M-x org-publish
-;; M-x org-publish-all
-;; M-x org-publish-current-file
-;; M-x org-publish-current-project
-
-;;;; Simple example configuration:
-
-;; (setq org-publish-project-alist
-;;       (list
-;;        '("org" . (:base-directory "~/org/"
-;;		     :base-extension "org"
-;;		     :publishing-directory "~/public_html"
-;;		     :with-section-numbers nil
-;;		     :table-of-contents nil
-;;		     :recursive t
-;;		     :style "<link rel="stylesheet" href=\"../other/mystyle.css\" type=\"text/css\">")))
-
-;;;; More complex example configuration:
-
-;; Imagine your *.org files are kept in ~/org, your images in
-;; ~/images, and stylesheets in ~/other. Now imagine you want to
-;; publish the files through an ssh connection to a remote host, via
-;; Tramp-mode. To maintain relative links from *.org files to /images
-;; and /other, we should replicate the same directory structure in
-;; your web server account's designated html root (in this case,
-;; assumed to be ~/html)
-
-;; Once you've done created the proper directories, you can adapt the
-;; following example configuration to your specific paths, run M-x
-;; org-publish-all, and it should publish the files to the correct
-;; directories on the web server, transforming the *.org files into
-;; HTML, and leaving other files alone.
-
-;; (setq org-publish-project-alist
-;;       (list
-;;        '("orgfiles" :base-directory "~/org/"
-;;		       :base-extension "org"
-;;		       :publishing-directory "/ssh:user@host:~/html/notebook/"
-;;		       :publishing-function org-publish-org-to-html
-;;		       :exclude "PrivatePage.org"   ;; regexp
-;;		       :headline-levels 3
-;;		       :with-section-numbers nil
-;;		       :table-of-contents nil
-;;		       :style "<link rel="stylesheet" href=\"../other/mystyle.css\" type=\"text/css\">"
-;;		       :auto-preamble t
-;;		       :auto-postamble nil)
-;;	   ("images" :base-directory "~/images/"
-;;		     :base-extension "jpg\\|gif\\|png"
-;;		     :publishing-directory "/ssh:user@host:~/html/images/"
-;;		     :publishing-function org-publish-attachment)
-;;	   ("other"  :base-directory "~/other/"
-;;		     :base-extension "css"
-;;		     :publishing-directory "/ssh:user@host:~/html/other/"
-;;		     :publishing-function org-publish-attachment)
-;;         ("website" :components ("orgfiles" "images" "other"))))
-
-;; For more information, see the documentation for the variable
-;; `org-publish-project-alist'.
-
-;; Of course, you don't have to publish to remote directories from
-;; within emacs. You can always just publish to local folders, and
-;; then use the synchronization/upload tool of your choice.
-
-;;; List of user-visible changes since version 1.27
-
-;; 1.78: Allow list-valued :publishing-function
-;; 1.77: Added :preparation-function, this allows you to use GNU Make etc.
-;; 1.65: Remove old "composite projects". They're redundant.
-;; 1.64: Allow meta-projects with :components
-;; 1.57: Timestamps flag is now called "org-publish-use-timestamps-flag"
-;; 1.52: Properly set default for :index-filename
-;; 1.48: Composite projects allowed.
-;;       :include keyword allowed.
-;; 1.43: Index no longer includes itself in the index.
-;; 1.42: Fix "function definition is void" error
-;;       when :publishing-function not set in org-publish-current-file.
-;; 1.41: Fixed bug where index isn't published on first try.
-;; 1.37: Added interactive function "org-publish". Prompts for particular
-;;       project name to publish.
-;; 1.34: Added force-publish option to all interactive functions.
-;; 1.32: Fixed "index.org has changed on disk" error during index publishing.
-;; 1.30: Fixed startup error caused by (require 'em-unix)
+;; Documentation for publishing is in the manual.
 
 ;;; Code:
+
+
+(defun org-publish-sanitize-plist (plist)
+  (mapcar (lambda (x)
+	    (or (cdr (assq x '((:index-filename . :sitemap-filename)
+			       (:index-title . :sitemap-title)
+			       (:index-function . :sitemap-function)
+			       (:index-style . :sitemap-style)
+			       (:auto-index . :auto-sitemap))))
+		x))
+	  plist))
 
 (eval-when-compile
   (require 'cl))
@@ -218,9 +124,11 @@ project for publishing.  For example, you could call GNU Make on a
 certain makefile, to ensure published files are built up to date.
 
   :preparation-function   Function to be called before publishing
-                          this project.
+                          this project.  This may also be a list
+                          of functions.
   :completion-function    Function to be called after publishing
-                          this project.
+                          this project.  This may also be a list
+                          of functions.
 
 Some properties control details of the Org publishing process,
 and are equivalent to the corresponding user variables listed in
@@ -250,23 +158,37 @@ learn more about their use and default values.
   :author                `user-full-name'
   :email                 `user-mail-address'
 
-The following properties may be used to control publishing of an
-index of files or summary page for a given project.
+The following properties may be used to control publishing of a
+sitemap of files or summary page for a given project.
 
-  :auto-index            Whether to publish an index during
+  :auto-sitemap           Whether to publish a sitemap during
                          `org-publish-current-project' or `org-publish-all'.
-  :index-filename        Filename for output of index.  Defaults
-                         to 'index.org' (which becomes 'index.html').
-  :index-title           Title of index page.  Defaults to name of file.
-  :index-function        Plugin function to use for generation of index.
-                         Defaults to `org-publish-org-index', which
+  :sitemap-filename      Filename for output of sitemap.  Defaults
+                         to 'sitemap.org' (which becomes 'sitemap.html').
+  :sitemap-title         Title of sitemap page.  Defaults to name of file.
+  :sitemap-function      Plugin function to use for generation of sitemap.
+                         Defaults to `org-publish-org-sitemap', which
                          generates a plain list of links to all files
                          in the project.
-  :index-style           Can be `list' (index is just an itemized list
+  :sitemap-style         Can be `list' (sitemap is just an itemized list
                          of the titles of the files involved) or
                          `tree' (the directory structure of the source
-                         files is reflected in the index).  Defaults to
-                         `tree'."
+                         files is reflected in the sitemap).  Defaults to
+                         `tree'.
+
+  If you create a sitemap file, adjust the sorting like this:
+
+  :sitemap-sort-folders    Where folders should appear in the sitemap.
+                           Set this to `first' (default) or `last' to
+                           display folders first or last, respectively.
+                           Any other value will mix files and folders.
+  :sitemap-alphabetically  The site map is normally sorted alphabetically.
+                           Set this explicitly to nil to turn off sorting.
+  :sitemap-ignore-case     Should sorting be case-sensitively?  Default nil.
+
+The following properties control the creation of a concept index.
+
+  :makeindex             Create a concept index."
   :group 'org-publish
   :type 'alist)
 
@@ -282,30 +204,69 @@ When nil, do no timestamp checking and always publish all files."
   :group 'org-publish
   :type 'directory)
 
+(defcustom org-publish-list-skipped-files t
+  "Non-nil means show message about files *not* published."
+  :group 'org-publish
+  :type 'boolean)
+
 (defcustom org-publish-before-export-hook nil
   "Hook run before export on the Org file.
-If the functions in this hook modify the original Org buffer, the
-modified buffer will be used for export, but the buffer will be
-restored and saved back to its initial state after export."
+The hook may modify the file in arbitrary ways before publishing happens.
+The original version of the buffer will be restored after publishing."
   :group 'org-publish
   :type 'hook)
 
 (defcustom org-publish-after-export-hook nil
   "Hook run after export on the exported buffer.
-If functions in this hook modify the buffer, it will be saved."
+Any changes made by this hook will be saved."
   :group 'org-publish
   :type 'hook)
+
+(defcustom org-publish-sitemap-sort-alphabetically t
+  "Should sitemaps be sorted alphabetically by default?
+
+You can overwrite this default per project in your
+`org-publish-project-alist', using `:sitemap-alphabetically'."
+  :group 'org-publish
+  :type 'boolean)
+
+(defcustom org-publish-sitemap-sort-folders 'first
+  "A symbol, denoting if folders are sorted first in sitemaps.
+Possible values are `first', `last', and nil.
+If `first', folders will be sorted before files.
+If `last', folders are sorted to the end after the files.
+Any other value will not mix files and folders.
+
+You can overwrite this default per project in your
+`org-publish-project-alist', using `:sitemap-sort-folders'."
+  :group 'org-publish
+  :type 'symbol)
+
+(defcustom org-publish-sitemap-sort-ignore-case nil
+  "Sort sitemaps case insensitively by default?
+
+You can overwrite this default per project in your
+`org-publish-project-alist', using `:sitemap-ignore-case'."
+  :group 'org-publish
+  :type 'boolean)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Timestamp-related functions
 
-(defun org-publish-timestamp-filename (filename)
+(defun org-publish-timestamp-filename (filename &optional pub-dir pub-func)
   "Return path to timestamp file for filename FILENAME."
+  (setq filename (concat filename "::" (or pub-dir "") "::"
+			 (format "%s" (or pub-func ""))))
   (concat (file-name-as-directory org-publish-timestamp-directory)
 	  "X" (if (fboundp 'sha1) (sha1 filename) (md5 filename))))
 
-(defun org-publish-needed-p (filename)
-  "Return `t' if FILENAME should be published."
+(defun org-publish-needed-p (filename &optional pub-dir pub-func true-pub-dir)
+  "Return `t' if FILENAME should be published in PUB-DIR using PUB-FUNC.
+TRUE-PUB-DIR is there the file will truely end up.  Currently we are not using
+this - maybe it can eventually be used to check if the file is present at
+the target location, and how old it is.  Right ow we cannot do this, because
+we do not know under what file name the file will be stored - the publishing
+function can still decide about that independently."
   (let ((rtn
 	 (if org-publish-use-timestamps-flag
 	     (if (file-exists-p org-publish-timestamp-directory)
@@ -315,20 +276,23 @@ If functions in this hook modify the buffer, it will be saved."
 			    org-publish-timestamp-directory)
 		   ;; there is a timestamp, check if FILENAME is newer
 		   (file-newer-than-file-p
-		    filename (org-publish-timestamp-filename filename)))
+		    filename (org-publish-timestamp-filename
+			      filename pub-dir pub-func)))
 	       (make-directory org-publish-timestamp-directory)
 	       t)
 	   ;; don't use timestamps, always return t
 	   t)))
     (if rtn
-	(message "Publishing file %s" filename)
-      (message   "Skipping unmodified file %s" filename))
+	(message "Publishing file %s using `%s'" filename pub-func)
+      (when org-publish-list-skipped-files
+	(message   "Skipping unmodified file %s" filename)))
     rtn))
 
-(defun org-publish-update-timestamp (filename)
+(defun org-publish-update-timestamp (filename &optional pub-dir pub-func)
   "Update publishing timestamp for file FILENAME.
 If there is no timestamp, create one."
-  (let ((timestamp-file (org-publish-timestamp-filename filename))
+  (let ((timestamp-file (org-publish-timestamp-filename
+			 filename pub-dir pub-func))
 	newly-created-timestamp)
     (if (not (file-exists-p timestamp-file))
 	;; create timestamp file if needed
@@ -340,7 +304,16 @@ If there is no timestamp, create one."
     (if (and (fboundp 'set-file-times)
 	     (not newly-created-timestamp))
 	(set-file-times timestamp-file)
-      (call-process "touch" nil 0 nil timestamp-file))))
+      (call-process "touch" nil 0 nil (expand-file-name timestamp-file)))))
+
+(defun org-publish-remove-all-timestamps ()
+  "Remove all files in the timstamp directory."
+  (let ((dir org-publish-timestamp-directory)
+	files)
+    (when (and (file-exists-p dir)
+	       (file-directory-p dir))
+      (mapc 'delete-file (directory-files dir 'full "[^.]\\'")))))
+
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Mapping files to project names
@@ -356,11 +329,16 @@ Each element of this alist is of the form:
 (defvar org-publish-temp-files nil
   "Temporary list of files to be published.")
 
+;; Here, so you find the variable right before it's used the first time:
+(defvar org-publish-file-title-cache nil
+  "List of absolute filenames and titles.")
+
 (defun org-publish-initialize-files-alist (&optional refresh)
   "Set `org-publish-files-alist' if it is not set.
 Also set it if the optional argument REFRESH is non-nil."
   (interactive "P")
   (when (or refresh (not org-publish-files-alist))
+    (setq org-publish-file-title-cache nil)
     (setq org-publish-files-alist
 	  (org-publish-get-files org-publish-project-alist))))
 
@@ -389,6 +367,7 @@ This is a compatibility function for Emacsen without `delete-dups'."
     list))
 
 (declare-function org-publish-delete-dups "org-publish" (list))
+(declare-function find-lisp-find-files "find-lisp" (directory regexp))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Getting project information out of org-publish-project-alist
@@ -423,6 +402,38 @@ This splices all the components into the list."
 	(push p rtn)))
     (nreverse (org-publish-delete-dups (delq nil rtn)))))
 
+(defun org-publish-compare-directory-files (a b)
+  "Predicate for `sort', that sorts folders-first/last and
+eventually alphabetically."
+  (let ((retval t))
+    (when (or sitemap-alphabetically sitemap-sort-folders)
+      ;; First we sort alphabetically:
+      (when sitemap-alphabetically
+        (let* ((adir (file-directory-p a))
+               (aorg (and (string-match "\\.org$" a) (not adir)))
+               (bdir (file-directory-p b))
+               (borg (and (string-match "\\.org$" b) (not bdir)))
+               (A (if aorg
+                      (concat (file-name-directory a)
+                              (org-publish-find-title a)) a))
+               (B (if borg
+                      (concat (file-name-directory b)
+                              (org-publish-find-title b)) b)))
+          (setq retval (if sitemap-ignore-case
+			   (not (string-lessp (upcase B) (upcase A)))
+			 (not (string-lessp B A))))))
+
+      ;; Directory-wise wins:
+      (when sitemap-sort-folders
+        ;; a is directory, b not:
+        (cond
+         ((and (file-directory-p a) (not (file-directory-p b)))
+          (setq retval (equal sitemap-sort-folders 'first)))
+          ;; a is not a directory, but b is:
+         ((and (not (file-directory-p a)) (file-directory-p b))
+          (setq retval (equal sitemap-sort-folders 'last))))))
+    retval))
+
 (defun org-publish-get-base-files-1 (base-dir &optional recurse match skip-file skip-dir)
   "Set `org-publish-temp-files' with files from BASE-DIR directory.
 If RECURSE is non-nil, check BASE-DIR recursively.  If MATCH is
@@ -442,7 +453,8 @@ matching the regexp SKIP-DIR when recursing through BASE-DIR."
 			  (not (file-exists-p (file-truename f)))
 			  (not (string-match match fnd)))
 		(pushnew f org-publish-temp-files)))))
-	(directory-files base-dir t (unless recurse match))))
+	(sort (directory-files base-dir t (unless recurse match))
+	      'org-publish-compare-directory-files)))
 
 (defun org-publish-get-base-files (project &optional exclude-regexp)
   "Return a list of all files in PROJECT.
@@ -454,7 +466,27 @@ matching filenames."
 	 (include-list (plist-get project-plist :include))
 	 (recurse (plist-get project-plist :recursive))
 	 (extension (or (plist-get project-plist :base-extension) "org"))
-	 (match (concat "^[^\\.].*\\.\\(" extension "\\)$")))
+     ;; sitemap-... variables are dynamically scoped for
+     ;; org-publish-compare-directory-files:
+     (sitemap-sort-folders
+	   (if (plist-member project-plist :sitemap-sort-folders)
+	       (plist-get project-plist :sitemap-sort-folders)
+	     org-publish-sitemap-sort-folders))
+     (sitemap-alphabetically
+      (if (plist-member project-plist :sitemap-alphabetically)
+          (plist-get project-plist :sitemap-alphabetically)
+        org-publish-sitemap-sort-alphabetically))
+	  (sitemap-ignore-case
+       (if (plist-member project-plist :sitemap-ignore-case)
+           (plist-get project-plist :sitemap-ignore-case)
+         org-publish-sitemap-sort-ignore-case))
+	 (match (if (eq extension 'any)
+                    "^[^\\.]"
+		  (concat "^[^\\.].*\\.\\(" extension "\\)$"))))
+    ;; Make sure sitemap-sort-folders' has an accepted value
+    (unless (memq sitemap-sort-folders '(first last))
+      (setq sitemap-sort-folders nil))
+
     (setq org-publish-temp-files nil)
     (org-publish-get-base-files-1 base-dir recurse match
 				  ;; FIXME distinguish exclude regexp
@@ -467,13 +499,14 @@ matching filenames."
 	  include-list)
     org-publish-temp-files))
 
-(defun org-publish-get-project-from-filename (filename)
+(defun org-publish-get-project-from-filename (filename &optional up)
   "Return the project FILENAME belongs."
   (let* ((project-name (cdr (assoc (expand-file-name filename)
 				   org-publish-files-alist))))
-    (dolist (prj org-publish-project-alist)
-      (if (member project-name (plist-get (cdr prj) :components))
-	  (setq project-name (car prj))))
+    (when up
+      (dolist (prj org-publish-project-alist)
+	(if (member project-name (plist-get (cdr prj) :components))
+	    (setq project-name (car prj)))))
     (assoc project-name org-publish-project-alist)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -506,8 +539,8 @@ PUB-DIR is the publishing directory."
 		   (buffer-live-p export-buf-or-file))
 	  (set-buffer export-buf-or-file)
 	  ;; run hooks after export and save export
-	  (and (run-hooks 'org-publish-after-export-hook)
-	       (if (buffer-modified-p) (save-buffer)))
+	  (progn (run-hooks 'org-publish-after-export-hook)
+		 (if (buffer-modified-p) (save-buffer)))
 	  (kill-buffer export-buf-or-file))
 	;; maybe restore buffer's content
 	(set-buffer init-buf)
@@ -519,20 +552,38 @@ PUB-DIR is the publishing directory."
 	(unless visiting
 	  (kill-buffer init-buf))))))
 
+(defmacro org-publish-with-aux-preprocess-maybe (&rest body)
+  "Execute BODY with a modified hook to preprocess for index."
+  `(let ((org-export-preprocess-after-headline-targets-hook
+	 (if (plist-get project-plist :makeindex)
+	     (cons 'org-publish-aux-preprocess
+		   org-export-preprocess-after-headline-targets-hook)
+	   org-export-preprocess-after-headline-targets-hook)))
+     ,@body))
+
+(defvar project-plist)
 (defun org-publish-org-to-latex (plist filename pub-dir)
   "Publish an org file to LaTeX.
 See `org-publish-org-to' to the list of arguments."
-  (org-publish-org-to "latex" plist filename pub-dir))
+  (org-publish-with-aux-preprocess-maybe
+   (org-publish-org-to "latex" plist filename pub-dir)))
 
 (defun org-publish-org-to-pdf (plist filename pub-dir)
   "Publish an org file to PDF (via LaTeX).
 See `org-publish-org-to' to the list of arguments."
-  (org-publish-org-to "pdf" plist filename pub-dir))
+  (org-publish-with-aux-preprocess-maybe
+   (org-publish-org-to "pdf" plist filename pub-dir)))
 
 (defun org-publish-org-to-html (plist filename pub-dir)
   "Publish an org file to HTML.
 See `org-publish-org-to' to the list of arguments."
-  (org-publish-org-to "html" plist filename pub-dir))
+  (org-publish-with-aux-preprocess-maybe
+    (org-publish-org-to "html" plist filename pub-dir)))
+
+(defun org-publish-org-to-org (plist filename pub-dir)
+  "Publish an org file to HTML.
+See `org-publish-org-to' to the list of arguments."
+  (org-publish-org-to "org" plist filename pub-dir))
 
 (defun org-publish-attachment (plist filename pub-dir)
   "Publish a file with no transformation of any kind.
@@ -540,76 +591,92 @@ See `org-publish-org-to' to the list of arguments."
   ;; make sure eshell/cp code is loaded
   (unless (file-directory-p pub-dir)
     (make-directory pub-dir t))
-  (copy-file filename pub-dir t))
+  (or (equal (expand-file-name (file-name-directory filename))
+	     (file-name-as-directory (expand-file-name pub-dir)))
+      (copy-file filename
+		 (expand-file-name (file-name-nondirectory filename) pub-dir)
+		 t)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Publishing files, sets of files, and indices
 
 (defun org-publish-file (filename &optional project)
   "Publish file FILENAME from PROJECT."
-  (when (org-publish-needed-p filename)
-    (let* ((project
-	    (or project
-		(or (org-publish-get-project-from-filename filename)
-		    (if (y-or-n-p
-			 (format "%s is not in a project.  Re-read the list of projects files? "
-				 (abbreviate-file-name filename)))
-			;; If requested, re-initialize the list of projects files
-			(progn (org-publish-initialize-files-alist t)
-			       (or (org-publish-get-project-from-filename filename)
-				   (error "File %s not part of any known project"
-					  (abbreviate-file-name filename))))
-		      (error "Can't publish file outside of a project")))))
-	   (project-plist (cdr project))
-	   (ftname (file-truename filename))
-	   (publishing-function
-	    (or (plist-get project-plist :publishing-function)
-		'org-publish-org-to-html))
-	   (base-dir (file-name-as-directory
-		      (file-truename (plist-get project-plist :base-directory))))
-	   (pub-dir (file-name-as-directory
-		     (file-truename (plist-get project-plist :publishing-directory))))
-	   tmp-pub-dir)
-      (setq tmp-pub-dir
-	    (file-name-directory
-	     (concat pub-dir
-		     (and (string-match (regexp-quote base-dir) ftname)
-			  (substring ftname (match-end 0))))))
-      (if (listp publishing-function)
-	  ;; allow chain of publishing functions
-	  (mapc (lambda (f)
-		  (funcall f project-plist filename tmp-pub-dir))
-		publishing-function)
-	(funcall publishing-function project-plist filename tmp-pub-dir)))
-    (org-publish-update-timestamp filename)))
+  (let* ((project
+	  (or project
+	      (or (org-publish-get-project-from-filename filename)
+		  (if (y-or-n-p
+		       (format "%s is not in a project.  Re-read the list of projects files? "
+			       (abbreviate-file-name filename)))
+		      ;; If requested, re-initialize the list of projects files
+		      (progn (org-publish-initialize-files-alist t)
+			     (or (org-publish-get-project-from-filename filename)
+				 (error "File %s not part of any known project"
+					(abbreviate-file-name filename))))
+		    (error "Can't publish file outside of a project")))))
+	 (project-plist (cdr project))
+	 (ftname (file-truename filename))
+	 (publishing-function
+	  (or (plist-get project-plist :publishing-function)
+	      'org-publish-org-to-html))
+	 (base-dir (file-name-as-directory
+		    (file-truename (plist-get project-plist :base-directory))))
+	 (pub-dir (file-name-as-directory
+		   (file-truename (plist-get project-plist :publishing-directory))))
+	 tmp-pub-dir)
+    (setq tmp-pub-dir
+	  (file-name-directory
+	   (concat pub-dir
+		   (and (string-match (regexp-quote base-dir) ftname)
+			(substring ftname (match-end 0))))))
+    (if (listp publishing-function)
+	;; allow chain of publishing functions
+	(mapc (lambda (f)
+		(when (org-publish-needed-p filename pub-dir f tmp-pub-dir)
+		  (funcall f project-plist filename tmp-pub-dir)
+		  (org-publish-update-timestamp filename pub-dir f)))
+	      publishing-function)
+      (when (org-publish-needed-p filename pub-dir publishing-function
+				  tmp-pub-dir)
+	(funcall publishing-function project-plist filename tmp-pub-dir)
+	(org-publish-update-timestamp
+	 filename pub-dir publishing-function)))))
 
 (defun org-publish-projects (projects)
   "Publish all files belonging to the PROJECTS alist.
-If :auto-index is set, publish the index too."
+If :auto-sitemap is set, publish the sitemap too.
+If :makeindex is set, also produce a file theindex.org."
   (mapc
    (lambda (project)
      (let*
 	 ((project-plist (cdr project))
 	  (exclude-regexp (plist-get project-plist :exclude))
-	  (index-p (plist-get project-plist :auto-index))
-	  (index-filename (or (plist-get project-plist :index-filename)
-			      "index.org"))
-	  (index-function (or (plist-get project-plist :index-function)
-			      'org-publish-org-index))
+	  (sitemap-p (plist-get project-plist :auto-sitemap))
+	  (sitemap-filename (or (plist-get project-plist :sitemap-filename)
+				"sitemap.org"))
+	  (sitemap-function (or (plist-get project-plist :sitemap-function)
+				'org-publish-org-sitemap))
 	  (preparation-function (plist-get project-plist :preparation-function))
 	  (completion-function (plist-get project-plist :completion-function))
 	  (files (org-publish-get-base-files project exclude-regexp)) file)
-       (when preparation-function (funcall preparation-function))
-       (if index-p (funcall index-function project index-filename))
+       (when preparation-function (run-hooks 'preparation-function))
+       (if sitemap-p (funcall sitemap-function project sitemap-filename))
        (while (setq file (pop files))
 	 (org-publish-file file project))
-       (when completion-function (funcall completion-function))))
+       (when (plist-get project-plist :makeindex)
+	 (org-publish-index-generate-theindex.inc
+	  (plist-get project-plist :base-directory))
+	 (org-publish-file (expand-file-name
+			    "theindex.org"
+			    (plist-get project-plist :base-directory))
+			   project))
+       (when completion-function (run-hooks 'completion-function))))
    (org-publish-expand-projects projects)))
 
-(defun org-publish-org-index (project &optional index-filename)
-  "Create an index of pages in set defined by PROJECT.
-Optionally set the filename of the index with INDEX-FILENAME.
-Default for INDEX-FILENAME is 'index.org'."
+(defun org-publish-org-sitemap (project &optional sitemap-filename)
+  "Create an sitemap of pages in set defined by PROJECT.
+Optionally set the filename of the sitemap with SITEMAP-FILENAME.
+Default for SITEMAP-FILENAME is 'sitemap.org'."
   (let* ((project-plist (cdr project))
 	 (dir (file-name-as-directory
 	       (plist-get project-plist :base-directory)))
@@ -617,28 +684,28 @@ Default for INDEX-FILENAME is 'index.org'."
 	 (indent-str (make-string 2 ?\ ))
 	 (exclude-regexp (plist-get project-plist :exclude))
 	 (files (nreverse (org-publish-get-base-files project exclude-regexp)))
-	 (index-filename (concat dir (or index-filename "index.org")))
-	 (index-title (or (plist-get project-plist :index-title)
-			  (concat "Index for project " (car project))))
-	 (index-style (or (plist-get project-plist :index-style)
+	 (sitemap-filename (concat dir (or sitemap-filename "sitemap.org")))
+	 (sitemap-title (or (plist-get project-plist :sitemap-title)
+			  (concat "Sitemap for project " (car project))))
+	 (sitemap-style (or (plist-get project-plist :sitemap-style)
 			  'tree))
-	 (visiting (find-buffer-visiting index-filename))
-	 (ifn (file-name-nondirectory index-filename))
-	 file index-buffer)
-    (with-current-buffer (setq index-buffer
-			       (or visiting (find-file index-filename)))
+	 (visiting (find-buffer-visiting sitemap-filename))
+	 (ifn (file-name-nondirectory sitemap-filename))
+	 file sitemap-buffer)
+    (with-current-buffer (setq sitemap-buffer
+			       (or visiting (find-file sitemap-filename)))
       (erase-buffer)
-      (insert (concat "#+TITLE: " index-title "\n\n"))
+      (insert (concat "#+TITLE: " sitemap-title "\n\n"))
       (while (setq file (pop files))
 	(let ((fn (file-name-nondirectory file))
 	      (link (file-relative-name file dir))
 	      (oldlocal localdir))
-	  ;; index shouldn't index itself
-	  (unless (equal (file-truename index-filename)
+	  ;; sitemap shouldn't list itself
+	  (unless (equal (file-truename sitemap-filename)
 			 (file-truename file))
-	    (if (eq index-style 'list)
-		(message "Generating list-style index for %s" index-title)
-	      (message "Generating tree-style index for %s" index-title)
+	    (if (eq sitemap-style 'list)
+		(message "Generating list-style sitemap for %s" sitemap-title)
+	      (message "Generating tree-style sitemap for %s" sitemap-title)
 	      (setq localdir (concat (file-name-as-directory dir)
 				     (file-name-directory link)))
 	      (unless (string= localdir oldlocal)
@@ -667,15 +734,16 @@ Default for INDEX-FILENAME is 'index.org'."
 			    (org-publish-find-title file)
 			    "]]\n")))))
       (save-buffer))
-    (or visiting (kill-buffer index-buffer))))
+    (or visiting (kill-buffer sitemap-buffer))))
 
 (defun org-publish-find-title (file)
   "Find the title of file in project."
+  (if (member file org-publish-file-title-cache)
+      (cadr (member file org-publish-file-title-cache))
   (let* ((visiting (find-buffer-visiting file))
 	 (buffer (or visiting (find-file-noselect file)))
 	 title)
-    (save-excursion
-      (set-buffer buffer)
+    (with-current-buffer buffer
       (let* ((opt-plist (org-combine-plists (org-default-export-plist)
 					    (org-infile-export-plist))))
 	(setq title
@@ -686,7 +754,9 @@ Default for INDEX-FILENAME is 'index.org'."
 		  (file-name-nondirectory (file-name-sans-extension file))))))
     (unless visiting
       (kill-buffer buffer))
-    title))
+    (setq org-publish-file-title-cache
+          (append org-publish-file-title-cache (list file title)))
+    title)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Interactive publishing functions
@@ -697,36 +767,40 @@ Default for INDEX-FILENAME is 'index.org'."
 ;;;###autoload
 (defun org-publish (project &optional force)
   "Publish PROJECT."
-  (interactive "P")
+  (interactive
+   (list
+    (assoc (org-icompleting-read
+	    "Publish project: "
+	    org-publish-project-alist nil t)
+	   org-publish-project-alist)
+    current-prefix-arg))
   (setq org-publish-initial-buffer (current-buffer))
   (save-window-excursion
-    (let* ((force current-prefix-arg)
-	   (org-publish-use-timestamps-flag
+    (let* ((org-publish-use-timestamps-flag
 	    (if force nil org-publish-use-timestamps-flag)))
-      (org-publish-projects
-       (list (or project
-		 (assoc (org-ido-completing-read
-			 "Publish project: "
-			 org-publish-project-alist nil t)
-			org-publish-project-alist)))))))
+      (org-publish-projects (list project)))))
 
 ;;;###autoload
 (defun org-publish-all (&optional force)
   "Publish all projects.
-With prefix argument, force publish all files."
+With prefix argument, remove all files in the timestamp
+directory and force publishing all files."
   (interactive "P")
-  (org-publish-initialize-files-alist)
+  (when force
+    (org-publish-remove-all-timestamps))
+  (org-publish-initialize-files-alist force)
   (save-window-excursion
     (let ((org-publish-use-timestamps-flag
 	   (if force nil org-publish-use-timestamps-flag)))
       (org-publish-projects org-publish-project-alist))))
+
 
 ;;;###autoload
 (defun org-publish-current-file (&optional force)
   "Publish the current file.
 With prefix argument, force publish the file."
   (interactive "P")
-  (org-publish-initialize-files-alist)
+  (org-publish-initialize-files-alist force)
   (save-window-excursion
     (let ((org-publish-use-timestamps-flag
 	   (if force nil org-publish-use-timestamps-flag)))
@@ -738,14 +812,107 @@ With prefix argument, force publish the file."
 With a prefix argument, force publishing of all files in
 the project."
   (interactive "P")
-  (org-publish-initialize-files-alist)
+  (org-publish-initialize-files-alist force)
   (save-window-excursion
-    (let ((project (org-publish-get-project-from-filename (buffer-file-name)))
+    (let ((project (org-publish-get-project-from-filename (buffer-file-name) 'up))
 	  (org-publish-use-timestamps-flag
 	   (if force nil org-publish-use-timestamps-flag)))
       (if (not project)
 	  (error "File %s is not part of any known project" (buffer-file-name)))
       (org-publish project))))
+
+
+;;; Index generation
+
+(defvar backend) ; dynamically scoped
+(defun org-publish-aux-preprocess ()
+  "Find index entries and write them to an .orgx file."
+  (let ((case-fold-search t)
+	entry index target)
+    (goto-char (point-min))
+    (while
+	(and
+	 (re-search-forward "^[ \t]*#\\+index:[ \t]*\\(.*?\\)[ \t]*$" nil t)
+	 (> (match-end 1) (match-beginning 1)))
+      (setq entry (match-string 1))
+      (when (eq backend 'latex)
+	(replace-match (format "\\index{%s}" entry) t t))
+      (save-excursion
+	(ignore-errors (org-back-to-heading t))
+	(setq target (get-text-property (point) 'target))
+	(setq target (or (cdr (assoc target org-export-preferred-target-alist))
+			 (cdr (assoc target org-export-id-target-alist))
+			 target ""))
+	(push (cons entry target) index)))
+    (with-temp-file
+	(concat (file-name-sans-extension org-current-export-file) ".orgx")
+      (dolist (entry (nreverse index))
+	(insert (format "INDEX: (%s) %s\n" (cdr entry) (car entry)))))))
+
+(defun org-publish-index-generate-theindex.inc (directory)
+  "Generate the index from all .orgx files in the current directory and below."
+  (require 'find-lisp)
+  (let* ((fulldir (file-name-as-directory
+		   (expand-file-name directory)))
+	 (full-files (find-lisp-find-files directory "\\.orgx\\'"))
+	 (re (concat "\\`" fulldir))
+	 (files (mapcar (lambda (f) (if (string-match re f)
+					(substring f (match-end 0))
+				      f))
+			full-files))
+	 (default-directory directory)
+	 index origfile buf target entry ibuffer
+	 main last-main letter last-letter file sub link tgext)
+    ;; `files' contains the list of relative file names
+    (dolist (file files)
+      (setq origfile (substring file 0 -1))
+      (setq buf (find-file-noselect file))
+      (with-current-buffer buf
+	(goto-char (point-min))
+	(while (re-search-forward "^INDEX: (\\(.*?\\)) \\(.*\\)" nil t)
+	  (setq target (match-string 1)
+		entry (match-string 2))
+	  (push (list entry origfile target) index)))
+      (kill-buffer buf))
+    (setq index (sort index (lambda (a b) (string< (downcase (car a))
+						   (downcase (car b))))))
+    (setq ibuffer (find-file-noselect (expand-file-name "theindex.inc" directory)))
+    (with-current-buffer ibuffer
+      (erase-buffer)
+      (insert "* Index\n")
+      (setq last-letter nil)
+      (dolist (idx index)
+	(setq entry (car idx) file (nth 1 idx) target (nth 2 idx))
+	(if (and (stringp target) (string-match "\\S-" target))
+	    (setq tgext (concat "::#" target))
+	  (setq tgext ""))
+	(setq letter (upcase (substring entry 0 1)))
+	(when (not (equal letter last-letter))
+	  (insert "** " letter "\n")
+	  (setq last-letter letter))
+	(if (string-match "!" entry)
+	    (setq main (substring entry 0 (match-beginning 0))
+		  sub (substring entry (match-end 0)))
+	  (setq main nil sub nil last-main nil))
+	(when (and main (not (equal main last-main)))
+	  (insert "   - " main "\n")
+	  (setq last-main main))
+	(setq link (concat "[[file:" file tgext "]"
+			   "[" (or sub entry) "]]"))
+	(if (and main sub)
+	    (insert "     - " link "\n")
+	  (insert "   - " link "\n")))
+      (save-buffer))
+    (kill-buffer ibuffer)
+
+    (let ((index-file (expand-file-name "theindex.org" directory)))
+      (unless (file-exists-p index-file)
+	(setq ibuffer (find-file-noselect index-file))
+	(with-current-buffer ibuffer
+	  (erase-buffer)
+	  (insert "\n\n#+include: \"theindex.inc\"\n\n")
+	  (save-buffer))
+	(kill-buffer ibuffer)))))
 
 (provide 'org-publish)
 

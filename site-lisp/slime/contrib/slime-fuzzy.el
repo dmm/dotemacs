@@ -226,7 +226,6 @@ Complete listing of keybindings with *Fuzzy Completions*:
 		  (string prefix))))
     (slime-eval `(swank:fuzzy-completions ,prefix 
                                           ,(or default-package
-                                               (slime-find-buffer-package)
                                                (slime-current-package))
                   :limit ,slime-fuzzy-completion-limit
                   :time-limit-in-msec ,slime-fuzzy-completion-time-limit-in-msec))))
@@ -258,10 +257,12 @@ most recently enclosed macro or function."
   "Fuzzily completes the abbreviation at point into a symbol."
   (interactive)
   (when (save-excursion (re-search-backward "\"[^ \t\n]+\\=" nil t))
-    (return-from slime-fuzzy-complete-symbol 
-      (if slime-when-complete-filename-expand
-          (comint-replace-by-expanded-filename)
-        (comint-dynamic-complete-as-filename))))
+    (return-from slime-fuzzy-complete-symbol
+      ;; don't add space after completion
+      (let ((comint-completion-addsuffix '("/" . "")))
+        (if slime-when-complete-filename-expand
+            (comint-replace-by-expanded-filename)
+            (comint-dynamic-complete-as-filename)))))
   (let* ((end (move-marker (make-marker) (slime-symbol-end-pos)))
          (beg (move-marker (make-marker) (slime-symbol-start-pos)))
          (prefix (buffer-substring-no-properties beg end)))
@@ -281,8 +282,8 @@ most recently enclosed macro or function."
                  (slime-fuzzy-done))
                 ;; Incomplete
                 (t
-                 (slime-minibuffer-respecting-message "Complete but not unique")
-                 (slime-fuzzy-choices-buffer completion-set interrupted-p beg end)))))))
+                 (slime-fuzzy-choices-buffer completion-set interrupted-p beg end)
+                 (slime-minibuffer-respecting-message "Complete but not unique")))))))
 
 
 (defun slime-get-fuzzy-buffer ()
@@ -313,10 +314,9 @@ proper text properties."
       (put-text-property start (point) 'mouse-face 'highlight)
       (dotimes (i (- max-length (- end start)))
 	(insert " "))
-      (insert (format " %s %-8.2f"
+      (insert (format " %s %s\n"
 		      classification-string
-		      score))
-      (insert "\n")
+                      score))
       (put-text-property start (point) 'completion completion))))
 
 (defun slime-fuzzy-insert (text)
@@ -346,7 +346,8 @@ the completion slot in the current buffer bounded by `start' and
 `end'.  This saves the window configuration before popping the
 buffer so that it can possibly be restored when the user is
 done."
-  (let ((new-completion-buffer (not slime-fuzzy-target-buffer)))
+  (let ((new-completion-buffer (not slime-fuzzy-target-buffer))
+        (connection (slime-connection)))
     (when new-completion-buffer
       (setq slime-fuzzy-saved-window-configuration
             (current-window-configuration)))
@@ -359,6 +360,7 @@ done."
     (setq slime-fuzzy-text slime-fuzzy-original-text)
     (slime-fuzzy-fill-completions-buffer completions interrupted-p)
     (pop-to-buffer (slime-get-fuzzy-buffer))
+    (setq slime-buffer-connection connection)
     (when new-completion-buffer
       ;; Hook to nullify window-config restoration if the user changes
       ;; the window configuration himself.
@@ -366,10 +368,13 @@ done."
         (add-hook 'window-configuration-change-hook
                   'slime-fuzzy-window-configuration-change))
       (slime-add-local-hook 'kill-buffer-hook 'slime-fuzzy-abort)
+      (set (make-local-variable 'cursor-type) nil)
       (setq buffer-quit-function 'slime-fuzzy-abort)) ; M-Esc Esc
     (when slime-fuzzy-completion-in-place
       ;; switch back to the original buffer
-      (switch-to-buffer-other-window slime-fuzzy-target-buffer))))
+      (if (minibufferp slime-fuzzy-target-buffer)
+          (select-window (minibuffer-window))
+          (switch-to-buffer-other-window slime-fuzzy-target-buffer)))))
 
 (defun slime-fuzzy-fill-completions-buffer (completions interrupted-p)
   "Erases and fills the completion buffer with the given completions."
@@ -590,12 +595,12 @@ configuration was changed, we nullify our saved configuration."
 ;;; Initialization 
 
 (defun slime-fuzzy-init ()
-  (slime-fuzzy-bind-keys))
+  (slime-fuzzy-bind-keys)
+  (slime-require :swank-fuzzy))
 
 (defun slime-fuzzy-bind-keys ()
   (define-key slime-mode-map "\C-c\M-i" 'slime-fuzzy-complete-symbol)
-  (define-key slime-repl-mode-map "\C-c\M-i" 'slime-fuzzy-complete-symbol))
-
-(slime-require :swank-fuzzy)
+  (when (featurep 'slime-repl)
+   (define-key slime-repl-mode-map "\C-c\M-i" 'slime-fuzzy-complete-symbol)))
 
 (provide 'slime-fuzzy)

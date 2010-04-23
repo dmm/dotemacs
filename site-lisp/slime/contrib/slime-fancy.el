@@ -21,8 +21,9 @@
 (slime-repl-init)
 
 ;; Better arglist display, can be turned off by customization.
-(require 'slime-autodoc)
-(slime-autodoc-init)
+(unless (featurep 'xemacs)
+  (require 'slime-autodoc)
+  (slime-autodoc-init))
 
 ;; Adds new commands and installs compound-prefix-completion as
 ;; default completion command.  Behaves similar to standard Emacs
@@ -36,6 +37,7 @@
 
 ;; Makes the inspector fancier.  (Once loaded, can't be turned off.)
 (require 'slime-fancy-inspector)
+(slime-fancy-inspector-init)
 
 ;; Just adds the command C-c M-i.  We do not make fuzzy completion the
 ;; default completion invoked by TAB. --mkoeppe
@@ -73,9 +75,11 @@
 (require 'slime-references)
 (slime-references-init)
 
+;;; Disabled -- after the removal of `slime-enclosing-form-specs',
+;;; this contrib has to be adapted.
 ;; Makes M-. work on local definitions, too.
-(require 'slime-mdot-fu)
-(slime-mdot-fu-init)
+;; (require 'slime-mdot-fu)
+;; (slime-mdot-fu-init)
 
 ;; Add/Remove a symbol at point from the relevant DEFPACKAGE form
 ;; via C-c x.

@@ -208,7 +208,7 @@
     (when vars
       (second (elt vars var)))))
 
-(defimplementation frame-source-location-for-emacs (frame-number)
+(defimplementation frame-source-location (frame-number)
   (fspec-location (frame-function (elt *frame-trace* frame-number))))
 
 (defun break (&optional (format-control "Break") &rest format-arguments)
@@ -362,8 +362,9 @@
     (funcall fn)))
 
 (defimplementation swank-compile-file (input-file output-file 
-				       load-p external-format)
-  (declare (ignore external-format))
+				       load-p external-format
+                                       &key policy)
+  (declare (ignore external-format policy))
   (with-compilation-hooks ()
     (let ((*buffer-name* nil)
 	  (*compile-filename* input-file))
