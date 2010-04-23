@@ -7,27 +7,11 @@
 
 (setq gnus-secondary-select-methods
       '(
-	(nnimap "localhost"
-		(nnimap-address "127.0.0.1")
+	(nnimap "mattli.us"
+		(nnimap-address "mattli.us")
 ;		(remove-prefix "INBOX.")
-		(nnimap-authinfo-file "/home/dmm/.imap-authinfo"))))
-
-(setq gnus-secondary-select-methods
-      '(
-	(nnmaildir "maildirwoo"
-		   (directory "~/Maildir")
-		   )
-	)
-      )
-
-(setq nnimap-split-inbox
-      '("INBOX"))
-
-;(setq nnimap-split-inbox nil)
-
-(setq nnimap-split-predicate "UNDELETED")
-
-;(setq nnimap-split-crosspost nil)
+;		(nnimap-authinfo-file "/home/dmm/.imap-authinfo")
+		)))
 
 (setq nnmail-split-methods
       '(("bitc-dev"
