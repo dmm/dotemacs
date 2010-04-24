@@ -1,7 +1,7 @@
 ;;; SLIME Configuration
 
 (require 'slime)
-(setq inferior-lisp-program "~/src/ccl//lx86cl")
+(setq inferior-lisp-program "sbcl")
 (slime-setup '(slime-fancy))
 
 ;;; Redshank configuration
