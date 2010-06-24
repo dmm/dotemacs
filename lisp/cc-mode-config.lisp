@@ -23,3 +23,15 @@
     (c-echo-syntactic-information-p . t)
     )
   "kde pim style")
+
+(defun KNF-c-style ()
+  "OpenBSD KNF C-style."
+  (interactive)
+  (local-set-key "\C-c\C-c" 'compile)
+  (c-set-style "bsd")
+  (setq fill-column 80)
+  (setq c-basic-offset 8)
+  (c-set-offset 'arglist-cont '*)
+  (c-set-offset 'arglist-cont-nonempty '*)
+  (c-set-offset 'statement-cont '4) )
+(add-hook 'c-mode-common-hook 'KNF-c-style)

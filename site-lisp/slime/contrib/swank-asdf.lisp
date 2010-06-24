@@ -69,7 +69,8 @@ Example:
     (asdf:compile-error () nil)))
 
 (defun asdf-central-registry ()
-  asdf:*central-registry*)
+  (append asdf:*central-registry*
+          #+asdf2 (asdf:ensure-source-registry)))
 
 (defslimefun list-all-systems-in-central-registry ()
   "Returns a list of all systems in ASDF's central registry."
