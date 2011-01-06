@@ -1,3 +1,12 @@
+2010-12-10  Stas Boukarev  <stassats@gmail.com>
+
+	* slime.el (slime-with-popup-buffer): Correct the docstring.
+
+2010-12-09  Helmut Eller  <heller@common-lisp.net>
+
+	* slime.el (slime-toggle-break-on-signals): New command.
+	* swank.lisp (toggle-break-on-signals): The corresponding Lisp code.
+
 2010-12-02  Martin Simmons  <martin@lispworks.com>
 
 	* swank-lispworks.lisp (frame-actual-args): Reimplement to include
