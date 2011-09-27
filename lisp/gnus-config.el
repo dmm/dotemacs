@@ -1,38 +1,35 @@
  ;;; Configuration for gnus
 
 (require 'gnus)
+(require 'pgg) ;; gpg support
 
-(setq gnus-select-method '(nntp "news.kc.sbcglobal.net"))
 
 
-(setq gnus-secondary-select-methods
-      '(
-	(nnimap "mattli.us"
-		(nnimap-address "codezen.org")
+(setq gnus-select-method
+      '(nnimap "mattli.us"
+		(nnimap-address "mattlimech.com")
+		(nnimap-server-port 993)
 ;		(remove-prefix "INBOX.")
 ;		(nnimap-authinfo-file "/home/dmm/.imap-authinfo")
-		(nnimap-stream ssl)
-		)))
-
-(setq nnmail-split-methods
-      '(("bitc-dev"
-	 "To:.*\\(bitc-dev@bitc-lang.org\\|bitc-dev@coyotos.org\\)")
-	("openbsd-misc"
-	 "\\(\\(C\\|c\\)\\(C\\|c\\)\\|\\(T\\|t\\)\\(O\\|o\\)\\)\\:.*misc@.*openbsd.org.*")
-        ("openbsd-tech"
-	 "\\(\\(C\\|c\\)\\(C\\|c\\)\\|\\(T\\|t\\)\\(O\\|o\\)\\)\\:.*tech@.*openbsd.org")
-	("cells-devel"
-	 "\\(\\(C\\|c\\)\\(C\\|c\\)\\|\\(T\\|t\\)\\(O\\|o\\)\\)\\:.*cells-devel@common-lisp.net")
-	("cells-gtk-devel"
-	 "\\(\\(C\\|c\\)\\(C\\|c\\)\\|\\(T\\|t\\)\\(O\\|o\\)\\)\\:.*cells-gtk-devel@common-lisp.net")
-	("gpsd-users"
-	 "\\(\\(C\\|c\\)\\(C\\|c\\)\\|\\(T\\|t\\)\\(O\\|o\\)\\)\\:.*gpsd-users@\\(berlios.de\\|lists.berlios.de\\)")
-	("openbsd-ports"
-	 "\\(\\(C\\|c\\)\\(C\\|c\\)\\|\\(T\\|t\\)\\(O\\|o\\)\\)\\:.*ports@openbsd.org.*")
-	("misc"
-	 "")))
+		(nnimap-stream tls)
+		))
 
 (setq nnimap-expunge-on-close "never")
 (setq gnus-permanently-visible-groups "I") ;Always display subscribed groups with e in name ;)
 
+
+;; verify/decrypt only if mml knows about the protocl used
+(setq mm-verify-option 'known)
+(setq mm-decrypt-option 'known)
+
+;; Here we make button for the multipart 
+(setq gnus-buttonized-mime-types '("multipart/encrypted" "multipart/signed"))
+
+;; Automatically sign when sending mails
+(add-hook 'message-send-hook 'mml-secure-message-sign-pgpmime)
+
+;; Enough explicit settings
+(setq pgg-passphrase-cache-expiry 300)
+;(setq pgg-default-user-id jmh::primary-key)
+    
 
