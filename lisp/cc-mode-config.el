@@ -35,3 +35,6 @@
   (c-set-offset 'arglist-cont-nonempty '*)
   (c-set-offset 'statement-cont '4) )
 (add-hook 'c-mode-common-hook 'KNF-c-style)
+
+(add-hook 'c-mode-common-hook 'google-set-c-style)
+
