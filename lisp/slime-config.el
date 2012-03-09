@@ -2,7 +2,7 @@
 
 (require 'slime)
 (setq inferior-lisp-program "sbcl")
-(slime-setup '(slime-fancy))
+;(slime-setup '(slime-fancy))
 
 ;;; Redshank configuration
 
