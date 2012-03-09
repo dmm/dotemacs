@@ -2,7 +2,6 @@
 (menu-bar-mode -1)
 (tool-bar-mode -1)
 (setq visible-cursor nil)
-(color-theme-tango)
 
 (defvar user-temporary-file-directory
   (concat temporary-file-directory user-login-name "/"))
@@ -15,4 +14,8 @@
       (concat user-temporary-file-directory ".auto-saves-"))
 (setq auto-save-file-name-transforms
       `((".*" ,user-temporary-file-directory t)))
-
+(add-to-list 'custom-theme-load-path
+	     "~/emacs/site-lisp/themes/")
+	     
+(require 'color-theme-solarized)
+(color-theme-solarized-dark)
