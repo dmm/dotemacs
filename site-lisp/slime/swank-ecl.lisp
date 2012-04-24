@@ -40,11 +40,12 @@
   (import-from :gray *gray-stream-symbols* :swank-backend)
 
   (import-swank-mop-symbols :clos
-    '(:eql-specializer
+    `(:eql-specializer
       :eql-specializer-object
       :generic-function-declarations
       :specializer-direct-methods
-      :compute-applicable-methods-using-classes)))
+      ,@(unless (fboundp 'clos:compute-applicable-methods-using-classes)
+         '(:compute-applicable-methods-using-classes)))))
 
 
 ;;;; TCP Server
@@ -476,7 +477,8 @@
   (third (elt *backtrace* frame-number)))
 
 (defimplementation frame-locals (frame-number)
-  (loop for (name . value) in (nth-value 2 (frame-decode-env (elt *backtrace* frame-number)))
+  (loop for (name . value) in (nth-value 2 (frame-decode-env 
+                                            (elt *backtrace* frame-number)))
         with i = 0
         collect (list :name name :id (prog1 i (incf i)) :value value)))
 
@@ -735,7 +737,7 @@
         "STOPPED"))
 
   (defimplementation make-lock (&key name)
-    (mp:make-lock :name name))
+    (mp:make-lock :name name :recursive t))
 
   (defimplementation call-with-lock-held (lock function)
     (declare (type function function))
