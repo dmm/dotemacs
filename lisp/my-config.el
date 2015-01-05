@@ -6,6 +6,8 @@
 (require 'minibuffer-complete-cycle)
 (set-variable 'minibuffer-complete-cycle t)
 
+(require 'fill-column-indicator)
+
 ;Make the y or n suffice for a yes or no question
 (fset 'yes-or-no-p 'y-or-n-p)
 
