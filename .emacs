@@ -66,7 +66,8 @@
 (fill-load-path "~/emacs/lisp/")
 
 ;; Byte compile everything
-;(byte-recompile-directory (expand-file-name "~/emacs") 0)
+(byte-recompile-directory (expand-file-name "~/emacs") 0)
+(delete-window) ; Close the byte-recompile-directory window.
 
 ;; Load configuration
 (load-tree "~/emacs/lisp/")
