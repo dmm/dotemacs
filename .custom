@@ -16,6 +16,8 @@
       `((".*" ,user-temporary-file-directory t)))
 (add-to-list 'custom-theme-load-path
 	     "~/emacs/site-lisp/themes/")
-	     
+
+(setq default-directory (concat (getenv "HOME") "/"))
+
 (require 'color-theme-solarized)
 (color-theme-solarized-dark)
