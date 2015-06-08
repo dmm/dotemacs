@@ -20,4 +20,4 @@
 (setq default-directory (concat (getenv "HOME") "/"))
 
 (require 'color-theme-solarized)
-(color-theme-solarized-dark)
+(color-theme-clarity)
