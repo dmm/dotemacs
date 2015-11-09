@@ -29,7 +29,4 @@
 
 (setq font-lock-maximum-decoration t)
 
-(setq c-default-style '(("c++-mode" "stroustrup")))
-
-(setq tramp-default-method "scpc")
-
+(setq c-default-style '(("c++-mode" "google")))
