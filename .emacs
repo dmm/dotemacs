@@ -3,6 +3,13 @@
 ;;;
 
 ;; Common lisp, yay!
+
+;; Added by Package.el.  This must come before configurations of
+;; installed packages.  Don't delete this line.  If you don't want it,
+;; just comment it out by adding a semicolon to the start of the line.
+;; You may delete these explanatory comments.
+(package-initialize)
+
 (require 'cl)
 
 ;; Some helpful functions 
@@ -58,16 +65,13 @@
     (if fl
 	(load-file fl))))
 
-
-
-
 ;; Fill load-path
 (fill-load-path "~/emacs/site-lisp/")
 (fill-load-path "~/emacs/lisp/")
 
 ;; Byte compile everything
 (byte-recompile-directory (expand-file-name "~/emacs") 0)
-(delete-window) ; Close the byte-recompile-directory window.
+;(delete-window) ; Close the byte-recompile-directory window.
 
 ;; Load configuration
 (load-tree "~/emacs/lisp/")

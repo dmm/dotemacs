@@ -2,14 +2,14 @@
 
 (require 'smtpmail)
 
-(setq smtpmail-starttls-credentials '(("mattlimech.com" 465 nil nil))
+(setq smtpmail-starttls-credentials '(("mattlimech.com" 587 nil nil))
       smtpmail-smtp-server "mattlimech.com"
       smtpmail-default-smtp-server "mattlimech.com"
       send-mail-function 'smtpmail-send-it
 					;      message-send-mail-function 'smtpmail-send-it
-      smtpmail-smtp-service 465
+      smtpmail-smtp-service 587
       smtpmail-auth-credentials '(("mattlimech.com"
-				   465
+				   587
 				   "dmm"
 				   nil)))
 

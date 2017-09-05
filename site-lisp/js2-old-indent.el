@@ -58,7 +58,6 @@
 
 (defvar js2-language-version)
 
-(declare-function js2-mark-safe-local "js2-mode")
 (declare-function js2-backward-sws "js2-mode")
 (declare-function js2-forward-sws "js2-mode")
 (declare-function js2-same-line "js2-mode")
@@ -223,6 +222,10 @@ and comments have been removed."
            (save-excursion
              (and (js2-re-search-backward "[?:{]\\|\\_<case\\_>" nil t)
                   (eq (char-after) ??))))
+       (not (and
+             (eq (char-after) ?/)
+             (save-excursion
+               (eq (nth 3 (syntax-ppss)) ?/))))
        (not (and
              (eq (char-after) ?*)
              ;; Generator method (possibly using computed property).
