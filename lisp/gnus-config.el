@@ -7,7 +7,7 @@
 
 (setq gnus-select-method
       '(nnimap "mattli.us"
-		(nnimap-address "mattlimech.com")
+		(nnimap-address "imap.mattlimech.com")
 		(nnimap-server-port 143)
 ;		(remove-prefix "INBOX.")
 ;		(nnimap-authinfo-file "/home/dmm/.imap-authinfo")
