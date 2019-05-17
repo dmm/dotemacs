@@ -141,6 +141,7 @@
   %u" "~/todo.org" "Tasks")
      (110 "* %u %?" "~/notes.org" "Notes"))))
  '(org-reverse-note-order t)
+ '(package-selected-packages (quote (exec-path-from-shell tide buttercup flycheck-rust)))
  '(remember-annotation-functions (quote (org-remember-annotation)))
  '(remember-handler-functions (quote (org-remember-handler))))
 (custom-set-faces
