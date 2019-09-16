@@ -54,3 +54,5 @@
   (my-setup-indent 2))
 
 (add-hook 'css-mode-hook 'my-personal-code-style)
+(setq-default indent-tabs-mode nil)
+(setq-default tab-width 2)
