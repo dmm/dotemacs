@@ -84,19 +84,14 @@ There are two things you can do about this warning:
 	(load-file fl))))
 
 ;; Fill load-path
-;(fill-load-path "~/emacs/site-lisp/")
-(fill-load-path "~/emacs/lisp/")
-
-;; Byte compile everything
-(byte-recompile-directory (expand-file-name "~/emacs") 0)
-;(delete-window) ; Close the byte-recompile-directory window.
+(fill-load-path "~/.emacs.d/lisp/")
 
 ;; Load configuration
-(load-tree "~/emacs/lisp/")
+(load-tree "~/.emacs.d/lisp/")
 
 
 ;; load customizations
-(load-file "~/.custom")
+(load-file "~/.emacs.d/.custom")
 
 
 ;; load info manuals
