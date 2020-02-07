@@ -1,8 +1,5 @@
 ;;; on-off twiddles
 
-(require 'color-theme)
-(color-theme-initialize)
-
 (require 'minibuffer-complete-cycle)
 (set-variable 'minibuffer-complete-cycle t)
 
@@ -14,7 +11,6 @@
 ; Show clock
 (setq display-time-24hr-format t)
 (display-time)
-
 
 (line-number-mode t)		  ; show line numbers in the mode-line
 (column-number-mode t)          ; show column numbers in the mode-line

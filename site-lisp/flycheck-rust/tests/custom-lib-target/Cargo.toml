@@ -1,7 +1,0 @@
-[package]
-name = "custom-lib-target"
-version = "0.1.0"
-
-[lib]
-name = "foo"
-crate-type = ["dylib", "cdylib"]

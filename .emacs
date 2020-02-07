@@ -1,16 +1,34 @@
-;;;
-;;;	David's .emacs file. This loads up lots of libraries ;).
-;;;
+;;;	package --- David's .emacs file. This loads up lots of libraries ;).
 
-;; Common lisp, yay!
+;;; Commentary:
+;; Common Lisp, yay!
 
 ;; Added by Package.el.  This must come before configurations of
 ;; installed packages.  Don't delete this line.  If you don't want it,
 ;; just comment it out by adding a semicolon to the start of the line.
 ;; You may delete these explanatory comments.
+(require 'package)
+(let* ((no-ssl (and (memq system-type '(windows-nt ms-dos))
+                    (not (gnutls-available-p))))
+       (proto (if no-ssl "http" "https")))
+  (when no-ssl
+    (warn "\
+Your version of Emacs does not support SSL connections,
+which is unsafe because it allows man-in-the-middle attacks.
+There are two things you can do about this warning:
+1. Install an Emacs version that does support SSL and be safe.
+2. Remove this warning from your init file so you won't see it again."))
+  ;; Comment/uncomment these two lines to enable/disable MELPA and MELPA Stable as desired
+  (add-to-list 'package-archives (cons "melpa" (concat proto "://melpa.org/packages/")) t)
+  ;;(add-to-list 'package-archives (cons "melpa-stable" (concat proto "://stable.melpa.org/packages/")) t)
+  (when (< emacs-major-version 24)
+    ;; For important compatibility libraries like cl-lib
+    (add-to-list 'package-archives (cons "gnu" (concat proto "://elpa.gnu.org/packages/")))))
 (package-initialize)
 
 (require 'cl)
+
+
 
 ;; Some helpful functions 
 
@@ -66,7 +84,7 @@
 	(load-file fl))))
 
 ;; Fill load-path
-(fill-load-path "~/emacs/site-lisp/")
+;(fill-load-path "~/emacs/site-lisp/")
 (fill-load-path "~/emacs/lisp/")
 
 ;; Byte compile everything
@@ -141,7 +159,9 @@
   %u" "~/todo.org" "Tasks")
      (110 "* %u %?" "~/notes.org" "Notes"))))
  '(org-reverse-note-order t)
- '(package-selected-packages (quote (exec-path-from-shell tide buttercup flycheck-rust)))
+ '(package-selected-packages
+   (quote
+    (company-lsp lsp-mode cargo rust-mode exec-path-from-shell tide buttercup flycheck-rust)))
  '(remember-annotation-functions (quote (org-remember-annotation)))
  '(remember-handler-functions (quote (org-remember-handler))))
 (custom-set-faces
