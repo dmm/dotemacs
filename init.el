@@ -156,7 +156,7 @@ There are two things you can do about this warning:
  '(org-reverse-note-order t)
  '(package-selected-packages
    (quote
-    (company-lsp lsp-mode cargo rust-mode exec-path-from-shell tide buttercup flycheck-rust)))
+    (poly-ansible jinja2-mode polymode yaml-mode ansible company-lsp lsp-mode cargo rust-mode exec-path-from-shell tide buttercup flycheck-rust)))
  '(remember-annotation-functions (quote (org-remember-annotation)))
  '(remember-handler-functions (quote (org-remember-handler))))
 (custom-set-faces
