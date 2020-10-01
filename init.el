@@ -3,17 +3,8 @@
 ;;; Commentary:
 ;; Common Lisp, yay!
 
-;; Added by Package.el.  This must come before configurations of
-;; installed packages.  Don't delete this line.  If you don't want it,
-;; just comment it out by adding a semicolon to the start of the line.
-;; You may delete these explanatory comments.
 (require 'package)
-
-;;; Code:
-(add-to-list 'package-archives
-             '("melpa" . "http://melpa.org/packages/") t)
-;; For important compatibility libraries like cl-lib
-(add-to-list 'package-archives (cons "gnu" "https://elpa.gnu.org/packages/") t)
+(add-to-list 'package-archives '("melpa" . "https://melpa.org/packages/") t)
 (package-initialize)
 
 (require 'cl)
@@ -146,7 +137,7 @@
  '(org-reverse-note-order t)
  '(package-selected-packages
    (quote
-    (magit poly-ansible jinja2-mode polymode yaml-mode ansible company-lsp lsp-mode cargo rust-mode exec-path-from-shell tide buttercup flycheck-rust)))
+    (add-node-modules-path prettier typescript-mode dockerfile-mode magit poly-ansible jinja2-mode polymode yaml-mode ansible company-lsp lsp-mode cargo rust-mode exec-path-from-shell tide buttercup flycheck-rust)))
  '(remember-annotation-functions (quote (org-remember-annotation)))
  '(remember-handler-functions (quote (org-remember-handler))))
 (custom-set-faces
