@@ -8,9 +8,10 @@
 
 (require 'cl)
 
+;; Get SSH_AUTH_SOCK from environment
+(exec-path-from-shell-copy-env "SSH_AUTH_SOCK")
 
-
-;; Some helpful functions 
+;; Some helpful functions
 
 (defun files-in-below-directory (directory)
   "List the .el files in DIRECTORY and in its sub-directories."
