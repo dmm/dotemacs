@@ -18,7 +18,20 @@
 ;; aligns annotation to the right hand side
 (setq company-tooltip-align-annotations t)
 
+(defun custom-typescript-format()
+  "This function organizes imports and formats code on save."
+  (interactive)
+  (when (bound-and-true-p tide-mode)
+    (tide-organize-imports)
+    (prettier-prettify)
+    )
+  )
 ;; formats the buffer before saving
-;(add-hook 'before-save-hook 'tide-format-before-save)
+;(add-hook 'before-save-hook 'custom-typescript-format)
 
 (add-hook 'typescript-mode-hook #'setup-tide-mode)
+
+(eval-after-load 'tide-mode
+    '(progn
+       (add-hook 'web-mode-hook #'add-node-modules-path)
+       (add-hook 'web-mode-hook #'prettier-js-mode)))
