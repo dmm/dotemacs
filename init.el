@@ -1,12 +1,7 @@
 ;;;	package --- David's .emacs file. This loads up lots of libraries ;).
 
-;;; Commentary:
-;; Common Lisp, yay!
-
 (require 'package)
 (add-to-list 'package-archives '("melpa" . "https://melpa.org/packages/") t)
-
-(require 'cl)
 
 ;; Get SSH_AUTH_SOCK from environment
 (exec-path-from-shell-copy-env "SSH_AUTH_SOCK")
