@@ -2,6 +2,7 @@
 
 (require 'package)
 (add-to-list 'package-archives '("melpa" . "https://melpa.org/packages/") t)
+(package-initialize)
 
 ;; Get SSH_AUTH_SOCK from environment
 (exec-path-from-shell-copy-env "SSH_AUTH_SOCK")
@@ -88,6 +89,9 @@
  ;; Your init file should contain only one such instance.
  ;; If there is more than one, they won't work right.
  '(auth-source-save-behavior nil)
+ '(custom-safe-themes
+   (quote
+    ("d8dc153c58354d612b2576fea87fe676a3a5d43bcc71170c62ddde4a1ad9e1fb" default)))
  '(org-agenda-custom-commands
    (quote
     (("d" todo "DELEGATED" nil)

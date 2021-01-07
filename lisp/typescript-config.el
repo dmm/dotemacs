@@ -1,7 +1,7 @@
 (require 'prettier-js)
 
 (add-hook 'js2-mode-hook 'prettier-js-mode)
-(add-hook 'typescript-mode-hook 'prettier-js-mode)
+(add-hook 'typescript-mode-hook 'prettier-mode)
 
 (defun setup-tide-mode ()
   (interactive)
@@ -34,4 +34,4 @@
 (eval-after-load 'tide-mode
     '(progn
        (add-hook 'web-mode-hook #'add-node-modules-path)
-       (add-hook 'web-mode-hook #'prettier-js-mode)))
+       (add-hook 'web-mode-hook #'prettier-mode)))
