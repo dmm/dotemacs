@@ -2,6 +2,7 @@
 
 (require 'package)
 (add-to-list 'package-archives '("melpa" . "https://melpa.org/packages/") t)
+(package-initialize)
 
 ;; Get SSH_AUTH_SOCK from environment
 (exec-path-from-shell-copy-env "SSH_AUTH_SOCK")
@@ -132,7 +133,7 @@
  '(org-reverse-note-order t)
  '(package-selected-packages
    (quote
-    (add-node-modules-path prettier typescript-mode dockerfile-mode magit poly-ansible jinja2-mode polymode yaml-mode ansible company-lsp lsp-mode cargo rust-mode exec-path-from-shell tide buttercup flycheck-rust)))
+    (org2blog add-node-modules-path prettier typescript-mode dockerfile-mode magit poly-ansible jinja2-mode polymode yaml-mode ansible company-lsp lsp-mode cargo rust-mode exec-path-from-shell tide buttercup flycheck-rust)))
  '(remember-annotation-functions (quote (org-remember-annotation)))
  '(remember-handler-functions (quote (org-remember-handler))))
 (custom-set-faces

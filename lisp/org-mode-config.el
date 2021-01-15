@@ -120,3 +120,7 @@ This can be 0 for immediate, or a floating point value.")
 
 (defalias 'archive-done-tasks 'org-my-archive-done-tasks)
 
+(setq org2blog/wp-blog-alist
+      '(("myblog"
+         :url "https://mattli.us/blog/xmlrpc.php"
+         :username "dmm")))

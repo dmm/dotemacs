@@ -2,13 +2,12 @@
 
 (require 'smtpmail)
 
-(setq smtpmail-starttls-credentials '(("smtp.mattlimech.com" 587 nil nil))
-      smtpmail-smtp-server "smtp.mattlimech.com"
-      smtpmail-default-smtp-server "smtp.mattlimech.com"
+(setq smtpmail-starttls-credentials '(("home.mattli.us" 587 nil nil))
+      smtpmail-smtp-server "home.mattli.us"
       send-mail-function 'smtpmail-send-it
 					;      message-send-mail-function 'smtpmail-send-it
       smtpmail-smtp-service 587
-      smtpmail-auth-credentials '(("smtp.mattlimech.com"
+      smtpmail-auth-credentials '(("home.mattli.us"
 				   587
 				   "dmm"
 				   nil)))

@@ -1,21 +1,22 @@
  ;;; Configuration for gnus
 
 (require 'gnus)
-(require 'pgg) ;; gpg support
-
-
 
 (setq gnus-select-method
-      '(nnimap "mattli.us"
-		(nnimap-address "imap.mattlimech.com")
-		(nnimap-server-port 143)
-;		(remove-prefix "INBOX.")
-;		(nnimap-authinfo-file "/home/dmm/.imap-authinfo")
-		(nnimap-stream starttls)
-		)
-)
-(setq nnimap-expunge-on-close "never")
+          '(nnml ""))
+(setq gnus-secondary-select-methods
+      '((nnimap "mattli.us"
+		     (nnimap-address "home.mattli.us")
+		     (nnimap-server-port 993)
+		     (nnimap-stream ssl))))
+;        (nntp "news.newshosting.com")))
+
+
+                                        ;(setq nnimap-expunge-on-close "never")
 (setq gnus-permanently-visible-groups "I") ;Always display subscribed groups with e in name ;)
 
-
+(setq gnus-auto-expirable-newsgroups "INBOX")
+(setq nnmail-expiry-target 'nnmail-fancy-expiry-target
+       nnmail-fancy-expiry-targets
+       '(("from" ".*" "nnfolder:Archive.%Y")))
 
