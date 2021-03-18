@@ -19,6 +19,6 @@
 
 (setq default-directory (concat (getenv "HOME") "/"))
 
-;(load-theme #'abyss t)
+(load-theme #'abyss t)
 ;(color-theme-clarity)
 (setq gnutls-algorithm-priority "NORMAL:-VERS-TLS1.3")
