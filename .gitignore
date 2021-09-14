@@ -4,3 +4,5 @@
 transient/
 elpa/archives/
 tramp
+/network-security.data
+/eln-cache/
