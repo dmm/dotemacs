@@ -1,4 +1,4 @@
-;;; exec-path-from-shell-autoloads.el --- automatically extracted autoloads  -*- lexical-binding: t -*-
+;;; exec-path-from-shell-autoloads.el --- automatically extracted autoloads
 ;;
 ;;; Code:
 
@@ -34,9 +34,11 @@ Initialize environment from the user's shell.
 
 The values of all the environment variables named in
 `exec-path-from-shell-variables' are set from the corresponding
-values used in the user's shell." t nil)
+values used in the user's shell.
 
-(register-definition-prefixes "exec-path-from-shell" '("exec-path-from-shell-"))
+\(fn)" t nil)
+
+(if (fboundp 'register-definition-prefixes) (register-definition-prefixes "exec-path-from-shell" '("exec-path-from-shell-")))
 
 ;;;***
 

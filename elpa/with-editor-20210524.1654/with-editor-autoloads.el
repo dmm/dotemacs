@@ -37,17 +37,13 @@ for a description of this minor mode.")
 (autoload 'shell-command-with-editor-mode "with-editor" "\
 Teach `shell-command' to use current Emacs instance as editor.
 
-This is a minor mode.  If called interactively, toggle the
-`Shell-Command-With-Editor mode' mode.  If the prefix argument is
-positive, enable the mode, and if it is zero or negative, disable
-the mode.
+If called interactively, toggle `Shell-Command-With-Editor mode'.
+If the prefix argument is positive, enable the mode, and if it is
+zero or negative, disable the mode.
 
 If called from Lisp, toggle the mode if ARG is `toggle'.  Enable
 the mode if ARG is nil, omitted, or is a positive number.
 Disable the mode if ARG is a negative number.
-
-To check whether the minor mode is enabled in the current buffer,
-evaluate `(default-value 'shell-command-with-editor-mode)'.
 
 The mode's hook is called both when the mode is enabled and when
 it is disabled.
