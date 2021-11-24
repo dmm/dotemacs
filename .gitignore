@@ -6,3 +6,6 @@ elpa/archives/
 tramp
 /network-security.data
 /eln-cache/
+.cache/
+.lsp-session-v1
+url/

@@ -22,3 +22,12 @@
 (load-theme #'abyss t)
 ;(color-theme-clarity)
 (setq gnutls-algorithm-priority "NORMAL:-VERS-TLS1.3")
+
+(defun display-line-numbers--turn-on ()
+  "Turn on line numbers except for certain major modes.
+Exempt major modes are defined in `display-line-numbers-exempt-modes'."
+  (unless (or (magit)
+              (member major-mode display-line-numbers-exempt-modes))
+    (display-line-numbers-mode)))
+
+(global-display-line-numbers-mode)
