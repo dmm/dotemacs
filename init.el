@@ -2,10 +2,6 @@
 
 (require 'package)
 (add-to-list 'package-archives '("melpa" . "https://melpa.org/packages/") t)
-;; Comment/uncomment this line to enable MELPA Stable if desired.  See `package-archive-priorities`
-;; and `package-pinned-packages`. Most users will not need or want to do this.
-;;(add-to-list 'package-archives '("melpa-stable" . "https://stable.melpa.org/packages/") t)
-(package-initialize)
 
 ;; Get SSH_AUTH_SOCK from environment
 (exec-path-from-shell-copy-env "SSH_AUTH_SOCK")
@@ -130,7 +126,7 @@
      (110 "* %u %?" "~/notes.org" "Notes")))
  '(org-reverse-note-order t)
  '(package-selected-packages
-   '(## dash use-package rustic org2blog add-node-modules-path prettier typescript-mode dockerfile-mode magit poly-ansible jinja2-mode polymode yaml-mode ansible company-lsp lsp-mode cargo rust-mode exec-path-from-shell tide buttercup flycheck-rust))
+   '(yasnippet ## dash use-package rustic org2blog add-node-modules-path prettier typescript-mode dockerfile-mode magit poly-ansible jinja2-mode polymode yaml-mode ansible company-lsp lsp-mode cargo rust-mode exec-path-from-shell tide buttercup flycheck-rust))
  '(remember-annotation-functions '(org-remember-annotation))
  '(remember-handler-functions '(org-remember-handler)))
 (custom-set-faces

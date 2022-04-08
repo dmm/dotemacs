@@ -9,10 +9,7 @@
 		     (nnimap-address "home.mattli.us")
 		     (nnimap-server-port 993)
 		     (nnimap-stream ssl))))
-;        (nntp "news.newshosting.com")))
 
-
-                                        ;(setq nnimap-expunge-on-close "never")
 (setq gnus-permanently-visible-groups "I") ;Always display subscribed groups with e in name ;)
 
 (setq gnus-auto-expirable-newsgroups "INBOX")

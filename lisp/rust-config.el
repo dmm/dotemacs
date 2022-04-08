@@ -60,7 +60,7 @@
 (use-package rustic)
 
 (setq rustic-format-on-save t)
-(setq rustic-lsp-format nil)
+;(setq rustic-lsp-format nil)
 (add-to-list 'auto-mode-alist '("\\.rs\\'" . rustic-mode))
 ;;; rust-config.el ends here
 

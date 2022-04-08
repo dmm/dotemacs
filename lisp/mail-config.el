@@ -9,7 +9,7 @@
       smtpmail-smtp-service 587
       smtpmail-auth-credentials '(("home.mattli.us"
 				   587
-				   "dmm"
+				   "dmm@mattli.us"
 				   nil)))
 
 (setq user-mail-address "dmm@mattli.us")
