@@ -57,10 +57,38 @@
 ;(with-eval-after-load 'rust-mode
 ;  (add-hook 'flycheck-mode-hook #'flycheck-rust-setup))
 
-(use-package rustic)
+(use-package rustic
+  :config
+  (setq
+   rustic-lsp-client 'eglot
+   rustic-format-on-save t
+   )
 
-(setq rustic-format-on-save t)
-;(setq rustic-lsp-format nil)
+)
+
+(global-company-mode 1)
 (add-to-list 'auto-mode-alist '("\\.rs\\'" . rustic-mode))
+
+(use-package company
+  :ensure
+  :custom
+  (company-idle-delay 0.5) ;; how long to wait until popup
+  ;; (company-begin-commands nil) ;; uncomment to disable popup
+  :bind
+  (:map company-active-map
+	      ("C-n". company-select-next)
+	      ("C-p". company-select-previous)
+	      ("M-<". company-select-first)
+	      ("M->". company-select-last)))
+
+(use-package yasnippet
+  :ensure
+  :config
+  (yas-reload-all)
+  (add-hook 'prog-mode-hook 'yas-minor-mode)
+  (add-hook 'text-mode-hook 'yas-minor-mode))
+
+(use-package flycheck :ensure)
+
 ;;; rust-config.el ends here
 

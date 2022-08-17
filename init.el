@@ -126,7 +126,7 @@
      (110 "* %u %?" "~/notes.org" "Notes")))
  '(org-reverse-note-order t)
  '(package-selected-packages
-   '(yasnippet ## dash use-package rustic org2blog add-node-modules-path prettier typescript-mode dockerfile-mode magit poly-ansible jinja2-mode polymode yaml-mode ansible company-lsp lsp-mode cargo rust-mode exec-path-from-shell tide buttercup flycheck-rust))
+   '(eglot vagrant-tramp yasnippet ## dash add-node-modules-path prettier poly-ansible jinja2-mode polymode yaml-mode ansible company-lsp rust-mode exec-path-from-shell tide buttercup flycheck-rust))
  '(remember-annotation-functions '(org-remember-annotation))
  '(remember-handler-functions '(org-remember-handler)))
 (custom-set-faces
