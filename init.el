@@ -90,7 +90,7 @@
  ;; If there is more than one, they won't work right.
  '(auth-source-save-behavior nil)
  '(custom-safe-themes
-   '("d8dc153c58354d612b2576fea87fe676a3a5d43bcc71170c62ddde4a1ad9e1fb" default))
+   '("33ea268218b70aa106ba51a85fe976bfae9cf6931b18ceaf57159c558bbcd1e6" "a3e99dbdaa138996bb0c9c806bc3c3c6b4fd61d6973b946d750b555af8b7555b" "d8dc153c58354d612b2576fea87fe676a3a5d43bcc71170c62ddde4a1ad9e1fb" default))
  '(org-agenda-custom-commands
    '(("d" todo "DELEGATED" nil)
      ("c" todo "DONE|DEFERRED|CANCELLED" nil)
@@ -126,7 +126,7 @@
      (110 "* %u %?" "~/notes.org" "Notes")))
  '(org-reverse-note-order t)
  '(package-selected-packages
-   '(eglot vagrant-tramp yasnippet ## dash add-node-modules-path prettier poly-ansible jinja2-mode polymode yaml-mode ansible company-lsp rust-mode exec-path-from-shell tide buttercup flycheck-rust))
+   '(zenburn-theme eglot vagrant-tramp yasnippet ## dash add-node-modules-path prettier poly-ansible jinja2-mode polymode yaml-mode ansible company-lsp rust-mode exec-path-from-shell tide buttercup flycheck-rust))
  '(remember-annotation-functions '(org-remember-annotation))
  '(remember-handler-functions '(org-remember-handler)))
 (custom-set-faces
