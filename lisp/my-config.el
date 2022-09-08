@@ -15,6 +15,8 @@
 (line-number-mode t)		  ; show line numbers in the mode-line
 (column-number-mode t)          ; show column numbers in the mode-line
 (winner-mode 1)
+(global-set-key (kbd "<Forward>") 'winner-redo)
+(global-set-key (kbd "<Back>") 'winner-undo)
 
 (set-language-environment "UTF-8")
 
