@@ -19,7 +19,7 @@
 
 (setq default-directory (concat (getenv "HOME") "/"))
 
-(load-theme #'zenburn t)
+(load-theme #'hc-zenburn t)
 (setq gnutls-algorithm-priority "NORMAL:-VERS-TLS1.3")
 
 (defun display-line-numbers--turn-on ()
@@ -31,3 +31,5 @@ Exempt major modes are defined in `display-line-numbers-exempt-modes'."
 
 (global-display-line-numbers-mode)
 
+(put 'suspend-frame 'disabled t)
+(global-unset-key (kbd "C-z"))
