@@ -1,9 +1,9 @@
-;;;	package --- David's .emacs file. This loads up lots of libraries ;).
+;;;	package --- David's init.el file
 
 (require 'package)
 (add-to-list 'package-archives '("melpa" . "https://melpa.org/packages/") t)
 
-;; Get SSH_AUTH_SOCK from environment
+;; Get SSH_AUTH_SOCK from environment for gpg,magit,tramp,etc
 (exec-path-from-shell-copy-env "SSH_AUTH_SOCK")
 (exec-path-from-shell-copy-env "PATH")
 
@@ -61,15 +61,13 @@
 	(load-file fl))))
 
 ;; Fill load-path
-(fill-load-path "~/.emacs.d/lisp/")
+;(fill-load-path "~/.emacs.d/lisp/")
 
 ;; Load configuration
 (load-tree "~/.emacs.d/lisp/")
 
-
 ;; load customizations
 (load-file "~/.emacs.d/.custom")
-
 
 ;; load info manuals
 (setq Info-default-directory-list
@@ -80,7 +78,7 @@
 ;;misc
 (global-font-lock-mode t)
 
-;; yesssssss
+;; Start a pretty shell
 (shell)
 
 (custom-set-variables
@@ -89,8 +87,11 @@
  ;; Your init file should contain only one such instance.
  ;; If there is more than one, they won't work right.
  '(auth-source-save-behavior nil)
+ '(column-number-mode t)
  '(custom-safe-themes
    '("72e041c9a2cec227a33e0ac4b3ea751fd4f4039235035894bf18b1c0901e1bd6" "a37d20710ab581792b7c9f8a075fcbb775d4ffa6c8bce9137c84951b1b453016" "33ea268218b70aa106ba51a85fe976bfae9cf6931b18ceaf57159c558bbcd1e6" "a3e99dbdaa138996bb0c9c806bc3c3c6b4fd61d6973b946d750b555af8b7555b" "d8dc153c58354d612b2576fea87fe676a3a5d43bcc71170c62ddde4a1ad9e1fb" default))
+ '(display-time-mode t)
+ '(global-display-line-numbers-mode t)
  '(org-agenda-custom-commands
    '(("d" todo "DELEGATED" nil)
      ("c" todo "DONE|DEFERRED|CANCELLED" nil)
@@ -106,7 +107,8 @@
      ("u" alltodo ""
       ((org-agenda-skip-function
         (lambda nil
-          (org-agenda-skip-entry-if 'scheduled 'deadline 'regexp "<[^>\12]+>")))
+          (org-agenda-skip-entry-if 'scheduled 'deadline 'regexp "<[^>
+]+>")))
        (org-agenda-overriding-header "Unscheduled TODO entries: ")))))
  '(org-agenda-files '("~/todo.org"))
  '(org-agenda-include-diary t)
@@ -120,16 +122,18 @@
  '(org-fast-tag-selection-single-key 'expert)
  '(org-remember-store-without-prompt t)
  '(org-remember-templates
-   '((116 "* TODO %?\12  %u" "~/todo.org" "Tasks")
+   '((116 "* TODO %?
+  %u" "~/todo.org" "Tasks")
      (110 "* %u %?" "~/notes.org" "Notes")))
  '(org-reverse-note-order t)
  '(package-selected-packages
-   '(indent-tools quelpa quelpa-use-package ox-hugo flycheck-inline phoenix-dark-pink-theme lsp-ui anti-zenburn-theme hc-zenburn-theme zenburn-theme eglot vagrant-tramp yasnippet ## dash add-node-modules-path prettier poly-ansible jinja2-mode polymode yaml-mode ansible company-lsp rust-mode exec-path-from-shell tide buttercup flycheck-rust))
+   '(gptel indent-tools quelpa quelpa-use-package ox-hugo flycheck-inline phoenix-dark-pink-theme lsp-ui anti-zenburn-theme hc-zenburn-theme zenburn-theme eglot vagrant-tramp yasnippet ## dash add-node-modules-path prettier poly-ansible jinja2-mode polymode yaml-mode ansible company-lsp rust-mode exec-path-from-shell tide buttercup flycheck-rust))
  '(remember-annotation-functions '(org-remember-annotation))
- '(remember-handler-functions '(org-remember-handler)))
+ '(remember-handler-functions '(org-remember-handler))
+ '(tool-bar-mode nil))
 (custom-set-faces
  ;; custom-set-faces was added by Custom.
  ;; If you edit it by hand, you could mess it up, so be careful.
  ;; Your init file should contain only one such instance.
  ;; If there is more than one, they won't work right.
- '(default ((t (:inherit nil :extend nil :stipple nil :background "#313131" :foreground "#DCDCCC" :inverse-video nil :box nil :strike-through nil :overline nil :underline nil :slant normal :weight normal :height 150 :width normal :foundry "ADBO" :family "Source Code Pro")))))
+ '(default ((t (:inherit nil :extend nil :stipple nil :background "#313131" :foreground "#DCDCCC" :inverse-video nil :box nil :strike-through nil :overline nil :underline nil :slant normal :weight normal :height 120 :width normal :foundry "IBM " :family "IBM Plex Mono")))))
