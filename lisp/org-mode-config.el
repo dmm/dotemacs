@@ -1,13 +1,3 @@
-;(require 'org-install)
-
-;(setq org-hide-leading-stars t)
-
-;(add-to-list 'auto-mode-alist '("\\.org$" . org-mode))
-
-;(define-key mode-specific-map [?a] 'org-agenda)
-
-(require 'org-install)
-
 (setq org-mobile-directory "~/Dropbox/MobileOrg/")
 
 ;; Set to the name of the file where new notes will be stored
