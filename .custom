@@ -33,3 +33,6 @@ Exempt major modes are defined in `display-line-numbers-exempt-modes'."
 
 (put 'suspend-frame 'disabled t)
 (global-unset-key (kbd "C-z"))
+
+(global-set-key [XF86Back] 'winner-undo)
+(global-set-key [XF86Forward] 'winner-redo)
