@@ -7,10 +7,6 @@
 
 )
 
-(add-hook 'rustic-mode-hook
-          (lambda ()
-             (add-hook 'after-save-hook 'rustic-cargo-test nil 'make-it-local)))
-
 (global-company-mode 1)
 (add-to-list 'auto-mode-alist '("\\.rs\\'" . rustic-mode))
 
