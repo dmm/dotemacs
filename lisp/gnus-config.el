@@ -6,7 +6,7 @@
           '(nnml ""))
 (setq gnus-secondary-select-methods
       '((nnimap "mattli.us"
-		     (nnimap-address "home.mattli.us")
+		     (nnimap-address "imap.mattli.us")
 		     (nnimap-server-port 993)
 		     (nnimap-stream ssl))))
 
@@ -15,5 +15,5 @@
 (setq gnus-auto-expirable-newsgroups "INBOX")
 (setq nnmail-expiry-target 'nnmail-fancy-expiry-target
        nnmail-fancy-expiry-targets
-       '(("from" ".*" "nnfolder:Archive.%Y")))
+       '(("from" ".*" "nnimap+mattli.us:Archives.%Y")))
 

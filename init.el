@@ -124,7 +124,7 @@
      (110 "* %u %?" "~/notes.org" "Notes")))
  '(org-reverse-note-order t)
  '(package-selected-packages
-   '(flycheck-inline phoenix-dark-pink-theme lsp-ui anti-zenburn-theme hc-zenburn-theme zenburn-theme eglot vagrant-tramp yasnippet ## dash add-node-modules-path prettier poly-ansible jinja2-mode polymode yaml-mode ansible company-lsp rust-mode exec-path-from-shell tide buttercup flycheck-rust))
+   '(indent-tools quelpa quelpa-use-package ox-hugo flycheck-inline phoenix-dark-pink-theme lsp-ui anti-zenburn-theme hc-zenburn-theme zenburn-theme eglot vagrant-tramp yasnippet ## dash add-node-modules-path prettier poly-ansible jinja2-mode polymode yaml-mode ansible company-lsp rust-mode exec-path-from-shell tide buttercup flycheck-rust))
  '(remember-annotation-functions '(org-remember-annotation))
  '(remember-handler-functions '(org-remember-handler)))
 (custom-set-faces
@@ -132,4 +132,4 @@
  ;; If you edit it by hand, you could mess it up, so be careful.
  ;; Your init file should contain only one such instance.
  ;; If there is more than one, they won't work right.
- )
+ '(default ((t (:inherit nil :extend nil :stipple nil :background "#313131" :foreground "#DCDCCC" :inverse-video nil :box nil :strike-through nil :overline nil :underline nil :slant normal :weight normal :height 150 :width normal :foundry "ADBO" :family "Source Code Pro")))))
