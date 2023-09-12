@@ -4,7 +4,9 @@
 (add-to-list 'package-archives '("melpa" . "https://melpa.org/packages/") t)
 
 ;; Get SSH_AUTH_SOCK from environment for gpg,magit,tramp,etc
-(exec-path-from-shell-copy-env "SSH_AUTH_SOCK")
+(exec-path-from-shell-initialize)
+;(exec-path-from-shell-copy-env "SSH_AUTH_SOCK")
+(setenv "SSH_AUTH_SOCK" (concat (getenv "HOME") "/.ssh/ssh_auth_sock"))
 (exec-path-from-shell-copy-env "PATH")
 
 ;; Some helpful functions
@@ -49,37 +51,16 @@
     el-files-list))
 
 
-(defun fill-load-path (path)
-  (dolist (file (files-in-below-directory path))
-    (if file
-	(add-to-list 'load-path
-		     (file-name-directory file)))))
-
 (defun load-tree (path)
   (dolist (fl (files-in-below-directory path))
     (if fl
 	(load-file fl))))
-
-;; Fill load-path
-;(fill-load-path "~/.emacs.d/lisp/")
 
 ;; Load configuration
 (load-tree "~/.emacs.d/lisp/")
 
 ;; load customizations
 (load-file "~/.emacs.d/.custom")
-
-;; load info manuals
-(setq Info-default-directory-list
-      (cons "~/books" Info-default-directory-list))
-
-;; Start emacs server
-(server-start)
-;;misc
-(global-font-lock-mode t)
-
-;; Start a pretty shell
-(shell)
 
 (custom-set-variables
  ;; custom-set-variables was added by Custom.
@@ -89,15 +70,18 @@
  '(auth-source-save-behavior nil)
  '(column-number-mode t)
  '(custom-safe-themes
-   '("72e041c9a2cec227a33e0ac4b3ea751fd4f4039235035894bf18b1c0901e1bd6" "a37d20710ab581792b7c9f8a075fcbb775d4ffa6c8bce9137c84951b1b453016" "33ea268218b70aa106ba51a85fe976bfae9cf6931b18ceaf57159c558bbcd1e6" "a3e99dbdaa138996bb0c9c806bc3c3c6b4fd61d6973b946d750b555af8b7555b" "d8dc153c58354d612b2576fea87fe676a3a5d43bcc71170c62ddde4a1ad9e1fb" default))
+   '("8721f7ee8cd0c2e56d23f757b44c39c249a58c60d33194fe546659dabc69eebd"
+     "72e041c9a2cec227a33e0ac4b3ea751fd4f4039235035894bf18b1c0901e1bd6"
+     "a37d20710ab581792b7c9f8a075fcbb775d4ffa6c8bce9137c84951b1b453016"
+     "33ea268218b70aa106ba51a85fe976bfae9cf6931b18ceaf57159c558bbcd1e6"
+     "a3e99dbdaa138996bb0c9c806bc3c3c6b4fd61d6973b946d750b555af8b7555b"
+     "d8dc153c58354d612b2576fea87fe676a3a5d43bcc71170c62ddde4a1ad9e1fb"
+     default))
  '(display-time-mode t)
  '(global-display-line-numbers-mode t)
  '(org-agenda-custom-commands
-   '(("d" todo "DELEGATED" nil)
-     ("c" todo "DONE|DEFERRED|CANCELLED" nil)
-     ("w" todo "WAITING" nil)
-     ("W" agenda ""
-      ((org-agenda-ndays 21)))
+   '(("d" todo "DELEGATED" nil) ("c" todo "DONE|DEFERRED|CANCELLED" nil)
+     ("w" todo "WAITING" nil) ("W" agenda "" ((org-agenda-ndays 21)))
      ("A" agenda ""
       ((org-agenda-skip-function
         (lambda nil
@@ -107,8 +91,8 @@
      ("u" alltodo ""
       ((org-agenda-skip-function
         (lambda nil
-          (org-agenda-skip-entry-if 'scheduled 'deadline 'regexp "<[^>
-]+>")))
+          (org-agenda-skip-entry-if 'scheduled 'deadline 'regexp
+                                    "<[^>\12]+>")))
        (org-agenda-overriding-header "Unscheduled TODO entries: ")))))
  '(org-agenda-files '("~/todo.org"))
  '(org-agenda-include-diary t)
@@ -122,12 +106,17 @@
  '(org-fast-tag-selection-single-key 'expert)
  '(org-remember-store-without-prompt t)
  '(org-remember-templates
-   '((116 "* TODO %?
-  %u" "~/todo.org" "Tasks")
+   '((116 "* TODO %?\12  %u" "~/todo.org" "Tasks")
      (110 "* %u %?" "~/notes.org" "Notes")))
  '(org-reverse-note-order t)
  '(package-selected-packages
-   '(gptel indent-tools quelpa quelpa-use-package ox-hugo flycheck-inline phoenix-dark-pink-theme lsp-ui anti-zenburn-theme hc-zenburn-theme zenburn-theme eglot vagrant-tramp yasnippet ## dash add-node-modules-path prettier poly-ansible jinja2-mode polymode yaml-mode ansible company-lsp rust-mode exec-path-from-shell tide buttercup flycheck-rust))
+   '(gptel dracula-theme vterm indent-tools quelpa quelpa-use-package
+           ox-hugo flycheck-inline phoenix-dark-pink-theme lsp-ui
+           anti-zenburn-theme hc-zenburn-theme zenburn-theme eglot
+           vagrant-tramp yasnippet ## dash add-node-modules-path
+           prettier poly-ansible jinja2-mode polymode yaml-mode
+           ansible company-lsp rust-mode exec-path-from-shell tide
+           buttercup flycheck-rust))
  '(remember-annotation-functions '(org-remember-annotation))
  '(remember-handler-functions '(org-remember-handler))
  '(tool-bar-mode nil))
