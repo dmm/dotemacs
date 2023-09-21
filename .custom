@@ -20,7 +20,6 @@
 
 (setq default-directory (concat (getenv "HOME") "/"))
 
-(load-theme 'dracula)
 (setq gnutls-algorithm-priority "NORMAL:-VERS-TLS1.3")
 
 (defun display-line-numbers--turn-on ()

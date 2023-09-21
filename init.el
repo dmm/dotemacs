@@ -70,18 +70,15 @@
  '(auth-source-save-behavior nil)
  '(column-number-mode t)
  '(custom-safe-themes
-   '("8721f7ee8cd0c2e56d23f757b44c39c249a58c60d33194fe546659dabc69eebd"
-     "72e041c9a2cec227a33e0ac4b3ea751fd4f4039235035894bf18b1c0901e1bd6"
-     "a37d20710ab581792b7c9f8a075fcbb775d4ffa6c8bce9137c84951b1b453016"
-     "33ea268218b70aa106ba51a85fe976bfae9cf6931b18ceaf57159c558bbcd1e6"
-     "a3e99dbdaa138996bb0c9c806bc3c3c6b4fd61d6973b946d750b555af8b7555b"
-     "d8dc153c58354d612b2576fea87fe676a3a5d43bcc71170c62ddde4a1ad9e1fb"
-     default))
+   '("9a456f2aac10f18204e8ece27c84950c359f91bb06bda8c711bf4f5095ca8250" "8721f7ee8cd0c2e56d23f757b44c39c249a58c60d33194fe546659dabc69eebd" "72e041c9a2cec227a33e0ac4b3ea751fd4f4039235035894bf18b1c0901e1bd6" "a37d20710ab581792b7c9f8a075fcbb775d4ffa6c8bce9137c84951b1b453016" "33ea268218b70aa106ba51a85fe976bfae9cf6931b18ceaf57159c558bbcd1e6" "a3e99dbdaa138996bb0c9c806bc3c3c6b4fd61d6973b946d750b555af8b7555b" "d8dc153c58354d612b2576fea87fe676a3a5d43bcc71170c62ddde4a1ad9e1fb" default))
  '(display-time-mode t)
  '(global-display-line-numbers-mode t)
  '(org-agenda-custom-commands
-   '(("d" todo "DELEGATED" nil) ("c" todo "DONE|DEFERRED|CANCELLED" nil)
-     ("w" todo "WAITING" nil) ("W" agenda "" ((org-agenda-ndays 21)))
+   '(("d" todo "DELEGATED" nil)
+     ("c" todo "DONE|DEFERRED|CANCELLED" nil)
+     ("w" todo "WAITING" nil)
+     ("W" agenda ""
+      ((org-agenda-ndays 21)))
      ("A" agenda ""
       ((org-agenda-skip-function
         (lambda nil
@@ -91,8 +88,8 @@
      ("u" alltodo ""
       ((org-agenda-skip-function
         (lambda nil
-          (org-agenda-skip-entry-if 'scheduled 'deadline 'regexp
-                                    "<[^>\12]+>")))
+          (org-agenda-skip-entry-if 'scheduled 'deadline 'regexp "<[^>
+]+>")))
        (org-agenda-overriding-header "Unscheduled TODO entries: ")))))
  '(org-agenda-files '("~/todo.org"))
  '(org-agenda-include-diary t)
@@ -106,17 +103,12 @@
  '(org-fast-tag-selection-single-key 'expert)
  '(org-remember-store-without-prompt t)
  '(org-remember-templates
-   '((116 "* TODO %?\12  %u" "~/todo.org" "Tasks")
+   '((116 "* TODO %?
+  %u" "~/todo.org" "Tasks")
      (110 "* %u %?" "~/notes.org" "Notes")))
  '(org-reverse-note-order t)
  '(package-selected-packages
-   '(gptel dracula-theme vterm indent-tools quelpa quelpa-use-package
-           ox-hugo flycheck-inline phoenix-dark-pink-theme lsp-ui
-           anti-zenburn-theme hc-zenburn-theme zenburn-theme eglot
-           vagrant-tramp yasnippet ## dash add-node-modules-path
-           prettier poly-ansible jinja2-mode polymode yaml-mode
-           ansible company-lsp rust-mode exec-path-from-shell tide
-           buttercup flycheck-rust))
+   '(ef-themes gptel dracula-theme vterm indent-tools quelpa quelpa-use-package ox-hugo flycheck-inline phoenix-dark-pink-theme lsp-ui anti-zenburn-theme hc-zenburn-theme zenburn-theme eglot vagrant-tramp yasnippet ## dash add-node-modules-path prettier poly-ansible jinja2-mode polymode yaml-mode ansible company-lsp rust-mode exec-path-from-shell tide buttercup flycheck-rust))
  '(remember-annotation-functions '(org-remember-annotation))
  '(remember-handler-functions '(org-remember-handler))
  '(tool-bar-mode nil))

@@ -50,7 +50,6 @@
 
 ;; Misc. UI tweaks
 (blink-cursor-mode -1)                                ; Steady cursor
-(pixel-scroll-precision-mode)                         ; Smooth scrolling
 
 ;; Display line numbers in programming mode
 (add-hook 'prog-mode-hook 'display-line-numbers-mode)
