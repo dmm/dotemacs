@@ -48,19 +48,19 @@
 ;; (setq-default indent-tabs-mode nil)
 ;; (setq-default tab-width 4)
 
-;; Misc. UI tweaks
-(blink-cursor-mode -1)                                ; Steady cursor
-
+(dolist (mode '(org-mode-hook
+                term-mode-hook
+                vterm-mode-hook
+                shell-mode-hook
+                treemacs-mode-hook
+                eshell-mode-hook))
+  (add-hook mode (lambda() (display-line-numbers-mode 0))))
 ;; Display line numbers in programming mode
 (add-hook 'prog-mode-hook 'display-line-numbers-mode)
 (setq-default display-line-numbers-width 3)           ; Set a minimum width
 
 ;; Nice line wrapping when working with text
 (add-hook 'text-mode-hook 'visual-line-mode)
-
-;; Modes to highlight the current line with
-(let ((hl-line-hooks '(text-mode-hook prog-mode-hook)))
-  (mapc (lambda (hook) (add-hook hook 'hl-line-mode)) hl-line-hooks))
 
 (setq-default show-trailing-whitespace t)
 
