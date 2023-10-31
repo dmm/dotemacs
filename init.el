@@ -5,8 +5,10 @@
 
 ;; Get SSH_AUTH_SOCK from environment for gpg,magit,tramp,etc
 (exec-path-from-shell-initialize)
-;(exec-path-from-shell-copy-env "SSH_AUTH_SOCK")
-(setenv "SSH_AUTH_SOCK" (concat (getenv "HOME") "/.ssh/ssh_auth_sock"))
+(let ((rc-ssh-sock-path (concat (getenv "HOME") "/.ssh/ssh_auth_sock")))
+  (if (file-readable-p rc-ssh-sock-path)
+      (setenv "SSH_AUTH_SOCK" rc-ssh-sock-path)
+    (exec-path-from-shell-copy-env "SSH_AUTH_SOCK")))
 (exec-path-from-shell-copy-env "PATH")
 
 ;; Some helpful functions
