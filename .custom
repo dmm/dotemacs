@@ -26,6 +26,7 @@
   "Turn on line numbers except for certain major modes.
 Exempt major modes are defined in `display-line-numbers-exempt-modes'."
   (unless (or (magit)
+              (VTerm)
               (member major-mode display-line-numbers-exempt-modes))
     (display-line-numbers-mode)))
 
