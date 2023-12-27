@@ -1,8 +1,3 @@
-(require 'prettier-js)
-
-(add-hook 'js2-mode-hook 'prettier-js-mode)
-(add-hook 'typescript-mode-hook 'prettier-mode)
-
 (defun setup-tide-mode ()
   (interactive)
   (tide-setup)
@@ -18,20 +13,10 @@
 ;; aligns annotation to the right hand side
 (setq company-tooltip-align-annotations t)
 
-(defun custom-typescript-format()
-  "This function organizes imports and formats code on save."
-  (interactive)
-  (when (bound-and-true-p tide-mode)
-    (tide-organize-imports)
-    (prettier-prettify)
-    )
-  )
 ;; formats the buffer before saving
-;(add-hook 'before-save-hook 'custom-typescript-format)
+(add-hook 'before-save-hook 'tide-format-before-save)
 
-(add-hook 'typescript-mode-hook #'setup-tide-mode)
+;; if you use treesitter based typescript-ts-mode (emacs 29+)
+(add-hook 'typescript-ts-mode-hook #'setup-tide-mode)
 
-(eval-after-load 'tide-mode
-    '(progn
-       (add-hook 'web-mode-hook #'add-node-modules-path)
-       (add-hook 'web-mode-hook #'prettier-mode)))
+(add-to-list 'auto-mode-alist '("\\.ts\\'" . typescript-ts-mode))

@@ -72,7 +72,7 @@
  '(auth-source-save-behavior nil)
  '(column-number-mode t)
  '(custom-safe-themes
-   '("76c646974f43b321a8fd460a0f5759f916654575da5927d3fd4195029c158018" "9a456f2aac10f18204e8ece27c84950c359f91bb06bda8c711bf4f5095ca8250" "8721f7ee8cd0c2e56d23f757b44c39c249a58c60d33194fe546659dabc69eebd" "72e041c9a2cec227a33e0ac4b3ea751fd4f4039235035894bf18b1c0901e1bd6" "a37d20710ab581792b7c9f8a075fcbb775d4ffa6c8bce9137c84951b1b453016" "33ea268218b70aa106ba51a85fe976bfae9cf6931b18ceaf57159c558bbcd1e6" "a3e99dbdaa138996bb0c9c806bc3c3c6b4fd61d6973b946d750b555af8b7555b" "d8dc153c58354d612b2576fea87fe676a3a5d43bcc71170c62ddde4a1ad9e1fb" default))
+   '("13bf32d92677469e577baa02d654d462f074c115597652c1a3fce6872502bbea" "917d7e7f0483dc90a5e2791db980ce9bc39e109a29198c6e9bdcd3d88a200c33" "8081bc8961e8428dc7897544d6deaa9099b0807e57fc4281187c1bda4ff0c386" "a8a5fd1c8afea56c5943ead67442a652f1f64c8191c257d76988edb0b1ad5dfa" "76c646974f43b321a8fd460a0f5759f916654575da5927d3fd4195029c158018" "9a456f2aac10f18204e8ece27c84950c359f91bb06bda8c711bf4f5095ca8250" "8721f7ee8cd0c2e56d23f757b44c39c249a58c60d33194fe546659dabc69eebd" "72e041c9a2cec227a33e0ac4b3ea751fd4f4039235035894bf18b1c0901e1bd6" "a37d20710ab581792b7c9f8a075fcbb775d4ffa6c8bce9137c84951b1b453016" "33ea268218b70aa106ba51a85fe976bfae9cf6931b18ceaf57159c558bbcd1e6" "a3e99dbdaa138996bb0c9c806bc3c3c6b4fd61d6973b946d750b555af8b7555b" "d8dc153c58354d612b2576fea87fe676a3a5d43bcc71170c62ddde4a1ad9e1fb" default))
  '(display-time-mode t)
  '(global-display-line-numbers-mode t)
  '(org-agenda-custom-commands
@@ -90,8 +90,7 @@
      ("u" alltodo ""
       ((org-agenda-skip-function
         (lambda nil
-          (org-agenda-skip-entry-if 'scheduled 'deadline 'regexp "<[^>
-]+>")))
+          (org-agenda-skip-entry-if 'scheduled 'deadline 'regexp "<[^>\12]+>")))
        (org-agenda-overriding-header "Unscheduled TODO entries: ")))))
  '(org-agenda-files '("~/todo.org"))
  '(org-agenda-include-diary t)
@@ -105,8 +104,7 @@
  '(org-fast-tag-selection-single-key 'expert)
  '(org-remember-store-without-prompt t)
  '(org-remember-templates
-   '((116 "* TODO %?
-  %u" "~/todo.org" "Tasks")
+   '((116 "* TODO %?\12  %u" "~/todo.org" "Tasks")
      (110 "* %u %?" "~/notes.org" "Notes")))
  '(org-reverse-note-order t)
  '(package-selected-packages
