@@ -23,6 +23,10 @@
 (global-set-key (kbd "<f6>") 'winner-undo)
 (global-set-key (kbd "<f7>") 'winner-redo)
 
+; make vterm ignore f6 and f7
+(define-key vterm-mode-map (kbd "<f6>") nil)
+(define-key vterm-mode-map (kbd "<f7>") nil)
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;
 ;;;   Interface enhancements/defaults
