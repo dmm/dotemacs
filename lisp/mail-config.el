@@ -2,16 +2,17 @@
 
 (require 'smtpmail)
 
-(setq smtpmail-starttls-credentials '(("imap.mattli.us" 587 nil nil))
-      smtpmail-smtp-server "imap.mattli.us"
+(setq smtpmail-smtp-server "imap.mattli.us"
       send-mail-function 'smtpmail-send-it
-					;      message-send-mail-function 'smtpmail-send-it
+			message-send-mail-function 'smtpmail-send-it
       smtpmail-smtp-service 587
-      smtpmail-auth-credentials '(("imap.mattli.us"
-				   587
-				   "dmm@mattli.us"
-				   nil)))
+      smtpmail-servers-requiring-authorization ".*"
+)
 
 (setq user-mail-address "dmm@mattli.us")
 
 (setq smtpmail-debug-info t)
+
+(setq starttls-use-gnutls t)
+(setq starttls-gnutls-program "gnutls-cli")
+(setq starttls-extra-arguments nil)

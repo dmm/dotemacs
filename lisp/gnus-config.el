@@ -6,6 +6,7 @@
           '(nnml ""))
 (setq gnus-secondary-select-methods
       '((nnimap "mattli.us"
+         (nnimap-user "dmm@mattli.us")
 		     (nnimap-address "imap.mattli.us")
 		     (nnimap-server-port 993)
 		     (nnimap-stream ssl))))
