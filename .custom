@@ -34,4 +34,4 @@ Exempt major modes are defined in `display-line-numbers-exempt-modes'."
 
 (put 'suspend-frame 'disabled t)
 (global-unset-key (kbd "C-z"))
-(load-theme 'ef-autumn t)
+(load-theme 'ef-spring t)
