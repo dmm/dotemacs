@@ -11,3 +11,5 @@ tramp
 .lsp-session-v1
 url/
 history
+elpa/vterm*/build
+elpa/vterm*/*.so
