@@ -94,15 +94,6 @@
 
 (setq font-lock-maximum-decoration t)
 
-(defun my-personal-code-style ()
-  (interactive)
-  (message "My personal code style!")
-  ;; use space instead of tab
-  (setq indent-tabs-mode nil)
-  ;; indent 2 spaces width
-  (my-setup-indent 2))
-
-(add-hook 'css-mode-hook 'my-personal-code-style)
 (setq-default indent-tabs-mode nil)
 (setq-default tab-width 2)
 (electric-indent-mode -1)
