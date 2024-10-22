@@ -84,7 +84,7 @@
 
 ;; Fix archaic defaults
 (setq sentence-end-double-space nil)
-(setq enable-recursive-minibuffers t)
+(setq enable-recursive-minibuffers nil)
 
 ;; Make right-click do something sensible
 (when (display-graphic-p)
