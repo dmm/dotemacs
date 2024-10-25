@@ -107,6 +107,12 @@ Get and apply EditorConfig properties to current buffer.
 This function does not respect the values of `editorconfig-exclude-modes' and
 `editorconfig-exclude-regexps' and always applies available properties.
 Use `editorconfig-mode-apply' instead to make use of these variables." t)
+(autoload 'editorconfig-mode-apply "editorconfig-tools" "\
+Get and apply EditorConfig properties to current buffer.
+
+This function does nothing when the major mode is listed in
+`editorconfig-exclude-modes', or variable `buffer-file-name' matches
+any of regexps in `editorconfig-exclude-regexps'." t)
 (autoload 'editorconfig-find-current-editorconfig "editorconfig-tools" "\
 Find the closest .editorconfig file for current file." t)
 (autoload 'editorconfig-display-current-properties "editorconfig-tools" "\
@@ -114,7 +120,6 @@ Display EditorConfig properties extracted for current buffer." t)
 (defalias 'describe-editorconfig-properties #'editorconfig-display-current-properties)
 (autoload 'editorconfig-format-buffer "editorconfig-tools" "\
 Format buffer according to .editorconfig indent_style and indent_width." t)
-(register-definition-prefixes "editorconfig-tools" '("editorconfig-mode-apply"))
 
 ;;; End of scraped data
 

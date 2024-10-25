@@ -3,8 +3,8 @@
 ;; URL: https://github.com/slime/slime
 ;; Package-Requires: ((emacs "24.3") (macrostep "0.9"))
 ;; Keywords: languages, lisp, slime
-;; Package-Version: 20241021.2249
-;; Package-Revision: 58f71f42668b
+;; Package-Version: 20241024.144
+;; Package-Revision: ee57957cec00
 
 ;;;; License and Commentary
 
@@ -6040,6 +6040,12 @@ restart to invoke, otherwise use the restart at point."
         ((list 'swank:invoke-nth-restart-for-emacs sldb-level restart))
       ((:ok value) (message "Restart returned: %s" value))
       ((:abort _)))))
+
+(defun sldb-inspect-restart (&optional number)
+  (interactive)
+  (let ((restart (or number (sldb-restart-at-point))))
+    (slime-eval-async `(swank:inspect-nth-restart ,restart)
+                      'slime-open-inspector)))
 
 (defun sldb-invoke-restart-by-name (restart-name)
   (interactive (list (let ((completion-ignore-case t))
