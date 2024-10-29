@@ -1,4 +1,6 @@
 (use-package vterm
+  :init
+  (setq vterm-always-compile-module t)
   :config
   (define-key vterm-mode-map (kbd "<f1>") nil)
   (define-key vterm-mode-map (kbd "<f2>") nil)
