@@ -16,7 +16,9 @@
   (define-key vterm-mode-map (kbd "<f12>") nil)
 
   :hook
-  (vterm-mode . goto-address-mode))
+  (vterm-mode . goto-address-mode)
+  (vterm-mode . (lambda () (display-line-numbers-mode -1)))
+  (vterm-mode . (lambda () (setq-local show-trailing-whitespace nil))))
 
 (defun get-vterm-buffer-clean-names ()
   "Get a list of all vterm buffer names, stripped of *...-vterm* format."
