@@ -1,19 +1,6 @@
 
 (setq typescript-indent-level 2)
 
-(defun setup-tide-mode ()
-  (interactive)
-  (tide-setup)
-  (flycheck-mode +1)
-  (setq flycheck-check-syntax-automatically '(save mode-enabled))
-  (eldoc-mode +1)
-  (tide-hl-identifier-mode +1)
-  (prettier-mode)
-  ;; company is an optional dependency. You have to
-  ;; install it separately via package-install
-  ;; `M-x package-install [ret] company`
-  (company-mode +1))
-
 ;; aligns annotation to the right hand side
 (setq company-tooltip-align-annotations t)
 
@@ -21,7 +8,9 @@
 ;(add-hook 'before-save-hook 'tide-format-before-save)
 ;(add-hook 'before-save-hook 'prettier-prettify)
 ;; if you use treesitter based typescript-ts-mode (emacs 29+)
-(add-hook 'typescript-ts-mode-hook #'setup-tide-mode)
+(add-hook 'typescript-ts-mode-hook #'lsp-mode)
+(add-hook 'typescript-ts-mode-hook #'prettier-mode)
 
 (add-to-list 'auto-mode-alist '("\\.ts\\'" . typescript-ts-mode))
 
+(with-eval-after-load 'ng2-html-mode (add-hook 'ng2-html-mode-hook #'lsp))
