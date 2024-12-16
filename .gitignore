@@ -13,3 +13,4 @@ url/
 history
 elpa/vterm*/build
 elpa/vterm*/*.so
+lock-files/
