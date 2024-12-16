@@ -41,7 +41,7 @@
 (setq x-underline-at-descent-line nil)           ; Prettier underlines
 (setq switch-to-buffer-obey-display-actions t)   ; Make switching buffers more consistent
 
-(setq-default show-trailing-whitespace nil)      ; By default, don't underline trailing spaces
+(setq-default show-trailing-whitespace t)      ; By default, underline trailing spaces
 (setq-default indicate-buffer-boundaries 'left)  ; Show buffer top and bottom in the margin
 
 ;; Enable horizontal scrolling
@@ -58,6 +58,7 @@
                 vterm-mode-hook
                 shell-mode-hook
                 treemacs-mode-hook
+                eat-mode-hook
                 eshell-mode-hook))
   (add-hook mode (lambda() (display-line-numbers-mode 0))))
 ;; Display line numbers in programming mode
@@ -66,8 +67,6 @@
 
 ;; Nice line wrapping when working with text
 (add-hook 'text-mode-hook 'visual-line-mode)
-
-(setq-default show-trailing-whitespace t)
 
 (set-language-environment "UTF-8")
 
@@ -97,3 +96,7 @@
 (setq-default indent-tabs-mode nil)
 (setq-default tab-width 2)
 (electric-indent-mode -1)
+
+(setq lock-file-name-transforms
+      '(("\\`/.*/\\([^/]+\\)\\'" "~/.emacs.d/lock-files/\\1" t)))
+
