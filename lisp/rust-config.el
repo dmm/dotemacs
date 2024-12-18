@@ -1,5 +1,4 @@
 (use-package rustic
-  :ensure
   :bind (:map rustic-mode-map
               ("M-j" . lsp-ui-menu)
               ("M-?" . lsp-find-references)
@@ -13,15 +12,15 @@
   :config
   (setq
    rustic-format-on-save t
+   lsp-ui-doc-enable nil
    lsp-ui-sideline-show-code-actions t))
 
 (global-company-mode 1)
 (add-to-list 'auto-mode-alist '("\\.rs\\'" . rustic-mode))
 
 (use-package company
-  :ensure
   :custom
-  (company-idle-delay 0.5) ;; how long to wait until popup
+  (company-idle-delay 0.2) ;; how long to wait until popup
   ;; (company-begin-commands nil) ;; uncomment to disable popup
   :bind
   (:map company-active-map
@@ -31,7 +30,6 @@
 	      ("M->". company-select-last)))
 
 (use-package yasnippet
-  :ensure t
   :config
   (yas-reload-all)
   :hook ((lsp-mode . yas-minor-mode)
