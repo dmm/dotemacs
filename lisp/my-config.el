@@ -23,10 +23,9 @@
 (global-set-key (kbd "<f6>") 'winner-undo)
 (global-set-key (kbd "<f7>") 'winner-redo)
 
-; make vterm ignore f6 and f7
-(require 'vterm)
-(define-key vterm-mode-map (kbd "<f6>") nil)
-(define-key vterm-mode-map (kbd "<f7>") nil)
+(global-set-key (kbd "C-c h") 'winner-undo)
+(global-set-key (kbd "C-c l") 'winner-redo)
+
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;
