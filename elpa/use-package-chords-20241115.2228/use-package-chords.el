@@ -5,8 +5,8 @@
 ;; Author: Justin Talbott <justin@waymondo.com>
 ;; Keywords: convenience, tools, extensions
 ;; URL: https://github.com/jwiegley/use-package
-;; Package-Version: 20221117.1610
-;; Package-Revision: 9090080b1548
+;; Package-Version: 20241115.2228
+;; Package-Revision: a2b16a1e64b1
 ;; Package-Requires: ((use-package "2.1") (bind-key "1.0") (bind-chord "0.2") (key-chord "0.6"))
 ;; Filename: use-package-chords.el
 
