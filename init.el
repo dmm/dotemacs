@@ -13,7 +13,7 @@
 
 (set-ssh-sock-path)
 
-(add-hook 'after-make-frame-functions 'set-ssh-sock-path)
+(add-hook 'after-make-frame-functions (lambda (_) (set-ssh-sock-path)))
 
 (exec-path-from-shell-copy-env "PATH")
 
