@@ -31,11 +31,16 @@ cached for subsequent calls."
          ("C-c C-x t" . gptel-set-topic))
   :config
   (setq gptel-default-mode 'org-mode)
-  (setq gptel-model 'claude-3-5-sonnet-20241022)
+  (setq gptel-model 'claude-3-7-sonnet-20250219)
   (setq gptel-backend (gptel-make-anthropic "Claude"
-                        :stream t :key (decrypt-gpg-api-key "claude"))))
-
-
-
-
+                        :stream t :key (decrypt-gpg-api-key "claude")))
+  (gptel-make-openai "NovitaAI"
+    :host "api.novita.ai"
+    :endpoint "/v3/openai/chat/completions"
+    :key (decrypt-gpg-api-key "novita")
+    :stream t
+    :models '(;; has many more, check https://novita.ai/llm-api
+              mistralai/Mixtral-8x7B-Instruct-v0.1
+              meta-llama/llama-3-70b-instruct
+              deepseek/deepseek-r1)))
 
