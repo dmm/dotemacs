@@ -1,609 +1,715 @@
-;;; aidermacs.el --- aidermacs package for interactive conversation with aidermacs -*- lexical-binding: t; -*-a
-
+;;; aidermacs.el --- AI pair programming with Aider -*- lexical-binding: t; -*-
 ;; Author: Mingde (Matthew) Zeng <matthewzmd@posteo.net>
-;; Original Author: Kang Tu <tninja@gmail.com>
-;; Version: 0.2.0
-;; Package-Requires: ((emacs "26.1") (transient "0.3.0"))
-;; Keywords: convenience, tools
-;; URL: https://github.com/MatthewZMD/aidermacs.el
+;; Version: 1.4
+;; Package-Requires: ((emacs "26.1") (transient "0.3.0") (compat "30.0.2.0") (markdown-mode "2.7"))
+;; Keywords: ai emacs llm aider ai-pair-programming tools
+;; URL: https://github.com/MatthewZMD/aidermacs
+;; SPDX-License-Identifier: Apache-2.0
+
+;; This file is not part of GNU Emacs.
 
 ;;; Commentary:
-;; This package provides an interactive interface to communicate with https://github.com/paul-gauthier/aidermacs.
+
+;; Aidermacs integrates with Aider (https://aider.chat/) for AI-assisted code
+;; modification in Emacs. Aider lets you pair program with LLMs to edit code
+;; in your local git repository. It works with both new projects and existing
+;; code bases, supporting Claude, DeepSeek, ChatGPT, and can connect to almost
+;; any LLM including local models. Think of it as having a helpful coding
+;; partner that can understand your code, suggest improvements, fix bugs, and
+;; even write new code for you. Whether you're working on a new feature,
+;; debugging, or just need help understanding some code, Aidermacs provides an
+;; intuitive way to collaborate with AI while staying in your familiar Emacs
+;; environment.
+
+;; Originally forked from Kang Tu <tninja@gmail.com>'s Aider.el.
 
 ;;; Code:
 
+(require 'compat)
 (require 'comint)
 (require 'dired)
+(require 'project)
 (require 'transient)
 (require 'vc-git)
 (require 'which-func)
 (require 'ansi-color)
-
+(require 'cl-lib)
+(require 'tramp)
+(require 'find-dired)
 
 (require 'aidermacs-backends)
 (require 'aidermacs-models)
-(when (featurep 'doom)
-  (require 'aidermacs-doom))
+(require 'aidermacs-output)
+
+(declare-function magit-show-commit "magit-diff")
 
 (defgroup aidermacs nil
-  "Customization group for the aidermacs package."
-  :prefix "aidermacs-"
-  :group 'convenience)
+  "AI pair programming with Aider."
+  :group 'aidermacs)
 
 (defcustom aidermacs-program "aider"
   "The name or path of the aidermacs program."
-  :type 'string
-  :group 'aidermacs)
+  :type 'string)
 
-(defcustom aidermacs-args '("--model" "anthropic/claude-3-5-sonnet-20241022")
-  "Arguments to pass to the aidermacs command."
-  :type '(repeat string)
-  :group 'aidermacs)
+(defvar-local aidermacs--current-mode nil
+  "Buffer-local variable to track the current aidermacs mode.
+Possible values: `code', `ask', `architect', `help'.")
 
-(defcustom aidermacs--switch-to-buffer-other-frame nil
-  "When non-nil, open aidermacs buffer in a new frame using `switch-to-buffer-other-frame'.
-When nil, use standard `display-buffer' behavior."
-  :type 'boolean
-  :group 'aidermacs)
+(defvar-local aidermacs--ready nil
+  "Buffer-local variable to track whether aider is ready to accept
+commands: `nil', `t'")
 
+(defcustom aidermacs-use-architect-mode nil
+  "If non-nil, use separate Architect/Editor mode."
+  :type 'boolean)
 
-(defcustom aidermacs-language-name-map '(("elisp" . "emacs-lisp")
-                                         ("bash" . "sh")
-                                         ("objective-c" . "objc")
-                                         ("objectivec" . "objc")
-                                         ("cpp" . "c++"))
-  "Map external language names to Emacs names."
-  :type '(alist :key-type (string :tag "Language Name/Alias")
-                :value-type (string :tag "Mode Name (without -mode)"))
-  :group 'aidermacs)
+(defcustom aidermacs-config-file nil
+  "Path to aider configuration file.
+When set, Aidermacs will pass this to aider via --config flag,
+ignoring other configuration settings except `aidermacs-extra-args'."
+  :type '(choice (const :tag "None" nil)
+          (file :tag "Config file")))
+
+(define-obsolete-variable-alias 'aidermacs-args 'aidermacs-extra-args "0.5.0"
+  "Old name for `aidermacs-extra-args', please update your config.")
+
+(defcustom aidermacs-extra-args '()
+  "Additional arguments to pass to the aidermacs command."
+  :type '(repeat string))
+
+(defcustom aidermacs-global-read-only-files '()
+  "When non-nil, add read-only files to the aidermacs session. This
+is for files that are set not relative to project
+directory, ie. project agnostic"
+  :type '(repeat string))
+
+(defcustom aidermacs-project-read-only-files '()
+  "When non-nil, add read-only files to the aidermacs session. This
+is for files that exist relative to the project root."
+  :type '(repeat string))
+
+(defcustom aidermacs-subtree-only nil
+  "When non-nil, run aider with --subtree-only in the current directory.
+This is useful for working in monorepos where you want to limit aider's scope."
+  :type 'boolean)
+
+(defcustom aidermacs-auto-commits nil
+  "When non-nil, enable auto-commits of LLM changes.
+When nil, disable auto-commits requiring manual git commits."
+  :type 'boolean)
+
+(defcustom aidermacs-watch-files nil
+  "When non-nil, enable watching files for AI coding instructions.
+When enabled, aider will watch all files in your repo and look for
+any AI coding instructions you add using your favorite IDE or text editor."
+  :type 'boolean)
+
+(defcustom aidermacs-auto-accept-architect nil
+  "When non-nil, automatically accept architect mode changes.
+When nil, require explicit confirmation before applying changes."
+  :type 'boolean)
+
+(defcustom aidermacs-exit-kills-buffer nil
+  "When non-nil, `aidermacs-exit' will also kill the Aider buffer."
+  :type 'boolean)
+
+(defvar aidermacs--read-string-history nil
+  "History list for aidermacs read string inputs.")
+
+(defcustom aidermacs-common-prompts
+  '("What does this code do? Explain the logic step by step"
+    "Explain the overall architecture of this codebase"
+    "Simplify this code while preserving functionality"
+    "Extract this logic into separate helper functions"
+    "Optimize this code for better performance"
+    "Are there any edge cases not handled in this code?"
+    "Refactor to reduce complexity and improve readability"
+    "How could we make this code more maintainable?")
+  "List of common prompts to use with aidermacs.
+These will be available for selection when using aidermacs commands."
+  :type '(repeat string))
+
+(defvar aidermacs--cached-version nil
+  "Cached aider version to avoid repeated version checks.")
+
+(defun aidermacs-aider-version ()
+  "Check the installed aider version.
+Returns a version string like \"0.77.0\" or nil if version can't be determined.
+Uses cached version if available to avoid repeated process calls."
+  (interactive)
+  (let ((path exec-path))
+    (or aidermacs--cached-version
+        (setq aidermacs--cached-version
+              (with-temp-buffer
+                (setq-local exec-path path)
+                (when (= 0 (call-process aidermacs-program nil t nil "--version"))
+                  (goto-char (point-min))
+                  (when (re-search-forward "aider \\([0-9]+\\.[0-9]+\\.[0-9]+\\)" nil t)
+                    (match-string 1)))))))
+  (message "Aider version %s" aidermacs--cached-version)
+  aidermacs--cached-version)
+
+(defun aidermacs-clear-aider-version-cache ()
+  "Clear the cached aider version.
+Call this after upgrading aider to ensure the correct version is detected."
+  (interactive)
+  (setq aidermacs--cached-version nil)
+  (message "Aider version cache cleared."))
+
+(defun aidermacs-project-root ()
+  "Get the project root using VC-git, or fallback to file directory.
+This function tries multiple methods to determine the project root."
+  (or (vc-git-root default-directory)
+      (when buffer-file-name
+        (file-name-directory buffer-file-name))
+      default-directory))
 
 (defcustom aidermacs-prompt-file-name ".aider.prompt.org"
-  "File name that will automatically enable aidermacs-minor-mode when opened.
+  "File name that will automatically enable `aidermacs-minor-mode' when opened.
 This is the file name without path."
-  :type 'string
-  :group 'aidermacs)
+  :type 'string)
 
-(defvar aidermacs-read-string-history nil
-  "History list for aidermacs read string inputs.")
-(if (bound-and-true-p savehist-loaded)
-    (add-to-list 'savehist-additional-variables 'aidermacs-read-string-history)
-  (add-hook 'savehist-mode-hook
-            (lambda ()
-              (add-to-list 'savehist-additional-variables 'aidermacs-read-string-history))))
-
-(defface aidermacs-command-separator
-  '((((type graphic)) :strike-through t :extend t)
-    (((type tty)) :inherit font-lock-comment-face :underline t :extend t))
-  "Face for command separator in aidermacs."
-  :group 'aidermacs)
-
-(defface aidermacs-command-text
-  '((t :inherit bold))
-  "Face for commands sent to aidermacs buffer."
-  :group 'aidermacs)
-
-(defface aidermacs-search-replace-block
-  '((t :inherit 'diff-refine-added :bold t))
-  "Face for search/replace block content."
-  :group 'aidermacs)
-
-(defvar aidermacs-font-lock-keywords
-  '(("^\x2500+\n?" 0 '(face aidermacs-command-separator) t)
-    ("^\x2500+" 0 '(face nil display (space :width 2)))
-    ("^\\([0-9]+\\). " 0 font-lock-constant-face)
-    ("^>>>>>>> REPLACE" 0 'aidermacs-search-replace-block t)
-    ("^<<<<<<< SEARCH" 0 'aidermacs-search-replace-block t)
-    ("^\\(```\\)\\([^[:space:]]*\\)" (1 'shadow t) (2 font-lock-builtin-face t))
-    ("^=======$" 0 'aidermacs-search-replace-block t))
-  "Font lock keywords for aidermacs buffer.")
-
-;;;###autoload
-(defun aidermacs-plain-read-string (prompt &optional initial-input)
-  "Read a string from the user with PROMPT and optional INITIAL-INPUT.
-This function can be customized or redefined by the user."
-  (read-string prompt initial-input 'aidermacs-read-string-history))
-
-;;;###autoload
-(defalias 'aidermacs-read-string 'aidermacs-plain-read-string)
-
-(eval-and-compile
-  ;; Ensure the alias is always available in both compiled and interpreted modes.
-  (defalias 'aidermacs-read-string 'aidermacs-plain-read-string))
-
-(defvar aidermacs--add-file-read-only nil
-  "Set model parameters from `aidermacs-menu' buffer-locally.
-Affects the system message too.")
-
-(defun aidermacs--get-add-command-prefix ()
-  "Return the appropriate command prefix based on aidermacs--add-file-read-only."
-  (if aidermacs--add-file-read-only "/read-only" "/add"))
-
-(defclass aidermacs--add-file-type (transient-lisp-variable)
-  ((variable :initform 'aidermacs--add-file-read-only)
-   (format :initform "%k %d %v")
-   (reader :initform #'transient-lisp-variable--read-value))
-  "Class for toggling aidermacs--add-file-read-only.")
-
-(defclass aidermacs--switch-to-buffer-type (transient-lisp-variable)
-  ((variable :initform 'aidermacs--switch-to-buffer-other-frame)
-   (format :initform "%k %d %v")
-   (reader :initform #'transient-lisp-variable--read-value))
-  "Class for toggling aidermacs--switch-to-buffer-other-frame.")
-
-(transient-define-infix aidermacs--infix-add-file-read-only ()
-  "Toggle aidermacs--add-file-read-only between nil and t."
-  :class 'aidermacs--add-file-type
-  :key "@"
-  :description "Read-only mode"
-  :reader (lambda (_prompt _initial-input _history)
-            (not aidermacs--add-file-read-only)))
-
-(transient-define-infix aidermacs--infix-switch-to-buffer-other-frame ()
-  "Toggle aidermacs--switch-to-buffer-other-frame between nil and t."
-  :class 'aidermacs--switch-to-buffer-type
-  :key "^"
-  :description "Open in new frame"
-  :reader (lambda (_prompt _initial-input _history)
-            (not aidermacs--switch-to-buffer-other-frame)))
-
-;; Transient menu for aidermacs commands
-;; The instruction in the autoload comment is needed, see
-;; https://github.com/magit/transient/issues/280.
-;;;###autoload (autoload 'aidermacs-transient-menu "aidermacs" "Transient menu for aidermacs commands." t)
+;;;###autoload (autoload 'aidermacs-transient-menu "aidermacs" nil t)
 (transient-define-prefix aidermacs-transient-menu ()
-  "Transient menu for aidermacs commands."
-  ["aidermacs: AI Pair Programming"
-   ["aidermacs Process"
-    (aidermacs--infix-switch-to-buffer-other-frame)
-    ("a" "Run aidermacs"              aidermacs-run-aidermacs)
-    ("z" "Switch to aidermacs Buffer" aidermacs-switch-to-buffer)
-    ("o" "Select Model"                aidermacs-change-model)
-    ("l" "Clear aidermacs"              aidermacs-clear)
-    ("s" "Reset aidermacs"              aidermacs-reset)
-    ("x" "Exit aidermacs"               aidermacs-exit)
-    ]
-   ["Add File to aidermacs"
-    (aidermacs--infix-add-file-read-only)
-    ("f" "Add Current File"           aidermacs-add-current-file)
-    ("R" "Add Current File Read-Only" aidermacs-current-file-read-only)
-    ("w" "Add All Files in Current Window" aidermacs-add-files-in-current-window)
-    ("d" "Add Same Type Files under dir" aidermacs-add-same-type-files-under-dir)
-    ("b" "Batch Add Dired Marked Files"  aidermacs-batch-add-dired-marked-files)
-    ]
-   ["Code Change"
-    ("t" "Architect Discuss and Change" aidermacs-architect-discussion)
-    ("c" "Code Change"                  aidermacs-code-change)
-    ("r" "Refactor Function or Region"  aidermacs-function-or-region-refactor)
-    ("i" "Implement Requirement in-place" aidermacs-implement-todo)
-    ("U" "Write Unit Test"              aidermacs-write-unit-test)
-    ("T" "Fix Failing Test Under Cursor" aidermacs-fix-failing-test-under-cursor)
-    ("m" "Show Last Commit with Magit"  aidermacs-magit-show-last-commit)
-    ("u" "Undo Last Change"             aidermacs-undo-last-change)
-    ]
-   ["Discussion"
-    ("q" "Ask Question given Context" aidermacs-ask-question)
-    ("y" "Go Ahead"                     aidermacs-go-ahead)
-    ("e" "Explain Function or Region"   aidermacs-function-or-region-explain)
-    ("p" "Explain Symbol Under Point"   aidermacs-explain-symbol-under-point)
-    ("D" "Debug Exception"            aidermacs-debug-exception)
-    ]
-   ["Other"
-    ("g" "General Command"            aidermacs-general-command)
-    ("Q" "Ask General Question"         aidermacs-general-question)
-    ("p" "Open Prompt File"           aidermacs-open-prompt-file)
-    ("h" "Help"                       aidermacs-help)
-    ]
-   ])
+  "AI Pair Programming Interface."
+  ["Aidermacs: AI Pair Programming"
+   ["Core"
+    ("a" "Start/Open Session" aidermacs-run)
+    ("." "Start in Current Dir" aidermacs-run-in-current-dir)
+    ("l" "Clear Chat History" aidermacs-clear-chat-history)
+    ("s" "Reset Session" aidermacs-reset)
+    ("x" "Exit Session" aidermacs-exit)]
+   ["Persistent Modes"
+    ("1" "Code Mode" aidermacs-switch-to-code-mode)
+    ("2" "Chat/Ask Mode" aidermacs-switch-to-ask-mode)
+    ("3" "Architect Mode" aidermacs-switch-to-architect-mode)
+    ("4" "Help Mode" aidermacs-switch-to-help-mode)]
+   ["Utilities"
+    ("^" "Show Last Commit" aidermacs-magit-show-last-commit
+     :if (lambda () aidermacs-auto-commits))
+    ("u" "Undo Last Commit" aidermacs-undo-last-commit
+     :if (lambda () aidermacs-auto-commits))
+    ("C" "Auto-commit Changes" aidermacs-commit-with-auto-message)
+    ("R" "Refresh Repo Map" aidermacs-refresh-repo-map)
+    ("h" "Session History" aidermacs-show-output-history)
+    ("o" "Switch Model (C-u: weak-model)" aidermacs-change-model)
+    ("v" "Send Voice" aidermacs-send-voice)
+    ("W" "Fetch Web Content" aidermacs-web)
+    ("?" "Aider Meta-level Help" aidermacs-help)]]
+  ["File Actions"
+   ["Add Files (C-u: read-only)"
+    ("f" "Add File" aidermacs-add-file)
+    ("p" "Add Project File" aidermacs-add-project-file)
+    ("F" "Add Current File" aidermacs-add-current-file)
+    ("d" "Add From Directory (same type)" aidermacs-add-same-type-files-under-dir)
+    ("w" "Add From Window" aidermacs-add-files-in-current-window)
+    ("m" "Add From Dired (marked)" aidermacs-batch-add-dired-marked-files)]
+   ["Drop Files"
+    ("j" "Drop File" aidermacs-drop-file)
+    ("J" "Drop Current File" aidermacs-drop-current-file)
+    ("k" "Drop From Dired (marked)" aidermacs-batch-drop-dired-marked-files)
+    ("K" "Drop All Files" aidermacs-drop-all-files)]
+   ["Others"
+    ("S" "Create Session Scratchpad" aidermacs-create-session-scratchpad)
+    ("G" "Add File to Session" aidermacs-add-file-to-session)
+    ("A" "List Added Files" aidermacs-list-added-files)]]
+  ["Code Actions"
+   ["Code"
+    ("c" "Code Change" aidermacs-direct-change)
+    ("e" "Question Code" aidermacs-question-code)
+    ("r" "Architect Change" aidermacs-architect-this-code)]
+   ["Question"
+    ("q" "General Question" aidermacs-question-general)
+    ("*" "Question This Symbol" aidermacs-question-this-symbol)
+    ("g" "Accept Proposed Changes" aidermacs-accept-change)]
+   ["Others"
+    ("i" "Implement TODO" aidermacs-implement-todo)
+    ("t" "Write Test" aidermacs-write-unit-test)
+    ("T" "Fix Test" aidermacs-fix-failing-test-under-cursor)
+    ("!" "Debug Exception" aidermacs-debug-exception)]])
 
-(defun aidermacs-buffer-name ()
-  "Generate the aidermacs buffer name based on the git repo or current buffer file path.
-If not in a git repository and no buffer file exists, an error is raised."
-  (let ((git-repo-path (vc-git-root default-directory))
-        (current-file (buffer-file-name)))
-    (cond
-     ;; Case 1: Valid git repo path
-     (git-repo-path
-      (format "*aidermacs:%s*" (file-truename git-repo-path)))
-     ;; Case 2: Has buffer file
-     (current-file
-      (format "*aidermacs:%s*"
-              (file-truename (file-name-directory current-file))))
-     ;; Case 3: No git repo and no buffer file
-     (t
-      (error "Not in a git repository and current buffer is not associated with a file.  Please open a file or start aidermacs from within a git repository.")))))
+(defun aidermacs-select-buffer-name ()
+  "Select an existing aidermacs session buffer.
+If there is only one aidermacs buffer, return its name.
+If there are multiple, prompt to select one interactively.
+Returns nil if no aidermacs buffers exist.
+This is used when you want to target an existing session."
+  (let* ((buffers (match-buffers #'aidermacs--is-aidermacs-buffer-p))
+         (buffer-names (mapcar #'buffer-name buffers)))
+    (pcase buffers
+      (`() nil)
+      (`(,name) (buffer-name name))
+      (_ (completing-read "Select aidermacs session: " buffer-names nil t)))))
+
+(defun aidermacs-get-buffer-name (&optional use-existing suffix)
+  "Generate the aidermacs buffer name based on project root or current directory.
+If USE-EXISTING is non-nil, use an existing buffer instead of creating new.
+If supplied, SUFFIX is appended to the buffer name within the earmuffs."
+  (if use-existing
+      (aidermacs-select-buffer-name)
+    (let* ((root (aidermacs-project-root))
+           (current-dir-truename (file-truename default-directory)) ; Use truename for consistent comparisons
+           (aidermacs-buffers (match-buffers #'aidermacs--is-aidermacs-buffer-p))
+           ;; Extract truename paths from existing *aidermacs:PATH* buffers (base sessions)
+           (existing-session-paths
+            (delq nil
+                  (mapcar (lambda (buf)
+                            (when (string-match "^\\*aidermacs:\\([^\\*]+\\)\\*$" (buffer-name buf)) ; Match base session names
+                              (let ((path-str (match-string 1 (buffer-name buf))))
+                                (when (file-directory-p path-str) ; Ensure it's a directory
+                                  (file-truename path-str)))))
+                          aidermacs-buffers)))
+
+           ;; Determine the display-root for the buffer name
+           (display-root
+            (let* ((sessions-containing-current-dir ;; Sessions whose paths contain current-dir-truename
+                    (sort (cl-remove-if-not
+                           (lambda (session-path)
+                             (file-in-directory-p current-dir-truename session-path))
+                           existing-session-paths)
+                          ;; Sort by length (deeper paths are more specific)
+                          (lambda (a b) (> (length a) (length b)))))
+                   (closest-session-containing-current-dir (car sessions-containing-current-dir))
+
+                   (sessions-within-current-dir ;; Sessions whose paths are within current-dir-truename
+                    (sort (cl-remove-if-not
+                           (lambda (session-path)
+                             (file-in-directory-p session-path current-dir-truename))
+                           existing-session-paths)
+                          ;; Sort by length (deeper paths are more specific)
+                          (lambda (a b) (> (length a) (length b))))))
+
+              (cond
+               ;; 1. Current directory is INSIDE an existing session's directory.
+               (closest-session-containing-current-dir
+                closest-session-containing-current-dir)
+
+               ;; 2. Current directory is an ANCESTOR of exactly ONE existing session.
+               ((and (not closest-session-containing-current-dir) ; Only if not already covered by case 1
+                     sessions-within-current-dir
+                     (= 1 (length sessions-within-current-dir)))
+                (car sessions-within-current-dir))
+
+               ;; 3. Fallback logic (original logic for new session or ambiguous cases).
+               (aidermacs-subtree-only current-dir-truename)
+               (t (file-truename root)))))) ; Ensure root is also truename for consistency
+
+      (format "*aidermacs:%s%s*"
+              display-root
+              (or suffix "")))))
+
+(defun aidermacs--live-p (buffer-name)
+  "Return t if the aider buffer is availble and process is currently running"
+  (and (get-buffer buffer-name)
+       (process-live-p (get-buffer-process (or buffer-name (aidermacs-get-buffer-name))))))
 
 ;;;###autoload
-(defun aidermacs-run-aidermacs (&optional edit-args)
+(defun aidermacs-run ()
   "Run aidermacs process using the selected backend.
-With the universal argument, prompt to edit aidermacs-args before running."
-  (interactive "P")
-  (let* ((buffer-name (aidermacs-buffer-name))
-         (current-args (if edit-args
-                           (split-string (read-string "Edit aidermacs arguments: "
-                                                      (mapconcat 'identity aidermacs-args " ")))
-                         aidermacs-args)))
-    (aidermacs-run-aidermacs-backend aidermacs-program current-args buffer-name)
-    (aidermacs-switch-to-buffer)))
+This function sets up the appropriate arguments and launches the process."
+  (interactive)
+  ;; Set up necessary hooks when aidermacs is actually run
+  (aidermacs--setup-ediff-cleanup-hooks)
+  (aidermacs--setup-cleanup-hooks)
+  (aidermacs-setup-minor-mode)
 
-(defun aidermacs--send-command (command &optional switch-to-buffer)
-  "Send COMMAND to the corresponding aidermacs process after performing necessary checks.
-Dispatches to the appropriate backend."
-  (if-let ((aidermacs-buffer (get-buffer (aidermacs-buffer-name))))
-      (let ((processed-command (aidermacs--process-message-if-multi-line command)))
-        (aidermacs-reset-font-lock-state)
-        (aidermacs--send-command-backend aidermacs-buffer processed-command switch-to-buffer)
-        (when switch-to-buffer
-          (aidermacs-switch-to-buffer))
-        (sleep-for 0.2))
-    (message "Buffer %s does not exist. Please start aidermacs with 'M-x aidermacs-run-aidermacs'." aidermacs-buffer-name)))
+  (let* ((buffer-name (aidermacs-get-buffer-name))
+         ;; Split each string on whitespace for member comparison later
+         (flat-extra-args
+          (cl-mapcan (lambda (s)
+                       (if (stringp s)
+                           (split-string s "[[:space:]]+" t)
+                         (list s)))
+                     aidermacs-extra-args))
+         (has-model-arg (cl-some (lambda (x) (member x flat-extra-args))
+                                 '("--model" "--opus" "--sonnet" "--haiku"
+                                   "--4" "--4o" "--mini" "--4-turbo" "--35turbo"
+                                   "--deepseek" "--o1-mini" "--o1-preview")))
+         (has-config-arg (or (cl-some (lambda (dir)
+                                        (let ((conf (expand-file-name ".aider.conf.yml" dir)))
+                                          (when (file-exists-p conf)
+                                            dir)))
+                                      (list (expand-file-name "~")
+                                            (aidermacs-project-root)
+                                            default-directory))
+                             aidermacs-config-file
+                             (cl-some (lambda (x) (member x flat-extra-args))
+                                      '("--config" "-c"))))
+         ;; Check aider version for auto-accept-architect support
+         (aider-version (aidermacs-aider-version))
+         (backend-args
+          (if has-config-arg
+              ;; Only need to add aidermacs-config-file manually
+              (when aidermacs-config-file
+                (list "--config" aidermacs-config-file))
+            (append
+             (if aidermacs-use-architect-mode
+                 (list "--architect"
+                       "--model" (aidermacs-get-architect-model)
+                       "--editor-model" (aidermacs-get-editor-model))
+               (unless has-model-arg
+                 (list "--model" aidermacs-default-model)))
+             (unless aidermacs-auto-commits
+               '("--no-auto-commits"))
+             ;; Only add --no-auto-accept-architect if:
+             ;; 1. User has disabled auto-accept (aidermacs-auto-accept-architect is nil)
+             ;; 2. Aider version supports this flag (>= 0.77.0)
+             (when (and (not aidermacs-auto-accept-architect)
+                        (version<= "0.77.0" aider-version))
+               '("--no-auto-accept-architect"))
+             ;; Add watch-files if enabled
+             (when aidermacs-watch-files
+               '("--watch-files"))
+             ;; Add weak model if specified
+             (when aidermacs-weak-model
+               (list "--weak-model" aidermacs-weak-model))
+             (when aidermacs-subtree-only
+               '("--subtree-only"))
+             (when aidermacs-global-read-only-files
+               (apply #'append
+                     (mapcar (lambda (file) (list "--read" file))
+                             aidermacs-global-read-only-files)))
+             (when aidermacs-project-read-only-files
+               (apply #'append
+                     (mapcar (lambda (file) (list "--read"
+                                                 (expand-file-name file (aidermacs-project-root))))
+                             aidermacs-project-read-only-files))))))
+         ;; Take the original aidermacs-extra-args instead of the flat ones
+         (final-args (append backend-args aidermacs-extra-args)))
+    (if (aidermacs--live-p buffer-name)
+        (aidermacs-switch-to-buffer buffer-name)
+      (aidermacs-run-backend aidermacs-program final-args buffer-name)
+      (with-current-buffer buffer-name
+        ;; Set initial mode based on startup configuration
+        (setq-local aidermacs--current-mode (if aidermacs-use-architect-mode 'architect 'code)))
+      (aidermacs-switch-to-buffer buffer-name))))
 
-(defun aidermacs-kill-buffer ()
-  "Clean-up fontify buffer."
-  (when (bufferp aidermacs--font-lock-buffer)
-    (kill-buffer aidermacs--font-lock-buffer)))
 
-(defun aidermacs-input-sender (proc string)
-  "Reset font-lock state before executing a command."
-  (aidermacs-reset-font-lock-state)
-  (comint-simple-send proc (aidermacs--process-message-if-multi-line string)))
+(defun aidermacs-run-in-current-dir ()
+  "Run aidermacs in the current directory with --subtree-only flag.
+This is useful for working in monorepos where you want to limit aider's scope."
+  (interactive)
+  (let ((aidermacs-subtree-only t))
+    (aidermacs-run)))
 
-;; Buffer-local variables for block processing state
-(defvar-local aidermacs--block-end-marker nil
-  "The end marker for the current block being processed.")
+(defun aidermacs--command-may-edit-files (command)
+  "Check if COMMAND may result in file edits.
+Returns t if the command is likely to modify files, nil otherwise.
+In code/architect mode, commands without prefixes may edit.
+Commands containing /code or /architect always may edit."
+  (and (stringp command)
+       (or (and (memq aidermacs--current-mode '(code architect))
+                (not (string-match-p "^/" command)))
+           (string-match-p "/code" command)
+           (string-match-p "/architect" command))))
 
-(defvar-local aidermacs--block-start nil
-  "The starting position of the current block being processed.")
+(defun aidermacs--send-command (command &optional no-switch-to-buffer use-existing redirect callback)
+  "Send command to the corresponding aidermacs process.
+COMMAND is the text to send.
+If NO-SWITCH-TO-BUFFER is non-nil, don't switch to the aidermacs buffer.
+If USE-EXISTING is non-nil, use an existing buffer instead of creating new.
+If REDIRECT is non-nil it redirects the output (hidden) for comint backend.
+If CALLBACK is non-nil it will be called after the command finishes."
+  (let* ((buffer-name (aidermacs-get-buffer-name use-existing))
+         (buffer (if (aidermacs--live-p buffer-name)
+                     (get-buffer buffer-name)
+                   (when (get-buffer buffer-name)
+                     (kill-buffer buffer-name))
+                   (aidermacs-run)
+                   (sit-for 1)
+                   (get-buffer buffer-name)))
+         (processed-command (aidermacs--process-message-if-multi-line command)))
+    ;; Check if command may edit files and prepare accordingly
+    (with-current-buffer buffer
+      ;; Attempt to wait out transient commands or server lag
+      (when (not aidermacs--ready)
+        (sit-for 0.5))
+      (if (not aidermacs--ready)
+          (progn (aidermacs-switch-to-buffer buffer-name)
+                 (message "Aider process is not currently accepting commands"))
+        ;; Reset current output before sending new command
+        (setq aidermacs--current-output "")
+        (setq aidermacs--current-callback callback)
+        (setq aidermacs--last-command processed-command)
+        (aidermacs--cleanup-temp-buffers)
+        (aidermacs--ensure-current-file-tracked)
+        (when (aidermacs--command-may-edit-files command)
+          (aidermacs--prepare-for-code-edit))
+        (aidermacs--send-command-backend buffer processed-command redirect)))
+    (when (and (not no-switch-to-buffer)
+               (not (string= (buffer-name) buffer-name)))
+      (aidermacs-switch-to-buffer buffer-name))))
 
-(defvar-local aidermacs--block-end nil
-  "The end position of the current block being processed.")
-
-(defvar-local aidermacs--last-output-start nil
-  "an alternative to `comint-last-output-start' used in aidermacs.")
-
-(defvar-local aidermacs--block-mode nil
-  "The major mode for the current block being processed.")
-
-(defvar-local aidermacs--font-lock-buffer nil
-  "Temporary buffer for fontification.")
-
-(defconst aidermacs-search-marker "<<<<<<< SEARCH")
-(defconst aidermacs-diff-marker "=======")
-(defconst aidermacs-replace-marker ">>>>>>> REPLACE")
-(defconst aidermacs-fence-marker "```")
-(defvar aidermacs-block-re
-  (format "^\\(?:\\(?1:%s\\|%s\\)\\|\\(?1:%s\\).+\\)$" aidermacs-search-marker aidermacs-diff-marker aidermacs-fence-marker))
-
-(defun aidermacs-reset-font-lock-state ()
-  "Reset font lock state to default for processing another a new src block."
-  (unless (equal aidermacs--block-end-marker aidermacs-diff-marker)
-    ;; if we are processing the other half of a SEARCH/REPLACE block, we need to
-    ;; keep the mode
-    (setq aidermacs--block-mode nil))
-  (setq aidermacs--block-end-marker nil
-        aidermacs--last-output-start nil
-        aidermacs--block-start nil
-        aidermacs--block-end nil))
-
-(defun aidermacs-fontify-blocks (_output)
-  "fontify search/replace blocks in comint output."
-  (save-excursion
-    (goto-char (or aidermacs--last-output-start
-                   comint-last-output-start))
-    (beginning-of-line)
-
-    ;; Continue processing existing block if we're in one
-    (when aidermacs--block-start
-      (aidermacs--fontify-block))
-
-    (setq aidermacs--last-output-start nil)
-    ;; Look for new blocks if we're not in one
-    (while (and (null aidermacs--block-start)
-                (null aidermacs--last-output-start)
-                (re-search-forward aidermacs-block-re nil t))
-
-      ;; If it is code fence marker, we need to check if there is a SEARCH marker
-      ;; directly after it
-      (when (equal (match-string 1) aidermacs-fence-marker)
-        (let* ((next-line (min (point-max) (1+ (line-end-position))))
-               (line-text (buffer-substring
-                           next-line
-                           (min (point-max) (+ next-line (length aidermacs-search-marker))))))
-          (cond ((equal line-text aidermacs-search-marker)
-                 ;; Next line is a SEARCH marker. use that instead of the fence marker
-                 (re-search-forward (format "^\\(%s\\)" aidermacs-search-marker) nil t))
-                ((string-prefix-p line-text aidermacs-search-marker)
-                 ;; Next line *might* be a SEARCH marker. Don't process more of
-                 ;; the buffer until we know for sure
-                 (setq aidermacs--last-output-start comint-last-output-start)))))
-
-      (unless aidermacs--last-output-start
-        ;; Set up new block state
-        (setq aidermacs--block-end-marker
-              (pcase (match-string 1)
-                ((pred (equal aidermacs-search-marker)) aidermacs-diff-marker)
-                ((pred (equal aidermacs-diff-marker)) aidermacs-replace-marker)
-                ((pred (equal aidermacs-fence-marker)) aidermacs-fence-marker))
-              aidermacs--block-start (line-end-position)
-              aidermacs--block-end (line-end-position)
-              aidermacs--block-mode (aidermacs--guess-major-mode))
-
-        ;; Set the major-mode of the font lock buffer
-        (let ((mode aidermacs--block-mode))
-          (with-current-buffer aidermacs--font-lock-buffer
-            (erase-buffer)
-            (unless (eq mode major-mode)
-              (condition-case e
-                  (let ((inhibit-message t))
-                    (funcall mode))
-                (error "aidermacs: failed to init major-mode `%s' for font-locking: %s" mode e)))))
-
-        ;; Process initial content
-        (aidermacs--fontify-block)))))
-
-(defun aidermacs--fontify-block ()
-  "Fontify as much of the current source block as possible."
-  (let* ((last-bol (save-excursion
-                     (goto-char (point-max))
-                     (line-beginning-position)))
-         (last-output-start aidermacs--block-end)
-         end-of-block-p)
-
-    (setq aidermacs--block-end
-          (cond ((re-search-forward (concat "^" aidermacs--block-end-marker "$") nil t)
-                 ;; Found the end of the block
-                 (setq end-of-block-p t)
-                 (line-beginning-position))
-                ((string-prefix-p (buffer-substring last-bol (point-max)) aidermacs--block-end-marker)
-                 ;; The end of the text *might* be the end marker. back up to
-                 ;; make sure we don't process it until we know for sure
-                 last-bol)
-                ;; We can process till the end of the text
-                (t (point-max))))
-
-    ;; Append new content to temp buffer and fontify
-    (let ((new-content (buffer-substring-no-properties
-                        last-output-start
-                        aidermacs--block-end))
-          (pos aidermacs--block-start)
-          (font-pos 0)
-          fontified)
-
-      ;; Insert the new text and get the fontified result
-      (with-current-buffer aidermacs--font-lock-buffer
-        (goto-char (point-max))
-        (insert new-content)
-        (with-demoted-errors "aidermacs block font lock error: %s"
-          (let ((inhibit-message t))
-            (font-lock-ensure)))
-        (setq fontified (buffer-string)))
-
-      ;; Apply the faces to the buffer
-      (remove-overlays aidermacs--block-start aidermacs--block-end)
-      (while (< pos aidermacs--block-end)
-        (let* ((next-font-pos (or (next-property-change font-pos fontified) (length fontified)))
-               (next-pos (+ aidermacs--block-start next-font-pos))
-               (face (get-text-property font-pos 'face fontified)))
-          (ansi-color-apply-overlay-face pos next-pos face)
-          (setq pos next-pos
-                font-pos next-font-pos))))
-
-    ;; If we found the end marker, finalize the block
-    (when end-of-block-p
-      (when (equal aidermacs--block-end-marker aidermacs-diff-marker)
-        ;; we will need to process the other half of the SEARCH/REPLACE block.
-        ;; Backup so it will get matched
-        (beginning-of-line))
-      (aidermacs-reset-font-lock-state))))
-
-(defun aidermacs--guess-major-mode ()
-  "Extract the major mode from fence markers or filename."
-  (save-excursion
-    (beginning-of-line)
-    (or
-     ;; check if the block has a language id
-     (when (let ((re "^```\\([^[:space:]]+\\)"))
-             (or (looking-at re)
-                 (save-excursion
-                   (forward-line -1)
-                   ;; check the previous line since this might be a SEARCH block
-                   (looking-at re))))
-       (let* ((lang (downcase (match-string 1)))
-              (mode (map-elt aidermacs-language-name-map lang lang)))
-         (intern-soft (concat mode "-mode"))))
-     ;; check the file extension in auto-mode-alist
-     (when (re-search-backward "^\\([^[:space:]]+\\)" (line-beginning-position -3) t)
-       (let ((file (match-string 1)))
-         (cdr (cl-assoc-if (lambda (re) (string-match re file)) auto-mode-alist))))
-     aidermacs--block-mode
-     'fundamental-mode)))
-
-;; Function to switch to the aidermacs buffer
 ;;;###autoload
-(defun aidermacs-switch-to-buffer ()
+(defun aidermacs-switch-to-buffer (&optional buffer-name)
   "Switch to the aidermacs buffer.
-When `aidermacs--switch-to-buffer-other-frame' is non-nil, open in a new frame.
+If BUFFER-NAME is provided, switch to that buffer.
+If not, try to get a buffer using `aidermacs-get-buffer-name`.
+If that fails, try an existing buffer with `aidermacs-select-buffer-name`.
+If the buffer is already visible in a window, switch to that window.
 If the current buffer is already the aidermacs buffer, do nothing."
   (interactive)
-  (if (string= (buffer-name) (aidermacs-buffer-name))
-      (message "Already in aidermacs buffer")
-    (if-let ((buffer (get-buffer (aidermacs-buffer-name))))
-        (if aidermacs--switch-to-buffer-other-frame
-            (switch-to-buffer-other-frame buffer)
-          (pop-to-buffer buffer))
-      (message "Buffer '%s' does not exist." (aidermacs-buffer-name)))))
+  (let* ((target-buffer-name (or buffer-name
+                                 (aidermacs-get-buffer-name t)
+                                 (aidermacs-select-buffer-name)))
+         (buffer (and target-buffer-name (get-buffer target-buffer-name))))
+    (cond
+     ((and target-buffer-name (string= (buffer-name) target-buffer-name)) t)
+     ((and buffer (get-buffer-window buffer))
+      (select-window (get-buffer-window buffer)))  ;; Switch to existing window
+     (buffer
+      (pop-to-buffer buffer))
+     (t
+      (error "No aidermacs buffer exists")))))
 
-;; Function to reset the aidermacs buffer
-;;;###autoload
-(defun aidermacs-clear ()
+(defun aidermacs-clear-chat-history ()
   "Send the command \"/clear\" to the aidermacs buffer."
   (interactive)
   (aidermacs--send-command "/clear"))
 
-;;;###autoload
 (defun aidermacs-reset ()
   "Send the command \"/reset\" to the aidermacs buffer."
   (interactive)
+  (setq aidermacs--tracked-files nil)
   (aidermacs--send-command "/reset"))
 
-;;;###autoload
 (defun aidermacs-exit ()
-  "Send the command \"/exit\" to the aidermacs buffer."
+  "Send the command \"/exit\" to the aidermacs buffer.
+If `aidermacs-exit-kills-buffer' is non-nil, also kill the buffer."
   (interactive)
-  (aidermacs--send-command "/exit"))
-
-(defun aidermacs--comint-send-string-syntax-highlight (buffer text)
-  "Send TEXT to the comint BUFFER with syntax highlighting.
-This function ensures proper syntax highlighting by inheriting face properties
-from the source buffer and maintaining proper process markers."
-  (with-current-buffer buffer
-    (let ((process (get-buffer-process buffer))
-          (inhibit-read-only t))
-      (goto-char (process-mark process))
-      ;; Insert text with proper face properties
-      (insert (propertize text
-                          'face 'aidermacs-command-text
-                          'font-lock-face 'aidermacs-command-text
-                          'rear-nonsticky t))
-      ;; Update process mark and send text
-      (set-marker (process-mark process) (point))
-      (comint-send-string process text))))
+  (let ((buffer-name (aidermacs-get-buffer-name)))
+    (when (get-buffer buffer-name)
+      (aidermacs--cleanup-temp-buffers)
+      (when (aidermacs--live-p buffer-name)
+        (aidermacs--send-command "/exit" t))
+      (when aidermacs-exit-kills-buffer
+        (sit-for 1)
+        (kill-buffer buffer-name)))))
 
 (defun aidermacs--process-message-if-multi-line (str)
-  "Entering multi-line chat messages
-https://aidermacs.chat/docs/usage/commands.html#entering-multi-line-chat-messages
-If STR contains newlines and isn't already wrapped in {aidermacs...aidermacs},
-wrap it in {aidermacs\nstr\naidermacs}. Otherwise return STR unchanged."
+  "Process multi-line chat messages for proper formatting.
+STR is the message to process.  If STR contains newlines and isn't already
+wrapped in {aidermacs...aidermacs}, wrap it.
+Otherwise return STR unchanged.  See documentation at:
+https://aidermacs.chat/docs/usage/commands.html#entering-multi-line-chat-messages"
   (if (and (string-match-p "\n" str)
            (not (string-match-p "^{aidermacs\n.*\naidermacs}$" str)))
       (format "{aidermacs\n%s\naidermacs}" str)
     str))
 
-;;;###autoload
-(defun aidermacs-add-or-read-current-file (command-prefix)
-  "Send the command \"COMMAND-PREFIX <current buffer file full path>\" to the corresponding aidermacs comint buffer."
-  ;; Ensure the current buffer is associated with a file
+(defun aidermacs-drop-current-file ()
+  "Drop the current file from aidermacs session."
+  (interactive)
   (if (not buffer-file-name)
       (message "Current buffer is not associated with a file.")
-    (let* ((file-path (buffer-file-name))
-           ;; Use buffer-file-name directly
+    (let* ((file-path (aidermacs--localize-tramp-path buffer-file-name))
            (formatted-path (if (string-match-p " " file-path)
                                (format "\"%s\"" file-path)
                              file-path))
-           (command (format "%s %s" command-prefix formatted-path)))
-      ;; Use the shared helper function to send the command
+           (command (format "/drop %s" formatted-path)))
       (aidermacs--send-command command))))
 
-;; Function to send "/add <current buffer file full path>" to corresponding aidermacs buffer
-;;;###autoload
-(defun aidermacs-add-current-file ()
-  "Send the command \"/add <current buffer file full path>\" to the corresponding aidermacs comint buffer."
+(defun aidermacs--parse-ls-output (output)
+  "Parse the /ls command output to extract files in chat.
+OUTPUT is the text returned by the /ls command.  After the \"Files in chat:\"
+header, each subsequent line that begins with whitespace is processed.
+The first non-whitespace token is taken as the file name.  Relative paths are
+resolved using the repository root (if available) or `default-directory`.
+Only files that exist on disk are included in the result.
+Returns a deduplicated list of such file names."
+  (when output
+    (with-temp-buffer
+      (insert output)
+      (goto-char (point-min))
+      (let* ((files '())
+             (base (aidermacs-project-root))
+             (is-remote (file-remote-p base)))
+        ;; Parse read-only files section
+        (when (search-forward "Read-only files:" nil t)
+          (forward-line 1)
+          (while (and (not (eobp))
+                      (string-match-p "^[[:space:]]" (thing-at-point 'line t)))
+            (let* ((line (string-trim (thing-at-point 'line t)))
+                   (file (car (split-string line))))
+              ;; For remote files, we don't try to verify existence or convert paths
+              (when file
+                (if is-remote
+                    (push (concat file " (read-only)") files)
+                  ;; For local files, verify existence and convert to relative path
+                  (when (file-exists-p (expand-file-name file base))
+                    (push (concat (file-relative-name (expand-file-name file base) base)
+                                  " (read-only)")
+                          files)))))
+            (forward-line 1)))
+
+        ;; Parse files in chat section
+        (when (search-forward "Files in chat:" nil t)
+          (forward-line 1)
+          (while (and (not (eobp))
+                      (string-match-p "^[[:space:]]" (thing-at-point 'line t)))
+            (let* ((line (string-trim (thing-at-point 'line t)))
+                   (file (car (split-string line))))
+              ;; For remote files, we don't try to verify existence or convert paths
+              (when file
+                (if is-remote
+                    (push file files)
+                  ;; For local files, verify existence and convert to relative path
+                  (when (file-exists-p (expand-file-name file base))
+                    (push (file-relative-name (expand-file-name file base) base) files)))))
+            (forward-line 1)))
+
+        ;; Remove duplicates and return
+        (setq aidermacs--tracked-files (delete-dups (nreverse files)))
+        aidermacs--tracked-files))))
+
+(defun aidermacs--get-files-in-session (callback)
+  "Get list of files in current session and call CALLBACK with the result."
+  (aidermacs--send-command
+   "/ls" nil nil t
+   (lambda ()
+     (let ((files (aidermacs--parse-ls-output aidermacs--current-output)))
+       (funcall callback files)))))
+
+(defun aidermacs-list-added-files ()
+  "List all files currently added to the chat session.
+Sends the \"/ls\" command and displays the results in a Dired buffer."
   (interactive)
-  (aidermacs-add-or-read-current-file (aidermacs--get-add-command-prefix)))
+  (aidermacs--get-files-in-session
+   (lambda (files)
+     (setq aidermacs--tracked-files files)
+     (let ((buf-name (aidermacs-get-buffer-name nil " Files")))
+       ;; Unfortunately find-dired-with-command doesn't allow us to specify the
+       ;; buffer name, so we manually rename it after the fact and recreate it
+       ;; on each call.
+       (when (get-buffer buf-name)
+         (kill-buffer buf-name))
+       (if files
+           (let* ((root (aidermacs-project-root))
+                  (files-arg (mapconcat #'shell-quote-argument files " "))
+                  (cmd (format "find %s %s" files-arg (car find-ls-option))))
+             (find-dired-with-command root cmd)
+             (let ((buf (get-buffer "*Find*")))
+               (when buf
+                 (with-current-buffer buf
+                   (rename-buffer buf-name)
+                   (save-excursion
+                     ;; The executed command is on the 2nd line; it can get
+                     ;; quite long, so we delete it to avoid cluttering the
+                     ;; buffer.
+                     (goto-char (point-min))
+                     (forward-line 1)  ;; Move to the 2nd line
+                     (when (looking-at "^ *find " t)
+                       (let ((inhibit-read-only t))
+                         (delete-region (line-beginning-position) (line-end-position)))))
+                   (setq revert-buffer-function
+                         (lambda (&rest _) (aidermacs-list-added-files)))))))
+         (message "No files added to the chat session"))))))
 
-;;;###autoload
-(defun aidermacs-current-file-read-only ()
-  "Send the command \"/read-only <current buffer file full path>\" to the corresponding aidermacs comint buffer."
+(defun aidermacs-drop-file ()
+  "Drop a file from the chat session by selecting from currently added files."
   (interactive)
-  (aidermacs-add-or-read-current-file "/read-only"))
+  (aidermacs--get-files-in-session
+   (lambda (files)
+     (if-let* ((file (completing-read "Select file to drop: " files nil t))
+               (clean-file (replace-regexp-in-string " (read-only)$" "" file)))
+         (let ((command (aidermacs--prepare-file-paths-for-command "/drop" (list clean-file))))
+           (aidermacs--send-command command))
+       (message "No files available to drop")))))
 
-;; New function to add files in all buffers in current emacs window
-;;;###autoload
-(defun aidermacs-add-files-in-current-window ()
-  "Add files in all buffers in the current Emacs window to the aidermacs buffer."
+(defun aidermacs-drop-all-files ()
+  "Drop all files from the current chat session."
   (interactive)
-  (let ((files (mapcar (lambda (buffer)
-                         (with-current-buffer buffer
-                           (when buffer-file-name
-                             (expand-file-name buffer-file-name))))
-                       (mapcar 'window-buffer (window-list)))))
-    (setq files (delq nil files))
-    (if files
-        (let ((command (concat (aidermacs--get-add-command-prefix) " " (mapconcat 'identity files " "))))
-          (aidermacs--send-command command nil))
-      (message "No files found in the current window."))))
+  (setq aidermacs--tracked-files nil)
+  (aidermacs--send-command "/drop"))
 
-;; Function to send a custom command to corresponding aidermacs buffer
-;;;###autoload
-(defun aidermacs-general-command ()
-  "Prompt the user to input COMMAND and send it to the corresponding aidermacs comint buffer."
+(defun aidermacs-batch-drop-dired-marked-files ()
+  "Drop Dired marked files from the aidermacs session."
   (interactive)
-  (let ((command (aidermacs-read-string "Enter command to send to aidermacs: ")))
-    ;; Use the shared helper function to send the command
-    (aidermacs--send-command command t)))
+  (unless (derived-mode-p 'dired-mode)
+    (user-error "This command can only be used in Dired mode"))
+  (let ((files (dired-get-marked-files))
+        (is-aidermacs-files-buffer (string= (buffer-name)
+                                            (aidermacs-get-buffer-name nil " Files"))))
+    (aidermacs--drop-files-helper files)
+    ;; If we're in the special aidermacs files buffer, kill it after dropping files
+    (when is-aidermacs-files-buffer
+      (message "Closing aidermacs file buffer after dropping files")
+      (kill-buffer (aidermacs-get-buffer-name nil " Files")))))
 
-;; New function to get command from user and send it prefixed with "/code "
-;;;###autoload
-(defun aidermacs-code-change ()
-  "Prompt the user for a command and send it to the corresponding aidermacs comint buffer prefixed with \"/code \"."
+(defun aidermacs--form-prompt (command &optional prompt-prefix guide ignore-context)
+  "Get command based on context with COMMAND and PROMPT-PREFIX.
+COMMAND is the text to prepend.  PROMPT-PREFIX is the text to add after COMMAND.
+GUIDE is displayed in the prompt but not included in the final command.
+Use highlighted region as context unless IGNORE-CONTEXT is set to non-nil."
+  (let* ((region-text (when (and (use-region-p) (not ignore-context))
+                        (buffer-substring-no-properties (region-beginning) (region-end))))
+         (context (when region-text
+                    (format " in %s regarding this section:\n```\n%s\n```\n" (buffer-name) region-text)))
+         ;; Read user input
+         (user-command
+          (read-string
+           (concat command " " prompt-prefix context
+                   (when guide (format " (%s)" guide)) ": ")
+           nil 'aidermacs--read-string-history nil nil)))
+    ;; Add to history if not already there, removing any duplicates
+    (setq aidermacs--read-string-history
+          (delete-dups (cons user-command aidermacs--read-string-history)))
+    (concat command
+            " "
+            prompt-prefix
+            context
+            (unless (string-empty-p user-command)
+              (concat ": " user-command)))))
+
+(defun aidermacs-direct-change ()
+  "Prompt the user for an input and send it to aidermacs prefixed with \"/code \"."
   (interactive)
-  (let ((command (aidermacs-read-string "Enter code change requirement: ")))
-    (aidermacs-send-command-with-prefix "/code " command)))
+  (when-let* ((command (aidermacs--form-prompt "/code" "Make this change" "will edit file")))
+    (aidermacs--ensure-current-file-tracked)
+    (aidermacs--send-command command)))
 
-;; New function to get command from user and send it prefixed with "/ask "
-;;;###autoload
-(defun aidermacs-ask-question ()
-  "Prompt the user for a command and send it to the corresponding aidermacs comint buffer prefixed with \"/ask \".
-If a region is active, append the region text to the question.
-If cursor is inside a function, include the function name as context."
+(defun aidermacs-question-code ()
+  "Ask a question about the code at point or region.
+If a region is active, include the region text in the question.
+If cursor is inside a function, include the function name as context.
+If called from the aidermacs buffer, use general question instead."
   (interactive)
-  ;; Dispatch to general question if in aidermacs buffer
-  (when (string= (buffer-name) (aidermacs-buffer-name))
-    (call-interactively 'aidermacs-general-question)
-    (cl-return-from aidermacs-ask-question))
+  (when-let* ((command (aidermacs--form-prompt "/ask" "Propose a solution" "won't edit file")))
+    (aidermacs--ensure-current-file-tracked)
+    (aidermacs--send-command command)))
 
-  (let* ((function-name (which-function))
-         (initial-input (when function-name
-                          (format "About function '%s': " function-name)))
-         (question (aidermacs-read-string "Enter question to ask: " initial-input))
-         (region-text (and (region-active-p)
-                           (buffer-substring-no-properties (region-beginning) (region-end))))
-         (command (if region-text
-                      (format "/ask %s: %s" question region-text)
-                    (format "/ask %s" question))))
-    (aidermacs-add-current-file)
-    (aidermacs--send-command command t)))
-
-;;;###autoload
-(defun aidermacs-general-question ()
-  "Prompt the user for a general question and send it to the corresponding aidermacs comint buffer prefixed with \"/ask \"."
+(defun aidermacs-architect-this-code ()
+  "Architect code at point or region.
+If region is active, inspect that region.
+If point is in a function, inspect that function."
   (interactive)
-  (let ((question (aidermacs-read-string "Enter general question to ask: ")))
-    (let ((command (format "/ask %s" question)))
-      (aidermacs--send-command command t))))
+  (when-let* ((command (aidermacs--form-prompt "/architect" "Design a solution" "confirm before edit")))
+    (aidermacs--ensure-current-file-tracked)
+    (aidermacs--send-command command)))
 
-;; New function to get command from user and send it prefixed with "/help "
-;;;###autoload
+(defun aidermacs-question-general ()
+  "Prompt the user for a general question without code context."
+  (interactive)
+  (when-let* ((command (aidermacs--form-prompt "/ask" nil "empty for ask mode" t)))
+    (aidermacs--send-command command)))
+
 (defun aidermacs-help ()
-  "Prompt the user for a command and send it to the corresponding aidermacs comint buffer prefixed with \"/help \"."
+  "Prompt the user for an input prefixed with \"/help \"."
   (interactive)
-  (let ((command (aidermacs-read-string "Enter help question: ")))
-    (aidermacs-send-command-with-prefix "/help " command)))
+  (when-let* ((command (aidermacs--form-prompt "/help" nil "question how to use aider, empty for all commands" t)))
+    (aidermacs--send-command command)))
 
-;; New function to get command from user and send it prefixed with "/architect "
-;;;###autoload
-(defun aidermacs-architect-discussion ()
-  "Prompt the user for a command and send it to the corresponding aidermacs comint buffer prefixed with \"/architect \"."
-  (interactive)
-  (let ((command (aidermacs-read-string "Enter architect discussion question: ")))
-    (aidermacs-send-command-with-prefix "/architect " command)))
-
-;; New function to get command from user and send it prefixed with "/ask ", might be tough for AI at this moment
-;;;###autoload
 (defun aidermacs-debug-exception ()
-  "Prompt the user for a command and send it to the corresponding aidermacs comint buffer prefixed with \"/debug \",
-replacing all newline characters except for the one at the end."
+  "Prompt the user for an input and send it to aidermacs prefixed with \"/debug \"."
   (interactive)
-  (let ((command (aidermacs-plain-read-string "Enter exception, can be multiple lines: ")))
-    (aidermacs--send-command (concat "/ask Investigate the following exception, with current added files as context: " command) t)))
+  (when-let* ((command (aidermacs--form-prompt "/ask" "Debug exception")))
+    (aidermacs--send-command command)))
 
-;;;###autoload
-(defun aidermacs-go-ahead ()
-  "Send the command \"go ahead\" to the corresponding aidermacs comint buffer."
+(defun aidermacs-accept-change ()
+  "Send the command \"go ahead\" to the aidermacs."
   (interactive)
-  (aidermacs--send-command "go ahead" t))
+  (aidermacs--send-command "/code ok"))
 
-;; New function to show the last commit using magit
-;;;###autoload
 (defun aidermacs-magit-show-last-commit ()
   "Show the last commit message using Magit.
 If Magit is not installed, report that it is required."
@@ -612,141 +718,233 @@ If Magit is not installed, report that it is required."
       (magit-show-commit "HEAD")
     (message "Magit is required to show the last commit.")))
 
-;; Modified function to get command from user and send it based on selected region
-;;;###autoload
-(defun aidermacs-undo-last-change ()
+(defun aidermacs-undo-last-commit ()
   "Undo the last change made by aidermacs."
   (interactive)
   (aidermacs--send-command "/undo"))
 
-;;;###autoload
-(defun aidermacs-function-or-region-refactor ()
-  "Refactor code at point or region.
-If region is active, refactor that region.
-If point is in a function, refactor that function."
+(defun aidermacs-commit-with-auto-message ()
+  "Commit edits to the repo with an automatically generated commit message.
+Uses aider's /commit command without arguments to generate a descriptive
+commit message automatically based on the changes made."
   (interactive)
-  (if (use-region-p)
-      (let* ((region-text (buffer-substring-no-properties (region-beginning) (region-end)))
-             (function-name (which-function))
-             (user-command (aidermacs-read-string "Enter refactor instruction: "))
-             (command (if function-name
-                          (format "/architect \"in function %s, for the following code block, %s: %s\"\n"
-                                  function-name user-command region-text)
-                        (format "/architect \"for the following code block, %s: %s\"\n"
-                                user-command region-text))))
-        (aidermacs-add-current-file)
-        (aidermacs--send-command command t))
-    (if-let ((function-name (which-function)))
-        (let* ((initial-input (format "refactor %s: " function-name))
-               (user-command (aidermacs-read-string "Enter refactor instruction: " initial-input))
-               (command (format "/architect %s" user-command)))
-          (aidermacs-add-current-file)
-          (aidermacs--send-command command t))
-      (message "No region selected and no function found at point."))))
+  (aidermacs--send-command "/commit"))
 
-;; New function to explain the code in the selected region
-;;;###autoload
-(defun aidermacs-region-explain ()
-  "Get a command from the user and send it to the corresponding aidermacs comint buffer based on the selected region.
-The command will be formatted as \"/ask \" followed by the text from the selected region."
-  (interactive)
-  (if (use-region-p)
-      (let* ((region-text (buffer-substring-no-properties (region-beginning) (region-end)))
-             (function-name (which-function))
-             (processed-region-text region-text)
-             (command (if function-name
-                          (format "/ask in function %s, explain the following code block: %s"
-                                  function-name
-                                  processed-region-text)
-                        (format "/ask explain the following code block: %s"
-                                processed-region-text))))
-        (aidermacs-add-current-file)
-        (aidermacs--send-command command t))
-    (message "No region selected.")))
-
-;; New function to ask aidermacs to explain the function under the cursor
-;;;###autoload
-(defun aidermacs-function-explain ()
-  "Ask aidermacs to explain the function under the cursor.
-Prompts user for specific questions about the function."
-  (interactive)
-  (if-let ((function-name (which-function)))
-      (let* ((initial-input (format "explain %s: " function-name))
-             (user-question (aidermacs-read-string "Enter your question about the function: " initial-input))
-             (command (format "/ask %s" user-question)))
-        (aidermacs-add-current-file)
-        (aidermacs--send-command command t))
-    (message "No function found at cursor position.")))
-
-;;;###autoload
-(defun aidermacs-function-or-region-explain ()
-  "Call aidermacs-function-explain when no region is selected, otherwise call aidermacs-region-explain."
-  (interactive)
-  (if (region-active-p)
-      (aidermacs-region-explain)
-    (aidermacs-function-explain)))
-
-;; New function to explain the symbol at line
-;;;###autoload
-(defun aidermacs-explain-symbol-under-point ()
-  "Ask aidermacs to explain symbol under point, given the code line as background info."
+(defun aidermacs-question-this-symbol ()
+  "Ask aidermacs to explain symbol under point."
   (interactive)
   (let* ((symbol (thing-at-point 'symbol))
-         (line (buffer-substring-no-properties
-                (line-beginning-position)
-                (line-end-position)))
+         (line (string-trim-right (thing-at-point 'line)))
          (prompt (format "/ask Please explain what '%s' means in the context of this code line: %s"
                          symbol line)))
-    (aidermacs-add-current-file)
-    (aidermacs--send-command prompt t)))
+    (unless symbol
+      (error "No symbol under point!"))
+    (aidermacs--ensure-current-file-tracked)
+    (aidermacs--send-command prompt)))
 
 (defun aidermacs-send-command-with-prefix (prefix command)
-  "Send COMMAND to the aidermacs buffer prefixed with PREFIX."
-  (aidermacs-add-current-file)
-  (aidermacs--send-command (concat prefix command) t))
+  "Send COMMAND to the aidermacs buffer with PREFIX.
+PREFIX is the text to prepend.  COMMAND is the text to send."
+  (aidermacs--ensure-current-file-tracked)
+  (aidermacs--send-command (concat prefix command)))
 
-;;; functions for dired related
+(defun aidermacs--localize-tramp-path (file)
+  "If FILE is a TRAMP path, extract the local part of the path.
+Otherwise, return FILE unchanged."
+  (if (and (fboundp 'tramp-tramp-file-p) (tramp-tramp-file-p file))
+      (let ((local-name (tramp-file-name-localname (tramp-dissect-file-name file))))
+        local-name)
+    file))
 
-;; New function to add multiple Dired marked files to aidermacs buffer
-;;;###autoload
-(defun aidermacs-batch-add-dired-marked-files ()
-  "Add multiple Dired marked files to the aidermacs buffer with the \"/add\" command."
-  (interactive)
-  (let ((files (dired-get-marked-files)))
+(defun aidermacs--prepare-file-paths-for-command (command files)
+  "Prepare FILES for use with COMMAND in aider.
+Handles TRAMP paths by extracting local parts and formats the command string,
+but wrapping them with double quotes that aider understands."
+  (let* ((localized-files (mapcar #'aidermacs--localize-tramp-path (delq nil files)))
+         (quoted-files (mapcar (lambda (path) (format "\"%s\"" path)) localized-files)))
+    (if quoted-files
+        (format "%s %s" command
+                (mapconcat #'identity quoted-files " "))
+      (format "%s" command))))
+
+(defun aidermacs--add-files-helper (files &optional read-only message)
+  "Helper function to add files with read-only flag.
+FILES is a list of file paths to add. READ-ONLY determines if files are added
+as read-only.  MESSAGE can override the default success message."
+  (let* ((cmd (if read-only "/read-only" "/add"))
+         (command (aidermacs--prepare-file-paths-for-command cmd files))
+         (files (delq nil files)))
     (if files
-        (let ((command (concat (aidermacs--get-add-command-prefix) " " (mapconcat 'expand-file-name files " "))))
-          (aidermacs--send-command command t))
-      (message "No files marked in Dired."))))
+        (progn
+          (aidermacs--send-command command)
+          (message (or message
+                       (format "Added %d files as %s"
+                               (length files)
+                               (if read-only "read-only" "editable")))))
+      (message "No files to add."))))
 
-;; New function to add all files with same suffix as current file under current directory
-;;;###autoload
-(defun aidermacs-add-same-type-files-under-dir ()
-  "Add all files with same suffix as current file under current directory to aidermacs.
-If there are more than 40 files, refuse to add and show warning message."
+(defun aidermacs--drop-files-helper (files &optional message)
+  "Helper function to drop files.
+FILES is a list of file paths to drop.  Optional MESSAGE can override the
+default success message."
+  (let* ((command (aidermacs--prepare-file-paths-for-command "/drop" files))
+         (files (delq nil files)))
+    (if files
+        (progn
+          (aidermacs--send-command command)
+          (message (or message
+                       (format "Dropped %d files"
+                               (length files)))))
+      (message "No files to drop."))))
+
+(defun aidermacs-add-current-file (&optional read-only)
+  "Add current file with optional READ-ONLY flag.
+With prefix argument `C-u', add as read-only."
+  (interactive "P")
+  (aidermacs--add-files-helper
+   (if buffer-file-name (list buffer-file-name) nil)
+   read-only
+   (when buffer-file-name
+     (format "Added %s as %s"
+             (file-name-nondirectory buffer-file-name)
+             (if read-only "read-only" "editable")))))
+
+(defun aidermacs--pick-project-file ()
+  "Prompt for a file in the current project using `completing-read`.
+This function attempts to use `project.el` to find files if available
+and consistent with `aidermacs-project-root`. Otherwise, it falls back
+to a recursive directory listing based on `aidermacs-project-root`."
   (interactive)
+  (let* ((aidermacs-root-raw (aidermacs-project-root))
+         (aidermacs-root (when aidermacs-root-raw (expand-file-name aidermacs-root-raw)))
+         (project-files-list nil)
+         (base-for-relativization aidermacs-root))
+
+    (unless aidermacs-root
+      (user-error "No project root found by aidermacs-project-root"))
+
+    (if (and (fboundp 'project-files) (project-current))
+        (let* ((proj (project-current)) ; proj is (TYPE . DIR) or (TYPE . (Git "DIR"))
+               (project-el-root-candidate (cdr proj)) ; This can be DIR string or a list like (Git "DIR")
+               (project-el-root-str
+                (cond
+                 ((stringp project-el-root-candidate) project-el-root-candidate)
+                 ;; Handles (SYMBOL "path" ...) e.g. (Git "/path/to/root")
+                 ((and (consp project-el-root-candidate)
+                       (symbolp (car project-el-root-candidate))
+                       (>= (length project-el-root-candidate) 2)
+                       (stringp (nth 1 project-el-root-candidate)))
+                  (nth 1 project-el-root-candidate))
+                 (t nil)))
+               (project-el-root-expanded (when project-el-root-str (expand-file-name project-el-root-str))))
+
+          (cond
+           ((not project-el-root-expanded)
+            (message "aidermacs--pick-project-file: Could not determine project.el root string. Falling back to recursive listing based on aidermacs-project-root."))
+           ((string= aidermacs-root project-el-root-expanded)
+            (setq project-files-list (project-files proj))
+            (setq base-for-relativization project-el-root-expanded)
+            (unless project-files-list
+              (message "aidermacs--pick-project-file: project-files for '%s' returned no files. Falling back." project-el-root-expanded)))
+           (t
+            (message "aidermacs--pick-project-file: aidermacs-project-root (%s) differs from project.el root (%s). Falling back to recursive listing based on aidermacs-project-root."
+                     aidermacs-root project-el-root-expanded))))
+      (message "aidermacs--pick-project-file: project.el not available or no current project. Falling back to recursive listing based on aidermacs-project-root."))
+
+    ;; Fallback if project-files were not used or yielded no files
+    (unless project-files-list
+      (setq project-files-list (directory-files-recursively aidermacs-root ".*" t))
+      (setq base-for-relativization aidermacs-root)) ; Ensure base is set for fallback
+
+    (unless project-files-list
+      (user-error "No files found in project: %s" base-for-relativization))
+
+    (let* ((choices (mapcar (lambda (f) (file-relative-name f base-for-relativization))
+                            project-files-list))
+           (selected-relative-file (completing-read "Select project file to add: " choices nil t)))
+      (when selected-relative-file
+        (expand-file-name selected-relative-file base-for-relativization)))))
+
+(defun aidermacs-add-file (&optional read-only)
+  "Add file(s) to aidermacs interactively.
+With prefix argument `C-u', add as READ-ONLY.
+If current buffer is visiting a file, its name is used as initial input.
+Multiple files can be selected by calling the command multiple times."
+  (interactive "P")
+  (let ((file (expand-file-name
+               (read-file-name "Select file to add: "
+                               nil nil t))))
+    (cond
+     ((file-directory-p file)
+      (when (yes-or-no-p (format "Add all files in directory %s? " file))
+        (aidermacs--add-files-helper
+         (directory-files file t "^[^.]" t)  ;; Exclude dotfiles
+         read-only
+         (format "Added all files in %s as %s"
+                 file (if read-only "read-only" "editable")))))
+     ((file-exists-p file)
+      (aidermacs--add-files-helper
+       (list file)
+       read-only
+       (format "Added %s as %s"
+               (file-name-nondirectory file)
+               (if read-only "read-only" "editable")))))))
+
+(defun aidermacs-add-project-file (&optional read-only)
+  "Add a file from the current project to the aider session.
+With prefix argument `C-u', add as READ-ONLY."
+  (interactive "P")
+  (let ((file (aidermacs--pick-project-file)))
+    (aidermacs--add-files-helper
+     (list file)
+     read-only
+     (format "Added %s from project as %s"
+             (file-name-nondirectory file)
+             (if read-only "read-only" "editable")))))
+
+(defun aidermacs-add-files-in-current-window (&optional read-only)
+  "Add window files with READ-ONLY flag.
+With prefix argument `C-u', add as read-only."
+  (interactive "P")
+  (let* ((files (mapcan (lambda (window)
+                          (with-current-buffer (window-buffer window)
+                            (and buffer-file-name
+                                 (list (expand-file-name buffer-file-name)))))
+                        (window-list))))
+    (aidermacs--add-files-helper files read-only)))
+
+(defun aidermacs-batch-add-dired-marked-files (&optional read-only)
+  "Add Dired files with READ-ONLY flag.
+With prefix argument `C-u', add as read-only."
+  (interactive "P")
+  (unless (derived-mode-p 'dired-mode)
+    (user-error "This command can only be used in Dired mode"))
+  (aidermacs--add-files-helper (dired-get-marked-files) read-only))
+
+(defun aidermacs-add-same-type-files-under-dir (&optional read-only)
+  "Add all files with same suffix as current file under current directory.
+If there are more than 40 files, refuse to add and show warning message.
+With prefix argument `C-u', add as READ-ONLY."
+  (interactive "P")
   (if (not buffer-file-name)
-      (message "Current buffer is not visiting a file")
+      (user-error "Current buffer is not visiting a file")
     (let* ((current-suffix (file-name-extension buffer-file-name))
            (dir (file-name-directory buffer-file-name))
            (max-files 40)
-           (files (directory-files dir t
-                                   (concat "\\." current-suffix "$")
-                                   t))) ; t means don't include . and ..
-      (if (> (length files) max-files)
+           (files (directory-files dir t (concat "\\." current-suffix "$") t)))
+      (if (length> files max-files)
           (message "Too many files (%d, > %d) found with suffix .%s. Aborting."
                    (length files) max-files current-suffix)
-        (let ((command (concat (aidermacs--get-add-command-prefix) " " (mapconcat 'identity files " "))))
-          (aidermacs--send-command command t))
-        (message "Added %d files with suffix .%s"
-                 (length files) current-suffix)))))
-
-;;; functions for test fixing
+        (aidermacs--add-files-helper files read-only
+                                     (format "Added %d files with suffix .%s as %s"
+                                             (length files) current-suffix
+                                             (if read-only "read-only" "editable")))))))
 
 ;;;###autoload
 (defun aidermacs-write-unit-test ()
   "Generate unit test code for current buffer.
 Do nothing if current buffer is not visiting a file.
-If current buffer filename contains 'test':
+If current buffer filename contains `test':
   - If cursor is inside a test function, implement that test
   - Otherwise show message asking to place cursor inside a test function
 Otherwise:
@@ -754,21 +952,19 @@ Otherwise:
   - Otherwise generate unit tests for the entire file"
   (interactive)
   (if (not buffer-file-name)
-      (message "Current buffer is not visiting a file.")
-    (let ((is-test-file (string-match-p "test" (file-name-nondirectory buffer-file-name)))
-          (function-name (which-function)))
+      (user-error "Current buffer is not visiting a file")
+    (let ((function-name (which-function)))
       (cond
        ;; Test file case
-       (is-test-file
+       ((string-match-p "test" (file-name-nondirectory buffer-file-name))
         (if function-name
             (if (string-match-p "test" function-name)
                 (let* ((initial-input
                         (format "Please implement test function '%s'. Follow standard unit testing practices and make it a meaningful test. Do not use Mock if possible."
                                 function-name))
-                       (user-command (aidermacs-read-string "Test implementation instruction: " initial-input))
-                       (command (format "/architect %s" user-command)))
-                  (aidermacs-add-current-file)
-                  (aidermacs--send-command command t))
+                       (command (aidermacs--form-prompt "/architect" initial-input)))
+                  (aidermacs--ensure-current-file-tracked)
+                  (aidermacs--send-command command))
               (message "Current function '%s' does not appear to be a test function." function-name))
           (message "Please place cursor inside a test function to implement.")))
        ;; Non-test file case
@@ -780,29 +976,70 @@ Otherwise:
                             function-name common-instructions)
                   (format "Please write unit test code for file '%s'. For each function %s"
                           (file-name-nondirectory buffer-file-name) common-instructions)))
-               (user-command (aidermacs-read-string "Unit test generation instruction: " initial-input))
-               (command (format "/architect %s" user-command)))
-          (aidermacs-add-current-file)
-          (aidermacs--send-command command t)))))))
+               (command (aidermacs--form-prompt "/architect" initial-input)))
+          (aidermacs--ensure-current-file-tracked)
+          (aidermacs--send-command command)))))))
 
 ;;;###autoload
 (defun aidermacs-fix-failing-test-under-cursor ()
   "Report the current test failure to aidermacs and ask it to fix the code.
 This function assumes the cursor is on or inside a test function."
   (interactive)
-  (if-let ((test-function-name (which-function)))
+  (if-let* ((test-function-name (which-function)))
       (let* ((initial-input (format "The test '%s' is failing. Please analyze and fix the code to make the test pass. Don't break any other test"
                                     test-function-name))
-             (test-output (aidermacs-read-string "Architect question: " initial-input))
-             (command (format "/architect %s" test-output)))
-        (aidermacs-add-current-file)
-        (aidermacs--send-command command t))
+             (command (aidermacs--form-prompt "/architect" initial-input)))
+        (aidermacs--ensure-current-file-tracked)
+        (aidermacs--send-command command))
     (message "No test function found at cursor position.")))
+
+(defun aidermacs-create-session-scratchpad ()
+  "Create a new temporary file for adding content to the aider session.
+The file will be created in the system's temp directory
+with a timestamped name.  Use this to add functions, code
+snippets, or other content to the session."
+  (interactive)
+  (let* ((temp-dir (file-name-as-directory (temporary-file-directory)))
+         (filename (expand-file-name
+                    (format "aidermacs-%s.txt" (format-time-string "%Y%m%d-%H%M%S"))
+                    temp-dir)))
+    ;; Create and populate the file safely
+    (with-temp-buffer
+      (insert ";; Temporary scratchpad created by aidermacs\n")
+      (insert ";; Add your code snippets, functions, or other content here\n")
+      (insert ";; Just edit and save - changes will be available to aider\n\n")
+      (write-file filename))
+    (let ((command (aidermacs--prepare-file-paths-for-command "/read" (list filename))))
+      (aidermacs--send-command command t t))
+    (find-file-other-window filename)
+    (message "Created and added scratchpad to session: %s" filename)))
+
+(defun aidermacs-add-file-to-session (&optional file)
+  "Interactively add a FILE to an existing aidermacs session using /read.
+This allows you to add the file's content to a specific session."
+  (interactive
+   (let* ((initial (when buffer-file-name
+                     (file-name-nondirectory buffer-file-name))))
+     (list (read-file-name "Select file to add to existing session: "
+                           nil nil t initial))))
+  (cond
+   ((not (file-exists-p file))
+    (error "File does not exist: %s" file))
+   ((file-directory-p file)
+    (when (yes-or-no-p (format "Add all files in directory %s? " file))
+      (let ((command (aidermacs--prepare-file-paths-for-command
+                      "/read"
+                      (directory-files file t "^[^.]" t))))  ;; Exclude dotfiles
+        (aidermacs--send-command command nil t)
+        (message "Added all files in %s to session" file))))
+   (t (let ((command (aidermacs--prepare-file-paths-for-command "/read" (list file))))
+        (aidermacs--send-command command nil t)
+        (message "Added %s to session" (file-name-nondirectory file))))))
 
 (defun aidermacs--is-comment-line (line)
   "Check if LINE is a comment line based on current buffer's comment syntax.
-Returns non-nil if LINE starts with one or more comment characters,
-ignoring leading whitespace."
+Returns non-nil if LINE starts with one or more
+comment characters, ignoring leading whitespace."
   (when comment-start
     (let ((comment-str (string-trim-right comment-start)))
       (string-match-p (concat "^[ \t]*"
@@ -813,98 +1050,71 @@ ignoring leading whitespace."
 ;;;###autoload
 (defun aidermacs-implement-todo ()
   "Implement TODO comments in current context.
-If region is selected, implement that specific region.
+If region is active, implement that specific region.
 If cursor is on a comment line, implement that specific comment.
-If cursor is inside a function, implement TODOs for that function.
+If point is in a function, implement TODOs for that function.
 Otherwise implement TODOs for the entire current file."
   (interactive)
   (if (not buffer-file-name)
       (message "Current buffer is not visiting a file.")
     (let* ((current-line (string-trim (thing-at-point 'line t)))
-           (is-comment (aidermacs--is-comment-line current-line))
-           (function-name (which-function))
-           (region-text (when (region-active-p)
-                          (buffer-substring-no-properties
-                           (region-beginning)
-                           (region-end))))
-           (initial-input
-            (cond
-             (region-text
-              (format "Please implement this code block: '%s'. It is already inside current code. Please do in-place implementation. Keep the existing code structure and implement just this specific block."
-                      region-text))
-             (is-comment
-              (format "Please implement this comment: '%s'. It is already inside current code. Please do in-place implementation. Keep the existing code structure and implement just this specific comment."
-                      current-line))
-             (function-name
-              (format "Please implement the TODO items in function '%s'. Keep the existing code structure and only implement the TODOs in comments."
-                      function-name))
-             (t
-              (format "Please implement all TODO items in file '%s'. Keep the existing code structure and only implement the TODOs in comments."
-                      (file-name-nondirectory buffer-file-name)))))
-           (user-command (aidermacs-read-string "TODO implementation instruction: " initial-input))
-           (command (format "/architect %s" user-command)))
-      (aidermacs-add-current-file)
-      (aidermacs--send-command command t))))
+           (is-comment (aidermacs--is-comment-line current-line)))
+      (when-let* ((command (aidermacs--form-prompt
+                            "/architect"
+                            (concat "Please implement the TODO items."
+                                    (and is-comment
+                                         (format " on this comment: `%s`." current-line))
+                                    " Keep existing code structure"))))
+        (aidermacs--ensure-current-file-tracked)
+        (aidermacs--send-command command)))))
 
-
-;;; functions for sending text blocks
-
-;; New function to send "<line under cursor>" or region line by line to the aidermacs buffer
-;;;###autoload
 (defun aidermacs-send-line-or-region ()
   "Send text to the aidermacs buffer.
-If region is active, send the selected region line by line.
+If region is active, send the selected region.
 Otherwise, send the line under cursor."
   (interactive)
-  (if (region-active-p)
-      (aidermacs-send-region-by-line)
-    (let ((line (thing-at-point 'line t)))
-      (aidermacs--send-command (string-trim line) t))))
+  (let ((text (string-trim (thing-at-point (if (use-region-p) 'region 'line) t))))
+    (when text
+      (aidermacs--send-command text))))
 
-;;; New function to send the current selected region line by line to the aidermacs buffer
-;;;###autoload
-(defun aidermacs-send-region-by-line ()
-  "Get the text of the current selected region, split them into lines,
-strip the newline character from each line,
-for each non-empty line, send it to aidermacs session.
-If no region is selected, show a message."
-  (interactive)
-  (if (region-active-p)
-      (let ((region-text (buffer-substring-no-properties
-                          (region-beginning)
-                          (region-end))))
-        (mapc (lambda (line)
-                (unless (string-empty-p line)
-                  (aidermacs--send-command line t)))
-              (split-string region-text "\n" t)))
-    (message "No region selected.")))
+(defun aidermacs-send-region-by-line (start end)
+  "Send the text between START and END, line by line.
+Only sends non-empty lines after trimming whitespace."
+  (interactive "r")
+  (with-restriction start end
+    (save-excursion
+      (goto-char (point-min))
+      (while (not (eobp))
+        (let ((line (string-trim (thing-at-point 'line t))))
+          (when (not (string-empty-p line))
+            (aidermacs--send-command line)))
+        (forward-line 1)))))
 
-;;;###autoload
 (defun aidermacs-send-block-or-region ()
-  "Send the current active region text or, if no region is active, send the current paragraph content to the aidermacs session.
-When sending paragraph content, preserve cursor position and deactivate mark afterwards."
+  "Send the current active region text or current paragraph content.
+When sending paragraph content, preserve cursor
+position."
   (interactive)
-  (if (region-active-p)
-      (let ((region-text (buffer-substring-no-properties (region-beginning) (region-end))))
-        (unless (string-empty-p region-text)
-          (aidermacs--send-command region-text t)))
-    (save-excursion  ; preserve cursor position
-      (let ((region-text
-             (progn
-               (mark-paragraph)  ; mark paragraph
-               (buffer-substring-no-properties (region-beginning) (region-end)))))
-        (unless (string-empty-p region-text)
-          (aidermacs--send-command region-text t))
-        (deactivate-mark)))))  ; deactivate mark after sending
+  (let ((text (if (use-region-p)
+                  (buffer-substring-no-properties
+                   (region-beginning) (region-end))
+                (save-excursion
+                  (mark-paragraph)
+                  (prog1
+                      (buffer-substring-no-properties
+                       (region-beginning) (region-end))
+                    (deactivate-mark))))))
+    (when text
+      (aidermacs--send-command text))))
 
-;;;###autoload
 (defun aidermacs-open-prompt-file ()
-  "Open aidermacs prompt file under git repo root.
-If file doesn't exist, create it with command binding help and sample prompt."
+  "Open aidermacs prompt file under project root.
+If file doesn't exist, create it with command binding help and
+sample prompt."
   (interactive)
-  (let* ((git-root (vc-git-root default-directory))
-         (prompt-file (when git-root
-                        (expand-file-name aidermacs-prompt-file-name git-root))))
+  (let* ((root (aidermacs-project-root))
+         (prompt-file (when root
+                        (expand-file-name aidermacs-prompt-file-name root))))
     (if prompt-file
         (progn
           (find-file-other-window prompt-file)
@@ -917,25 +1127,26 @@ If file doesn't exist, create it with command binding help and sample prompt."
             (insert "* Sample task:\n\n")
             (insert "/ask what this repo is about?\n")
             (save-buffer)))
-      (message "Not in a git repository"))))
+      (user-error "Could not determine prompt file"))))
 
-;; Define the keymap for aidermacs Minor Mode
+;;;###autoload
 (defvar aidermacs-minor-mode-map
   (let ((map (make-sparse-keymap)))
-    (define-key map (kbd "C-c C-n") 'aidermacs-send-line-or-region)
-    (define-key map (kbd "C-<return>") 'aidermacs-send-line-or-region)
-    (define-key map (kbd "C-c C-c") 'aidermacs-send-block-or-region)
-    (define-key map (kbd "C-c C-z") 'aidermacs-switch-to-buffer)
+    (define-key map (kbd "C-c C-n") #'aidermacs-send-line-or-region)
+    (define-key map (kbd "C-<return>") #'aidermacs-send-line-or-region)
+    (define-key map (kbd "C-c C-c") #'aidermacs-send-block-or-region)
+    (define-key map (kbd "C-c C-z") #'aidermacs-switch-to-buffer)
     map)
-  "Keymap for aidermacs Minor Mode.")
+  "Keymap for `aidermacs-minor-mode'.")
 
-;; Define the aidermacs Minor Mode
 ;;;###autoload
 (define-minor-mode aidermacs-minor-mode
-  "Minor mode for aidermacs with keybindings."
+  "Minor mode for interacting with aidermacs AI pair programming tool.
+
+Provides these keybindings:
+\\{aidermacs-minor-mode-map}"
   :lighter " aidermacs"
-  :keymap aidermacs-minor-mode-map
-  :override t)
+  :keymap aidermacs-minor-mode-map)
 
 ;; Auto-enable aidermacs-minor-mode for specific files
 (defcustom aidermacs-auto-mode-files
@@ -946,22 +1157,108 @@ If file doesn't exist, create it with command binding help and sample prompt."
    ".aider.input.history")
   "List of filenames that should automatically enable `aidermacs-minor-mode'.
 These are exact filename matches (including the dot prefix)."
-  :type '(repeat string)
-  :group 'aidermacs)
+  :type '(repeat string))
 
-(defun aidermacs--should-enable-minor-mode-p (filename)
-  "Determine if aidermacs-minor-mode should be enabled for FILENAME.
-Returns t if the file matches any of the patterns in `aidermacs-auto-mode-files'."
-  (when filename
-    (let ((base-name (file-name-nondirectory filename)))
-      (member base-name aidermacs-auto-mode-files))))
+(defun aidermacs--maybe-enable-minor-mode ()
+  "Determines whether to enable `aidermacs-minor-mode'."
+  (when (and buffer-file-name
+             (member (file-name-nondirectory buffer-file-name)
+                     aidermacs-auto-mode-files))
+    (aidermacs-minor-mode 1)))
 
-(add-hook 'find-file-hook
-          (lambda ()
-            (when (and buffer-file-name
-                       (aidermacs--should-enable-minor-mode-p buffer-file-name))
-              (aidermacs-minor-mode 1))))
+;;;###autoload
+(defun aidermacs-setup-minor-mode ()
+  "Set up automatic enabling of `aidermacs-minor-mode' for specific files.
+This adds a hook to automatically enable the minor mode for files
+matching patterns in `aidermacs-auto-mode-files'.
+Only adds the hook if it's not already present.
+
+The minor mode provides convenient keybindings for working with
+prompt files and other Aider-related files:
+\\<aidermacs-minor-mode-map>
+\\[aidermacs-send-line-or-region] - Send current line/region line-by-line
+\\[aidermacs-send-block-or-region] - Send block/region as whole
+\\[aidermacs-switch-to-buffer] - Switch to Aidermacs buffer"
+  (interactive)
+  (unless (member #'aidermacs--maybe-enable-minor-mode find-file-hook)
+    (add-hook 'find-file-hook #'aidermacs--maybe-enable-minor-mode)))
+
+;;;###autoload
+(defun aidermacs-switch-to-code-mode ()
+  "Switch aider to code mode.
+In code mode, aider will make changes to your code to satisfy
+your requests."
+  (interactive)
+  (aidermacs--send-command "/chat-mode code")
+  (with-current-buffer (get-buffer (aidermacs-get-buffer-name))
+    (setq-local aidermacs--current-mode 'code))
+  (message "Switched to code mode <default> - aider will make changes to your code"))
+
+;;;###autoload
+(defun aidermacs-switch-to-ask-mode ()
+  "Switch aider to ask mode.
+In ask mode, aider will answer questions about your code, but
+never edit it."
+  (interactive)
+  (aidermacs--send-command "/chat-mode ask")
+  (with-current-buffer (get-buffer (aidermacs-get-buffer-name))
+    (setq-local aidermacs--current-mode 'ask))
+  (message "Switched to ask mode - you can chat freely, aider will not edit your code"))
+
+;;;###autoload
+(defun aidermacs-switch-to-architect-mode ()
+  "Switch aider to architect mode.
+In architect mode, aider will first propose a solution, then ask
+if you want it to turn that proposal into edits to your files."
+  (interactive)
+  (aidermacs--send-command "/chat-mode architect")
+  (with-current-buffer (get-buffer (aidermacs-get-buffer-name))
+    (setq-local aidermacs--current-mode 'architect))
+  (message "Switched to architect mode - aider will propose solutions before making changes"))
+
+;;;###autoload
+(defun aidermacs-switch-to-help-mode ()
+  "Switch aider to help mode.
+In help mode, aider will answer questions about using aider,
+configuring, troubleshooting, etc."
+  (interactive)
+  (aidermacs--send-command "/chat-mode help")
+  (with-current-buffer (get-buffer (aidermacs-get-buffer-name))
+    (setq-local aidermacs--current-mode 'help))
+  (message "Switched to help mode - aider will answer questions about using aider"))
+
+(defun aidermacs-refresh-repo-map ()
+  "Force a refresh of the repository map.
+This updates aider's understanding of the repository structure and files."
+  (interactive)
+  (aidermacs--send-command "/map-refresh")
+  (message "Refreshing repository map..."))
+
+(defun aidermacs-send-voice ()
+  "send /voice command to aidermacs"
+  (interactive)
+  (aidermacs--send-command "/voice")
+  (message "aidermacs awaiting speech"))
+
+(defun aidermacs-web (url)
+  "Fetch web content from URL using aider's web command.
+This allows aider to access online documentation, references, or examples."
+  (interactive "sEnter URL to fetch: ")
+  (when (and url (not (string-empty-p url)))
+    (aidermacs--send-command (format "/web %s" url))
+    (message "Fetching content from %s..." url)))
+
+;; Add a hook to clean up temp buffers when an aidermacs buffer is killed
+(defun aidermacs--cleanup-on-buffer-kill ()
+  "Clean up temporary buffers when an aidermacs buffer is killed."
+  (when (aidermacs--is-aidermacs-buffer-p)
+    (aidermacs--cleanup-temp-buffers)))
+
+(defun aidermacs--setup-cleanup-hooks ()
+  "Set up hooks to ensure proper cleanup of temporary buffers.
+Only adds the hook if it's not already present."
+  (unless (member #'aidermacs--cleanup-on-buffer-kill kill-buffer-hook)
+    (add-hook 'kill-buffer-hook #'aidermacs--cleanup-on-buffer-kill)))
 
 (provide 'aidermacs)
-
 ;;; aidermacs.el ends here

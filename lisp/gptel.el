@@ -31,7 +31,7 @@ cached for subsequent calls."
          ("C-c C-x t" . gptel-set-topic))
   :config
   (setq gptel-default-mode 'org-mode)
-  (setq gptel-model 'claude-3-7-sonnet-20250219)
+  (setq gptel-model 'claude-sonnet-4-20250514)
   (setq gptel-backend (gptel-make-anthropic "Claude"
                         :stream t :key (decrypt-gpg-api-key "claude")))
   (gptel-make-openai "NovitaAI"
