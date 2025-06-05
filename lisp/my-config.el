@@ -47,6 +47,9 @@
 (setq mouse-wheel-tilt-scroll t)
 (setq mouse-wheel-flip-direction t)
 
+;; Set scroll-conservative globally
+(setq scroll-conservatively 101)
+
 ;; We won't set these, but they're good to know about
 ;;
 ;; (setq-default indent-tabs-mode nil)
