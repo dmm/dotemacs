@@ -45,7 +45,7 @@ results block ? By default we display it as separate popup."
 When passing a toolchain to a block as argument, this variable won't be
 considered."
   :type '(choice (string :tag "String")
-                 (const :tag "Nil" nil))
+          (const :tag "Nil" nil))
   :group 'rustic-babel)
 
 (defvar rustic-babel-buffer-name '((:default . "*rust-babel*")))
@@ -146,17 +146,17 @@ execution with rustfmt."
          (rustic-babel-build-update-result-block result))
        (rustic-with-spinner rustic-babel-spinner nil nil)
        (if rustic-babel-display-error-popup
-         (if (= (length (with-current-buffer proc-buffer (buffer-string))) 0)
-             (kill-buffer proc-buffer)
-           (pop-to-buffer proc-buffer))
+           (if (= (length (with-current-buffer proc-buffer (buffer-string))) 0)
+               (kill-buffer proc-buffer)
+             (pop-to-buffer proc-buffer))
          (if (> (length (with-current-buffer proc-buffer (buffer-string))) 0)
              (progn
                (with-current-buffer proc-buffer
-                  (save-excursion
-                    (save-match-data
-                      (goto-char (point-min))
-                      (setq result (buffer-string))
-                      (rustic-babel-run-update-result-block result))))
+                 (save-excursion
+                   (save-match-data
+                     (goto-char (point-min))
+                     (setq result (buffer-string))
+                     (rustic-babel-run-update-result-block result))))
                (kill-buffer proc-buffer))
            (kill-buffer proc-buffer)))))))
 
@@ -323,13 +323,13 @@ directory DIR."
           (insert dependencies))))))
 
 (defun rustic-babel-ensure-main-wrap (body)
-  "Wrap BODY in a 'fn main' function call if none exists."
+  "Wrap BODY in a `fn main' function call if none exists."
   (if (string-match "^[ \t]*\\(pub \\)?\\(async \\)?[fn]+[ \t\n\r]*main[ \t]*(.*)" body)
       body
     (format "fn main() {\n%s\n}\n" body)))
 
 (defun rustic-babel-include-blocks (blocks)
-  "Insert contents of BLOCKS to the 'main block' that is being
+  "Insert contents of BLOCKS to the `main block' that is being
 executed with the parameter `:include'."
   (let ((contents ""))
     (with-current-buffer (current-buffer)
@@ -342,9 +342,20 @@ executed with the parameter `:include'."
 (defun rustic-babel-block-contents (block-name)
   "Return contents of block with the name BLOCK-NAME"
   (with-current-buffer (current-buffer)
-    (save-excursion
-      (org-babel-goto-named-src-block block-name)
-      (org-element-property :value (org-element-at-point)))))
+    (cond
+     ;; Block exists in current file
+     ((org-babel-find-named-block block-name)
+      (save-excursion
+        (org-babel-goto-named-src-block block-name)
+        (org-element-property :value (org-element-at-point))))
+     ;; Block exists in library of babel
+     ;; (see https://orgmode.org/manual/Library-of-Babel.html)
+     ((nth 2 (assoc-string block-name org-babel-library-of-babel)))
+     ;; Fallback
+     (t
+      (progn
+        (message "included source code block `%s' not found in this buffer or the library of babel" block-name)
+        nil)))))
 
 (defun rustic-babel-insert-mod (mods)
   "Build string with module declarations for MODS and return it."
@@ -361,6 +372,51 @@ executed with the parameter `:include'."
            (module (expand-file-name (format "%s.rs" b) src-dir)))
       (write-region contents nil module nil 0))))
 
+(defun rustic-babel-variable-to-type (var)
+  "Return a valid const type for the passed variable.
+
+Only supports three cases:
+
+1. Simple value: A=\\='a\\=' -> &str
+2. Simple list: A=(\\='a\\=' \\='b\\=') -> &[&str]
+3. Nested list (org-table): A=((\\='a\\=' \\='b\\=')) -> &[&[&str]]"
+  (if (listp var)
+      (if (listp (car var)) "&[&[&str]]" "&[&str]")
+    "&str"))
+
+(defun rustic-babel-variable-to-rust (var)
+  "Return a valid rust assignment of an org VAR.
+
+This will convert a simple variable to a &str and list to nested
+list of strings. Tables will be converted to &[&[&str]] but need
+to be homogenous."
+  (if (listp var)
+      (if (listp (car var))
+          (concat "&[" (string-join (mapcar #'rustic-babel-variable-to-rust var) ",") "]")
+        (concat "&["
+                (string-join
+                 (mapcar (lambda (v) (format "\"%s\"" v)) var)
+                 ", ")
+                "]"))
+    (concat "\"" var "\"")))
+
+(defun rustic-babel-variable-assignments:rust (vars)
+  "Convert the passed org-src block VARS into a matching const type.
+
+There are only 3 cases:
+
+1. Simple value: A=\\='a\\=' -> &str
+2. Simple list: A=(\\='a\\=' \\='b\\=') -> &[&str]
+2. Nested list (org-table): A=((\\='a\\=' \\='b\\=')) -> &[&[&str]]"
+  (string-join
+   (mapcar
+    (lambda (pair)
+      (let ((key (car pair))
+            (value (cdr pair)))
+        (format "const %s: %s = %s;\n" key (rustic-babel-variable-to-type value) (rustic-babel-variable-to-rust value))))
+    (org-babel--get-vars vars))
+   "\n"))
+
 (defun org-babel-execute:rustic (body params)
   "Execute a block of Rust code with org-babel.
 
@@ -376,6 +432,7 @@ kill the running process."
              (dir (setq rustic-babel-dir (expand-file-name project)))
              (main-p (cdr (assq :main params)))
              (main (expand-file-name "main.rs" (concat dir "/src")))
+             (vars (cdr (assq :var params)))
              (wrap-main (cond ((string= main-p "yes") t)
                               ((string= main-p "no") nil)
                               (t rustic-babel-auto-wrap-main)))
@@ -399,7 +456,8 @@ kill the running process."
            (concat "#![allow(non_snake_case, unused)]\n"
                    (if use-blocks (rustic-babel-insert-mod use-blocks) "")
                    (if include-blocks (rustic-babel-include-blocks include-blocks) "")
-                   (if wrap-main (rustic-babel-ensure-main-wrap body) body))
+                   (if wrap-main (rustic-babel-ensure-main-wrap body) body)
+                   (if (not (eq vars nil)) (rustic-babel-variable-assignments:rust params) ""))
            nil main nil 0)
           (rustic-babel-eval dir toolchain main-p)
           (setq rustic-babel-src-location

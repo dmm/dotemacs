@@ -1,11 +1,11 @@
 ;;; rustic.el --- Rust development environment -*-lexical-binding: t-*-
 
-;; Package-Version: 20241012.1556
-;; Package-Revision: 34abafbd0ff9
+;; Package-Version: 20250630.1332
+;; Package-Revision: bfff139f260c
 ;; Author: Mozilla
 ;;
 ;; Keywords: languages
-;; Package-Requires: ((emacs "26.1") (rust-mode "1.0.6") (dash "2.13.0") (f "0.18.2") (let-alist "1.0.4") (markdown-mode "2.3") (project "0.3.0") (s "1.10.0") (spinner "1.7.3") (xterm-color "1.6") (flycheck "34.0"))
+;; Package-Requires: ((emacs "28.2") (rust-mode "1.0.6") (dash "2.13.0") (f "0.18.2") (let-alist "1.0.4") (markdown-mode "2.3") (project "0.3.0") (s "1.10.0") (spinner "1.7.3") (xterm-color "1.6"))
 
 ;; This file is distributed under the terms of both the MIT license and the
 ;; Apache License (version 2.0).
@@ -65,7 +65,7 @@
 ;;; workaround for with-temp-buffer not propagating the environment, as per
 ;;; https://github.com/magit/magit/pull/4169
 (defmacro rustic--with-temp-process-buffer (&rest body)
-  "Like `with-temp-buffer', but always propagate `process-environment' and 'exec-path'.
+  "Like `with-temp-buffer', but always propagate `process-environment' and `exec-path'.
 When those vars are buffer-local in the calling buffer, they are not
 propagated by `with-temp-buffer', so we explicitly ensure that
 happens, so that processes will be invoked consistently.  BODY is
@@ -90,17 +90,20 @@ as for that macro."
   ;; this variable is buffer local so we can use the cached value
   (if rustic--buffer-workspace
       rustic--buffer-workspace
-    (rustic--with-temp-process-buffer
-      (let ((ret (process-file (rustic-cargo-bin) nil (list (current-buffer) nil) nil "locate-project" "--workspace")))
-        (cond ((and (/= ret 0) nodefault)
-               (error "`cargo locate-project' returned %s status: %s" ret (buffer-string)))
-              ((and (/= ret 0) (not nodefault))
-               (setq rustic--buffer-workspace default-directory))
-              (t
-               (goto-char 0)
-               (let* ((output (json-read))
-                      (dir (file-name-directory (cdr (assoc-string "root" output)))))
-                 (setq rustic--buffer-workspace dir))))))))
+    ;; Resolve the bin path while still buffer local (in cases like
+    ;; remote via TRAMP)
+    (let ((cargo-bin (rustic-cargo-bin)))
+      (rustic--with-temp-process-buffer
+        (let ((ret (process-file cargo-bin nil (list (current-buffer) nil) nil "locate-project" "--workspace")))
+          (cond ((and (/= ret 0) nodefault)
+                 (error "`cargo locate-project' returned %s status: %s" ret (buffer-string)))
+                ((and (/= ret 0) (not nodefault))
+                 (setq rustic--buffer-workspace default-directory))
+                (t
+                 (goto-char 0)
+                 (let* ((output (json-read))
+                        (dir (file-name-directory (cdr (assoc-string "root" output)))))
+                   (setq rustic--buffer-workspace dir)))))))))
 
 (defun rustic-buffer-crate (&optional nodefault)
   "Return the crate for the current buffer.
