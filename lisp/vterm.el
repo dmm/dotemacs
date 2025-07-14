@@ -14,6 +14,7 @@
   (define-key vterm-mode-map (kbd "<f10>") nil)
   (define-key vterm-mode-map (kbd "<f11>") nil)
   (define-key vterm-mode-map (kbd "<f12>") nil)
+  (setq vterm-max-scrollback 100000)
 
   :hook
   (vterm-mode . goto-address-mode)
