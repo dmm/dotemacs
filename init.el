@@ -79,7 +79,8 @@
  '(c-basic-offset 2)
  '(column-number-mode t)
  '(custom-safe-themes
-   '("faf642d1511fb0cb9b8634b2070a097656bdb5d88522657370eeeb11baea4a1c"
+   '("712dda0818312c175a60d94ba676b404fc815f8c7e6c080c9b4061596c60a1db"
+     "faf642d1511fb0cb9b8634b2070a097656bdb5d88522657370eeeb11baea4a1c"
      "2e7dc2838b7941ab9cabaa3b6793286e5134f583c04bde2fba2f4e20f2617cf7"
      "fbf73690320aa26f8daffdd1210ef234ed1b0c59f3d001f342b9c0bbf49f531c"
      "f019002925408f081e767c515e4fb4b1d7f1462228d6cd32ff66f06a43671527"
@@ -152,14 +153,15 @@
  '(org-reverse-note-order t)
  '(package-selected-packages
    '(## add-node-modules-path aidermacs ansible anti-zenburn-theme
-        buttercup cargo-mode command-log-mode company-lsp dash
-        dracula-theme eat ef-themes eglot exec-path-from-shell
-        flycheck-inline flycheck-rust gptel hc-zenburn-theme
-        indent-tools jinja2-mode jtsx lsp-java lsp-javacomp lsp-ui
-        magit modus-themes org ox-hugo ox-rss phoenix-dark-pink-theme
-        poly-ansible polymode prettier quelpa quelpa-use-package rg
-        rust-mode smart-shift switch-window tide vagrant-tramp vterm
-        yaml-mode yasnippet zenburn-theme))
+        buttercup cargo-mode command-log-mode company-lsp consult dash
+        dracula-theme eat ef-themes eglot embark embark-consult
+        exec-path-from-shell flycheck-inline flycheck-rust gptel
+        hc-zenburn-theme indent-tools jinja2-mode jtsx lsp-java
+        lsp-javacomp lsp-ui magit marginalia modus-themes org ox-hugo
+        ox-rss phoenix-dark-pink-theme poly-ansible polymode prettier
+        quelpa quelpa-use-package rg rust-mode smart-shift
+        switch-window tide vagrant-tramp vterm yaml-mode yasnippet
+        zenburn-theme))
  '(package-vc-selected-packages
    '((aidermacs :url "https://github.com/MatthewZMD/aidermacs.git")))
  '(remember-annotation-functions '(org-remember-annotation))

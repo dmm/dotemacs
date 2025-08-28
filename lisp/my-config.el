@@ -102,3 +102,5 @@
 (setq lock-file-name-transforms
       '(("\\`/.*/\\([^/]+\\)\\'" "~/.emacs.d/lock-files/\\1" t)))
 
+(setq undo-limit (* 1024 1024 10))
+(setopt enable-recursive-minibuffers t)

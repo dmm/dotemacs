@@ -34,8 +34,6 @@ and then cached for subsequent calls."
   :commands (gptel gptel-send)
   :hook ((eshell-mode . my/gptel-eshell-keys))
   :bind (("C-c C-<return>" . gptel-menu)
-         ("C-c <return>" . gptel-send)
-         :map gptel-mode-map
          ("C-c C-x t" . gptel-set-topic))
   :config
   (setq gptel-default-mode 'org-mode)
@@ -44,6 +42,13 @@ and then cached for subsequent calls."
                         :stream t :key (decrypt-gpg-api-key "claude")))
 ;; :key can be a function that returns the API key.
   (gptel-make-gemini "Gemini" :key (decrypt-gpg-api-key "gemini") :stream t)
+  (gptel-make-openai "Cerebras"
+    :host "api.cerebras.ai"
+    :endpoint "/v1/chat/completions"
+    :stream t                             ;optionally nil as Cerebras is instant AI
+    :key (decrypt-gpg-api-key "cerebras")                   ;can be a function that returns the key
+    :models '(llama3.1-70b
+              qwen-3-235b-a22b))
   (gptel-make-openai "NovitaAI"
     :host "api.novita.ai"
     :endpoint "/v3/openai/chat/completions"
@@ -53,5 +58,6 @@ and then cached for subsequent calls."
               moonshotai/kimi-k2-instruct
               mistralai/Mixtral-8x7B-Instruct-v0.1
               meta-llama/llama-3-70b-instruct
+              qwen/qwen3-coder-480b-a35b-instruct
               deepseek/deepseek-r1)))
 
