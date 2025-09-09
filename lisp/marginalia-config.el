@@ -7,7 +7,9 @@
 
   ;; The :init section is always executed.
   :init
-
+  :config
+  (setq marginalia-annotators
+        (assq-delete-all 'file marginalia-annotators))
   ;; Marginalia must be activated in the :init section of use-package such that
   ;; the mode gets enabled right away. Note that this forces loading the
   ;; package.
