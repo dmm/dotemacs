@@ -1,8 +1,0 @@
-.aider*
-.env
-__pycache__
-/*.elc
-
-# ELPA-generated files.
-/aidermacs-pkg.el
-/aidermacs-autoloads.el

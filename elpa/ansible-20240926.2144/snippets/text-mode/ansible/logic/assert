@@ -1,6 +1,0 @@
-# name : Fail assertion with custom message
-# key : assert
-# condition: ansible
-# --
-- name: ${1:Fail assertion with custom message}
-  assert: that=$2 $0
