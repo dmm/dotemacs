@@ -50,10 +50,8 @@
 ;; Set scroll-conservative globally
 (setq scroll-conservatively 101)
 
-;; We won't set these, but they're good to know about
-;;
-;; (setq-default indent-tabs-mode nil)
-;; (setq-default tab-width 4)
+(setq-default indent-tabs-mode nil)
+(setq-default tab-width 2)
 
 (dolist (mode '(org-mode-hook
                 term-mode-hook
@@ -103,4 +101,3 @@
       '(("\\`/.*/\\([^/]+\\)\\'" "~/.emacs.d/lock-files/\\1" t)))
 
 (setq undo-limit (* 1024 1024 10))
-(setopt enable-recursive-minibuffers t)
