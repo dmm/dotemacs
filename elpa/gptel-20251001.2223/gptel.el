@@ -3,8 +3,8 @@
 ;; Copyright (C) 2023-2025  Karthik Chikmagalur
 
 ;; Author: Karthik Chikmagalur <karthik.chikmagalur@gmail.com>
-;; Package-Version: 20250927.2024
-;; Package-Revision: 734541d23de6
+;; Package-Version: 20251001.2223
+;; Package-Revision: c85e240a0316
 ;; Package-Requires: ((emacs "27.1") (transient "0.7.4") (compat "30.1.0.0"))
 ;; Keywords: convenience, tools
 ;; URL: https://github.com/karthink/gptel
@@ -530,7 +530,7 @@ file."
 
 Intended to be added to `after-change-functions' in gptel chat buffers,
 which see for BEG, END and PRE."
-  (and (= pre 0) (< end (point-max))
+  (and (/= beg end) (< end (point-max))
        (and-let* ((val (get-text-property end 'gptel)))
          (add-text-properties
           beg end `(gptel ,val front-sticky (gptel))))))
