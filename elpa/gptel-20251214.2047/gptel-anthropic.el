@@ -206,18 +206,27 @@ Mutate state INFO with response metadata."
 (cl-defmethod gptel--request-data ((backend gptel-anthropic) prompts)
   "JSON encode PROMPTS for sending to ChatGPT."
   (let ((prompts-plist
-         `(:model ,(gptel--model-name gptel-model)
-           :stream ,(or gptel-stream :json-false)
-           :max_tokens ,(or gptel-max-tokens 4096)
-           :messages [,@prompts])))
+         `( :model ,(gptel--model-name gptel-model)
+            :stream ,(or gptel-stream :json-false)
+            :max_tokens ,(or gptel-max-tokens 4096)
+            :messages [,@prompts]))
+        (cachep (and (or (eq gptel-cache t) (memq 'system gptel-cache))
+                     (gptel--model-capable-p 'cache))))
     (when gptel--system-message
-      (if (and (or (eq gptel-cache t) (memq 'system gptel-cache))
-               (gptel--model-capable-p 'cache))
-          ;; gptel--system-message is guaranteed to be a string
-          (plist-put prompts-plist :system
-                     `[(:type "text" :text ,gptel--system-message
-                        :cache_control (:type "ephemeral" :ttl "1h"))])
-        (plist-put prompts-plist :system gptel--system-message)))
+      ;; gptel--system-message is a string or a list of strings
+      (plist-put
+       prompts-plist :system
+       (cond
+        ((consp gptel--system-message)  ;multi-part system message
+         (vconcat (mapcar (lambda (part)
+                            (nconc (list :type "text" :text part)
+                                   (and cachep
+                                        (list :cache_control
+                                              '(:type "ephemeral")))))
+                          gptel--system-message)))
+        (cachep `[(:type "text" :text ,gptel--system-message
+                         :cache_control (:type "ephemeral"))])
+        (t gptel--system-message))))
     (when gptel-temperature
       (plist-put prompts-plist :temperature gptel-temperature))
     (when gptel-use-tools
@@ -229,7 +238,7 @@ Mutate state INFO with response metadata."
           (when (and (or (eq gptel-cache t) (memq 'tool gptel-cache))
                      (gptel--model-capable-p 'cache))
             (nconc (aref tools-array (1- (length tools-array)))
-                   '(:cache_control (:type "ephemeral" :ttl "1h")))))))
+                   '(:cache_control (:type "ephemeral")))))))
     (when gptel--schema
       (plist-put prompts-plist :tools
                  (vconcat
@@ -362,7 +371,7 @@ TOOL-USE is a list of plists containing tool names, arguments and call results."
     (when (and (or (eq gptel-cache t) (memq 'message gptel-cache))
                (gptel--model-capable-p 'cache))
       (nconc (aref (plist-get (car (last full-prompt)) :content) 0)
-             '(:cache_control (:type "ephemeral" :ttl "1h"))))
+             '(:cache_control (:type "ephemeral"))))
     full-prompt))
 
 (cl-defmethod gptel--parse-buffer ((backend gptel-anthropic) &optional max-entries)
@@ -392,6 +401,7 @@ TOOL-USE is a list of plists containing tool names, arguments and call results."
                             ;; (id (gptel--anthropic-format-tool-id id))
                             (name (plist-get tool-call :name))
                             (arguments (plist-get tool-call :args)))
+                       (unless id (setq id (gptel--anthropic-format-tool-id nil)))
                        (plist-put tool-call :id id)
                        (plist-put tool-call :result
                                   (string-trim (buffer-substring-no-properties
@@ -430,9 +440,9 @@ TOOL-USE is a list of plists containing tool names, arguments and call results."
               (plist-put
                (car (last prompts)) :content
                `[(:type "text" :text ,last-message
-                  :cache_control (:type "ephemeral" :ttl "1h"))])
+                  :cache_control (:type "ephemeral"))])
             (nconc (aref (plist-get (car (last prompts)) :content) 0)
-                   '(:cache_control (:type "ephemeral" :ttl "1h"))))))
+                   '(:cache_control (:type "ephemeral"))))))
     prompts))
 
 (defun gptel--anthropic-parse-multipart (parts)
@@ -504,13 +514,21 @@ Media files, if present, are placed in `gptel-context'."
 ;;         (plist-get (car (last prompts)) :content)))
 
 (defconst gptel--anthropic-models
-  '((claude-3-7-sonnet-20250219
-     :description "Hybrid model capable of standard thinking and extended thinking modes"
+  '((claude-sonnet-4-5-20250929
+     :description "High-performance model with exceptional reasoning and efficiency"
      :capabilities (media tool-use cache)
      :mime-types ("image/jpeg" "image/png" "image/gif" "image/webp" "application/pdf")
      :context-window 200
      :input-cost 3
      :output-cost 15
+     :cutoff-date "2025-07")
+    (claude-haiku-4-5-20251001
+     :description "Near-frontier intelligence at blazing speeds with extended thinking"
+     :capabilities (media tool-use cache)
+     :mime-types ("image/jpeg" "image/png" "image/gif" "image/webp" "application/pdf")
+     :context-window 200
+     :input-cost 1
+     :output-cost 5
      :cutoff-date "2025-02")
     (claude-sonnet-4-20250514
      :description "High-performance model with exceptional reasoning and efficiency"
@@ -520,14 +538,14 @@ Media files, if present, are placed in `gptel-context'."
      :input-cost 3
      :output-cost 15
      :cutoff-date "2025-03")
-    (claude-sonnet-4-5-20250929
-     :description "High-performance model with exceptional reasoning and efficiency"
+    (claude-opus-4-5-20251101
+     :description "Most capable model for complex reasoning and advanced coding"
      :capabilities (media tool-use cache)
      :mime-types ("image/jpeg" "image/png" "image/gif" "image/webp" "application/pdf")
      :context-window 200
-     :input-cost 3
-     :output-cost 15
-     :cutoff-date "2025-07")
+     :input-cost 5
+     :output-cost 25
+     :cutoff-date "2025-03")
     (claude-opus-4-1-20250805
      :description "Most capable model for complex reasoning and advanced coding"
      :capabilities (media tool-use cache)
@@ -544,6 +562,14 @@ Media files, if present, are placed in `gptel-context'."
      :input-cost 15
      :output-cost 75
      :cutoff-date "2025-03")
+    (claude-3-7-sonnet-20250219
+     :description "Hybrid model capable of standard thinking and extended thinking modes"
+     :capabilities (media tool-use cache)
+     :mime-types ("image/jpeg" "image/png" "image/gif" "image/webp" "application/pdf")
+     :context-window 200
+     :input-cost 3
+     :output-cost 15
+     :cutoff-date "2025-02")
     (claude-3-5-sonnet-20241022
      :description "Highest level of intelligence and capability"
      :capabilities (media tool-use cache)

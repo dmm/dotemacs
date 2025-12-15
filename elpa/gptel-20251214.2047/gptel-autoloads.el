@@ -28,8 +28,6 @@ evaluate the variable `gptel-mode'.
 The mode's hook is called both when the mode is enabled and when it is
 disabled.
 
-\\{gptel-mode-map}
-
 (fn &optional ARG)" t)
 (autoload 'gptel-send "gptel" "\
 Submit this prompt to the current LLM backend.
@@ -151,9 +149,13 @@ DATA-BUF is the buffer where the request prompt is constructed.
 
 (fn CALLBACK DATA-BUF)")
 (autoload 'gptel-context--collect "gptel-context" "\
-Get the list of all active context sources.
+Get the list of all active context sources from CONTEXT-ALIST.
 
-Ignore overlays, buffers and files that are not live or readable.")
+CONTEXT-ALIST defaults to the current value of `gptel-context'.
+
+Ignore overlays, buffers and files that are not live or readable.
+
+(fn &optional CONTEXT-ALIST)")
 (register-definition-prefixes "gptel-context" '("gptel-context-"))
 
 

@@ -32,134 +32,123 @@
      "Advanced model for complex tasks; cheaper & faster than GPT-Turbo"
      :capabilities (media tool-use json url)
      :mime-types ("image/jpeg" "image/png" "image/gif" "image/webp")
-     :context-window 128 :input-cost 2.5 :output-cost 10 :cutoff-date "2023-10")
-    (gpt-4o-copilot
-     :description "Cheap model for fast tasks; cheaper & more capable than GPT-3.5 Turbo"
-     :context-window 128
-     :input-cost 0.15
-     :output-cost 0.60
-     :cutoff-date "2023-10")
+     :context-window 128 :input-cost 0 :output-cost 0 :cutoff-date "2023-10")
     (gpt-4.1
      :description "Flagship model for complex tasks"
      :capabilities (media tool-use json url)
      :mime-types ("image/jpeg" "image/png" "image/gif" "image/webp")
      :context-window 128
-     :input-cost 2.0
-     :output-cost 8.0
+     :input-cost 0
+     :output-cost 0
+     :cutoff-date "2024-05")
+    (gpt-41-copilot
+     :description "Flagship model for complex tasks"
+     :capabilities (media tool-use json url)
+     :mime-types ("image/jpeg" "image/png" "image/gif" "image/webp")
+     :context-window 200
+     :input-cost 0
+     :output-cost 0
      :cutoff-date "2024-05")
     (gpt-5
      :description "Flagship model for coding, reasoning, and agentic tasks across domains"
      :capabilities (media tool-use json url)
      :mime-types ("image/jpeg" "image/png" "image/gif" "image/webp")
-     :context-window 128
-     :input-cost 1.25
-     :output-cost 10
+     :context-window 264
+     :input-cost 1
+     :output-cost 1
+     :cutoff-date "2024-09")
+    (gpt-5.1-codex-max
+     :description "Flagship model for coding, reasoning, and agentic tasks across domains"
+     :capabilities (media tool-use json url)
+     :mime-types ("image/jpeg" "image/png" "image/gif" "image/webp")
+     :context-window 400
+     :input-cost 1
+     :output-cost 1
      :cutoff-date "2024-09")
     (gpt-5-mini
      :description "Faster, more cost-efficient version of GPT-5"
      :capabilities (media tool-use json url)
      :mime-types ("image/jpeg" "image/png" "image/gif" "image/webp")
-     :context-window 400
-     :input-cost 0.25
-     :output-cost 2.0
+     :context-window 264
+     :input-cost 0
+     :output-cost 0
      :cutoff-date "2024-09")
-    (o1
-     :description "Reasoning model designed to solve hard problems across domains"
-     :capabilities (reasoning tool-use)
-     :context-window 200
-     :input-cost 15
-     :output-cost 60
-     :cutoff-date "2023-10"
-     :request-params (:stream :json-false))
-    (o3
-     :description "Well-rounded and powerful model across domains"
-     :capabilities (reasoning media tool-use json url)
+    (gpt-5.1
+     :description "The best model for coding and agentic tasks"
+     :capabilities (media tool-use json url)
      :mime-types ("image/jpeg" "image/png" "image/gif" "image/webp")
-     :context-window 200
-     :input-cost 10
-     :output-cost 40
-     :cutoff-date "2024-05")
-    (o3-mini
-     :description "High intelligence at the same cost and latency targets of o1-mini"
-     :capabilities (reasoning tool-use)
-     :context-window 200
-     :input-cost 3
-     :output-cost 12
-     :cutoff-date "2023-10")
-    (o4-mini
-     :description "Fast, effective reasoning with efficient performance in coding and visual tasks"
-     :capabilities (reasoning media tool-use json url)
+     :context-window 264
+     :input-cost 1
+     :output-cost 1
+     :cutoff-date "2024-09")
+    (gpt-5.2
+     :description "The best model for coding and agentic tasks"
+     :capabilities (media tool-use json url)
      :mime-types ("image/jpeg" "image/png" "image/gif" "image/webp")
-     :context-window 200
-     :input-cost 1.10
-     :output-cost 4.40
-     :cutoff-date "2024-05")
-    (claude-3.5-sonnet
-     :description "Highest level of intelligence and capability"
-     :capabilities (media tool-use cache)
-     :mime-types ("image/jpeg" "image/png" "image/gif" "image/webp" "application/pdf")
-     :context-window 200
-     :input-cost 3
-     :output-cost 15
-     :cutoff-date "2024-04")
-    (claude-3.7-sonnet
-     :description "Hybrid model capable of standard thinking and extended thinking modes"
-     :capabilities (media tool-use cache)
-     :mime-types ("image/jpeg" "image/png" "image/gif" "image/webp" "application/pdf")
-     :context-window 200
-     :input-cost 3
-     :output-cost 15
-     :cutoff-date "2025-02")
-    (claude-3.7-sonnet-thought
-     :description "Claude 3.7 Sonnet Thinking"
-     :capabilities (media cache)
-     :mime-types ("image/jpeg" "image/png" "image/gif" "image/webp" "application/pdf")
-     :context-window 200
-     :input-cost 3
-     :output-cost 15
-     :cutoff-date "2025-02")
+     :context-window 264
+     :input-cost 1
+     :output-cost 1
+     :cutoff-date "2025-08")
     (claude-sonnet-4
      :description "High-performance model with exceptional reasoning and efficiency"
      :capabilities (media tool-use cache)
      :mime-types ("image/jpeg" "image/png" "image/gif" "image/webp" "application/pdf")
-     :context-window 200
-     :input-cost 3
-     :output-cost 15
+     :context-window 216
+     :input-cost 1
+     :output-cost 1
      :cutoff-date "2025-03")
-    (claude-opus-4
-     :description "Most capable model for complex reasoning and advanced coding"
+    (claude-sonnet-4.5
+     :description "High-performance model with exceptional reasoning and efficiency"
      :capabilities (media tool-use cache)
      :mime-types ("image/jpeg" "image/png" "image/gif" "image/webp" "application/pdf")
-     :context-window 200
-     :input-cost 15
-     :output-cost 75
-     :cutoff-date "2025-03")
+     :context-window 144
+     :input-cost 1
+     :output-cost 1
+     :cutoff-date "2025-07")
+    (claude-haiku-4.5
+     :description "Near-frontier intelligence at blazing speeds with extended thinking"
+     :capabilities (media tool-use cache)
+     :mime-types ("image/jpeg" "image/png" "image/gif" "image/webp" "application/pdf")
+     :context-window 144
+     :input-cost 0.33
+     :output-cost 0.33
+     :cutoff-date "2025-02")
     (claude-opus-41
      :description "Most capable model for complex reasoning and advanced coding"
      :capabilities (media tool-use cache)
      :mime-types ("image/jpeg" "image/png" "image/gif" "image/webp" "application/pdf")
-     :context-window 200
-     :input-cost 15
-     :output-cost 75
+     :context-window 80
+     :input-cost 10
+     :output-cost 10
      :cutoff-date "2025-03")
-    (gemini-2.0-flash-001
-     :description "Next gen, high speed, multimodal for a diverse variety of tasks"
-     :capabilities (json media)
-     :mime-types ("image/png" "image/jpeg" "image/webp" "image/heic" "image/heif"
-                  "application/pdf" "text/plain" "text/csv" "text/html")
-     :context-window 1000
-     :input-cost 0.10
-     :output-cost 0.40
-     :cutoff-date "2024-08")
+    (claude-opus-4.5
+     :description "Most capable model for complex reasoning and advanced coding"
+     :capabilities (media tool-use cache)
+     :mime-types ("image/jpeg" "image/png" "image/gif" "image/webp" "application/pdf")
+     :context-window 144
+     :input-cost 3
+     :output-cost 3
+     :cutoff-date "2025-05")
     (gemini-2.5-pro
      :description "Next gen, high speed, multimodal for a diverse variety of tasks"
      :capabilities (tool-use json media)
      :mime-types ("image/png" "image/jpeg" "image/webp" "image/heic" "image/heif"
                   "application/pdf" "text/plain" "text/csv" "text/html")
-     :context-window 1000
-     :input-cost 0.10
-     :output-cost 0.40
+     :context-window 128
+     :input-cost 1
+     :output-cost 1
      :cutoff-date "2024-08")
+    (gemini-3-pro-preview
+     :description "Most intelligent Gemini model with SOTA reasoning and multimodal understanding"
+     :capabilities (tool-use json media audio video)
+     :mime-types ("image/png" "image/jpeg" "image/webp" "image/heic" "image/heif"
+                  "application/pdf" "text/plain" "text/csv" "text/html"
+                  "audio/mpeg" "audio/wav" "audio/ogg" "audio/flac" "audio/aac" "audio/mp3"
+                  "video/mp4" "video/mpeg" "video/avi" "video/quicktime" "video/webm")
+     :context-window 128
+     :input-cost 1
+     :output-cost 1
+     :cutoff-date "2025-01")
     (grok-code-fast-1
      :description "Fast reasoning model for agentic coding"
      :capabilities '(tool-use json reasoning)
@@ -233,40 +222,72 @@
 (defun gptel-gh-login ()
   "Login to GitHub Copilot API.
 
-This will prompt you to authorize in a browser and store the token."
+This will prompt you to authorize in a browser and store the token.
+
+In SSH sessions, the URL and code will be displayed for manual entry
+instead of attempting to open a browser automatically."
   (interactive)
-  (pcase-let (((map :device_code :user_code :verification_uri)
-               (gptel--url-retrieve
-                   "https://github.com/login/device/code"
-                 :method 'post
-                 :headers gptel--gh-auth-common-headers
-                 :data `( :client_id ,gptel--gh-client-id
-                          :scope "read:user"))))
-    (gui-set-selection 'CLIPBOARD user_code)
-    (read-from-minibuffer
-     (format "Your one-time code %s is copied. \
+  ;; Determine which GitHub backend to use
+  (let ((gh-backend
+         (cond
+          ;; If current backend is GitHub, use it
+          ((and (boundp 'gptel-backend)
+                gptel-backend
+                (gptel--gh-p gptel-backend))
+           gptel-backend)
+          ;; Otherwise, find any GitHub backend
+          ((cl-find-if (lambda (b) (gptel--gh-p b))
+                       (mapcar #'cdr gptel--known-backends)))
+          ;; No GitHub backend found
+          (t (user-error "No GitHub Copilot backend found.  \
+Please set one up with `gptel-make-gh-copilot' first"))))
+        ;; Detect SSH sessions
+        (in-ssh-session (or (getenv "SSH_CLIENT")
+                            (getenv "SSH_CONNECTION")
+                            (getenv "SSH_TTY"))))
+    (pcase-let (((map :device_code :user_code :verification_uri)
+                 (gptel--url-retrieve
+                     "https://github.com/login/device/code"
+                   :method 'post
+                   :headers gptel--gh-auth-common-headers
+                   :data `( :client_id ,gptel--gh-client-id
+                            :scope "read:user"))))
+      (gui-set-selection 'CLIPBOARD user_code)
+      (if in-ssh-session
+          ;; SSH session: display URL and code, don't auto-open browser
+          (progn
+            (message "GitHub Device Code: %s (copied to clipboard)" user_code)
+            (read-from-minibuffer
+             (format "Code %s is copied. Visit https://github.com/login/device \
+in your local browser, enter the code, and authorize.  Press ENTER after authorizing. "
+                     user_code)))
+        ;; Local session: auto-open browser
+        (read-from-minibuffer
+         (format "Your one-time code %s is copied. \
 Press ENTER to open GitHub in your browser. \
 If your browser does not open automatically, browse to %s."
-             user_code verification_uri))
-    (browse-url verification_uri)
-    (read-from-minibuffer "Press ENTER after authorizing.")
-    (thread-last
-      (plist-get
-       (gptel--url-retrieve
-           "https://github.com/login/oauth/access_token"
-         :method 'post
-         :headers gptel--gh-auth-common-headers
-         :data `( :client_id ,gptel--gh-client-id
-                  :device_code ,device_code
-                  :grant_type "urn:ietf:params:oauth:grant-type:device_code"))
-       :access_token)
-      (gptel--gh-save gptel-gh-github-token-file)
-      (setf (gptel--gh-github-token gptel-backend))))
-  (if (and (gptel--gh-github-token gptel-backend)
-           (not (string-empty-p
-                 (gptel--gh-github-token gptel-backend))))
-      (message "Successfully logged in to GitHub Copilot")
-    (user-error "Error: You might not have access to GitHub Copilot Chat!")))
+                 user_code verification_uri))
+        (browse-url verification_uri)
+        (read-from-minibuffer "Press ENTER after authorizing. "))
+      ;; Use gh-backend for token storage
+      (thread-last
+        (plist-get
+         (gptel--url-retrieve
+             "https://github.com/login/oauth/access_token"
+           :method 'post
+           :headers gptel--gh-auth-common-headers
+           :data `( :client_id ,gptel--gh-client-id
+                    :device_code ,device_code
+                    :grant_type "urn:ietf:params:oauth:grant-type:device_code"))
+         :access_token)
+        (gptel--gh-save gptel-gh-github-token-file)
+        (setf (gptel--gh-github-token gh-backend))))
+    ;; Check gh-backend for success
+    (if (and (gptel--gh-github-token gh-backend)
+             (not (string-empty-p
+                   (gptel--gh-github-token gh-backend))))
+        (message "Successfully logged in to GitHub Copilot.")
+      (user-error "Error: You might not have access to GitHub Copilot Chat!"))))
 
 (defun gptel--gh-renew-token ()
   "Renew session token."
