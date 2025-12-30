@@ -4,5 +4,5 @@
 (setq-default indent-tabs-mode nil)
 (setq-default tab-width 2)
 (setq-default js2-basic-offset 2)
-
+(setq-default java-ts-mode-indent-offset 2)
 ;;
