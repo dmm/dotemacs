@@ -77,7 +77,7 @@
      :description "The best model for coding and agentic tasks"
      :capabilities (media tool-use json url)
      :mime-types ("image/jpeg" "image/png" "image/gif" "image/webp")
-     :context-window 264
+     :context-window 400
      :input-cost 1
      :output-cost 1
      :cutoff-date "2024-09")
@@ -85,9 +85,9 @@
      :description "The best model for coding and agentic tasks"
      :capabilities (media tool-use json url)
      :mime-types ("image/jpeg" "image/png" "image/gif" "image/webp")
-     :context-window 264
-     :input-cost 1
-     :output-cost 1
+     :context-window 400
+     :input-cost 1.75
+     :output-cost 14
      :cutoff-date "2025-08")
     (claude-sonnet-4
      :description "High-performance model with exceptional reasoning and efficiency"
@@ -138,6 +138,17 @@
      :input-cost 1
      :output-cost 1
      :cutoff-date "2024-08")
+    (gemini-3-flash-preview
+     :description "Most intelligent Gemini model built for speed"
+     :capabilities (tool-use json media audio video)
+     :mime-types ("image/png" "image/jpeg" "image/webp" "image/heic" "image/heif"
+                  "application/pdf" "text/plain" "text/csv" "text/html"
+                  "audio/mpeg" "audio/wav" "audio/ogg" "audio/flac" "audio/aac" "audio/mp3"
+                  "video/mp4" "video/mpeg" "video/avi" "video/quicktime" "video/webm")
+     :context-window 128
+     :input-cost 0.33
+     :output-cost 0.33
+     :cutoff-date "2025-01")
     (gemini-3-pro-preview
      :description "Most intelligent Gemini model with SOTA reasoning and multimodal understanding"
      :capabilities (tool-use json media audio video)

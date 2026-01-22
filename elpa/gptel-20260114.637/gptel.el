@@ -3,8 +3,8 @@
 ;; Copyright (C) 2023-2025  Karthik Chikmagalur
 
 ;; Author: Karthik Chikmagalur <karthik.chikmagalur@gmail.com>
-;; Package-Version: 20251214.2047
-;; Package-Revision: 191e14b5c87b
+;; Package-Version: 20260114.637
+;; Package-Revision: 5cb7f076db62
 ;; Package-Requires: ((emacs "27.1") (transient "0.7.4") (compat "30.1.0.0"))
 ;; Keywords: convenience, tools
 ;; URL: https://github.com/karthink/gptel
@@ -1034,12 +1034,14 @@ buffers."
    (gptel-highlight-mode
     (when (memq 'margin gptel-highlight-methods)
       (setq left-margin-width (1+ left-margin-width))
-      (set-window-buffer (selected-window) (current-buffer)))
+      (if-let* ((win (get-buffer-window (current-buffer))))
+          (set-window-buffer win (current-buffer))))
     (jit-lock-register #'gptel-highlight--update)
     (gptel-highlight--update (point-min) (point-max)))
    (t (when (memq 'margin gptel-highlight-methods)
         (setq left-margin-width (max (1- left-margin-width) 0))
-        (set-window-buffer (selected-window) (current-buffer)))
+        (if-let* ((win (get-buffer-window (current-buffer))))
+            (set-window-buffer win (current-buffer))))
       (jit-lock-unregister #'gptel-highlight--update)
       (without-restriction
         (remove-overlays nil nil 'gptel-highlight t)))))
@@ -2135,7 +2137,7 @@ example) apply the preset buffer-locally."
   (unless setter (setq setter #'set))
   (when-let* ((func (plist-get preset :pre))) (funcall func))
   (when-let* ((parents (plist-get preset :parents)))
-    (mapc #'gptel--apply-preset (ensure-list parents)))
+    (mapc (lambda (parent) (gptel--apply-preset parent setter)) (ensure-list parents)))
   (map-do
    (lambda (key val)
      (pcase key
@@ -2210,8 +2212,7 @@ PRESET is the name of a preset, or a spec (plist) of the form
         ((or :description :pre :post))
         (:parents
          (mapc (lambda (parent-preset)
-                 (nconc syms (gptel--preset-syms
-                              (gptel-get-preset parent-preset))))
+                 (nconc syms (gptel--preset-syms parent-preset)))
                (ensure-list val)))
         (:system (push 'gptel--system-message syms))
         (_ (if-let* ((var (or (intern-soft
@@ -2254,7 +2255,7 @@ Before applying the preset, \"@foo\" is removed from the prompt and
 point is placed at its position."
   (when gptel--known-presets
     (text-property-search-backward 'gptel nil t)
-    (while (re-search-forward "@\\([^[:blank:]]+\\)\\_>" nil t)
+    (while (re-search-forward "@\\([^[:space:]]+\\)\\_>" nil t)
       ;; The following convoluted check is because re-search is much faster if
       ;; the search pattern begins with a non-whitespace char.
       (when (or (= (match-beginning 0) (point-min))
@@ -2279,7 +2280,7 @@ point is placed at its position."
   "Font-lock function for preset indicators in chat buffers.
 
 Return preset fontification info for text up to END."
-  (and (re-search-forward "@\\([^[:blank:]]+\\)\\_>" end t)
+  (and (re-search-forward "@\\([^[:space:]]+\\)\\_>" end t)
        (or (= (match-beginning 0) (point-min))
            (memq (char-syntax (char-before (match-beginning 0))) '(32 62)))
        (not (plist-get (text-properties-at (match-beginning 1)) 'gptel))))
