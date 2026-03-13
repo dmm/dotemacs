@@ -37,10 +37,10 @@ and then cached for subsequent calls."
          ("C-c C-x t" . gptel-set-topic))
   :config
   (setq gptel-default-mode 'org-mode)
-  (setq gptel-model 'claude-opus-4-5-20251101)
+  (setq gptel-model 'claude-opus-4-6)
   (setq gptel-backend (gptel-make-anthropic "Claude"
                         :stream t :key (decrypt-gpg-api-key "claude")))
-;; :key can be a function that returns the API key.
+  (setq gptel-api-key (decrypt-gpg-api-key "openai"))
   (gptel-make-gemini "Gemini" :key (decrypt-gpg-api-key "gemini") :stream t)
   (gptel-make-openai "Cerebras"
     :host "api.cerebras.ai"

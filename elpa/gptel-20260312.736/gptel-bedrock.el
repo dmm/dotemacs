@@ -27,8 +27,8 @@
 ;;; Code:
 (require 'cl-lib)
 (require 'map)
-(require 'gptel)
 (require 'mail-parse)
+(eval-and-compile (require 'gptel-request))
 
 (declare-function gptel-context--collect-media "gptel-context")
 (declare-function gptel-context--wrap "gptel-context")
@@ -352,16 +352,19 @@ received."
                   (start (car block-events))
                   (deltas (cdr block-events)))
              (when-let ((tool-use (map-nested-elt start '(:payload :start :toolUse))))
-               (let ((id (plist-get tool-use :toolUseId))
-                     (name (plist-get tool-use :name))
-                     (input (gptel--json-read-string
-                             (mapconcat
-                              (lambda (delta) (map-nested-elt delta '(:payload :delta :toolUse :input)))
-                              deltas))))
+               (let* ((id (plist-get tool-use :toolUseId))
+                      (name (plist-get tool-use :name))
+                      (input-str
+                       (mapconcat (lambda (delta) (map-nested-elt
+                                              delta '(:payload :delta :toolUse :input)))
+                                  deltas))
+                      (input (unless (string-blank-p input-str)
+                               (gptel--json-read-string input-str))))
                  (push
                   (list :toolUse (list :input input :name name :toolUseId id))
                   contents)))
-             (when-let ((texts (delq nil (mapcar (lambda (d) (map-nested-elt d '(:payload :delta :text))) deltas))))
+             (when-let ((texts (delq nil (mapcar (lambda (d) (map-nested-elt d '(:payload :delta :text)))
+                                                 deltas))))
                (push (list :text (apply #'concat texts)) contents))
              ;; Currently we discard any reasoning content but this would be the spot to handle it
              ))
@@ -458,6 +461,44 @@ The output is a vector of entries in Bedrock API format."
 
 ;; gptel--inject-prompt not needed since the default implementation works here
 
+(cl-defmethod gptel--inject-tool-call ((_backend gptel-bedrock) data tool-call new-call)
+  "Replace TOOL-CALL in query DATA with NEW-CALL.
+
+BACKEND is the `gptel-backend'.  See the generic function documentation
+for details.  This implementation handles the AWS Bedrock API."
+  ;; FIXME: We currently assume that the tool call being modified is in the last
+  ;; position in the messages array.
+  (if-let* ((messages (plist-get data :messages))
+            (entry (aref messages (1- (length messages))))
+            (contents (plist-get entry :content))
+            (id (plist-get tool-call :id))
+            (indexed-call
+             (cl-loop for chunk across contents
+                      for i upfrom 0
+                      for tool-use = (plist-get chunk :toolUse)
+                      if (and tool-use (equal (plist-get tool-use :toolUseId) id))
+                      return (list i chunk tool-use)
+                      finally return nil))
+            (index (nth 0 indexed-call))
+            (chunk (nth 1 indexed-call))
+            (call (nth 2 indexed-call)))
+      (if (null new-call)
+          (if (= (length contents) 1)
+              (plist-put data :messages (substring messages nil -1))
+            (plist-put entry :content
+                       (vconcat (substring contents 0 index)
+                                (substring contents (1+ index)))))
+        (when-let* ((args (plist-get new-call :args)))
+          (setq call (plist-put call :input args)))
+        (when-let* ((name (plist-get new-call :name)))
+          (setq call (plist-put call :name name)))
+        (plist-put chunk :toolUse call))
+    (display-warning
+     '(gptel tool-call)
+     (format "Could not inject updated tool-call arguments for tool call %s, %s"
+             (plist-get tool-call :name)
+             (truncate-string-to-width (prin1-to-string new-call) 50 nil nil t)))))
+
 (cl-defmethod gptel--parse-tool-results ((_backend gptel-bedrock) tool-use-requests)
   "Return a backend-appropriate prompt containing tool call results.
 
@@ -478,6 +519,12 @@ conversation."
 (defvar gptel-bedrock--aws-profile-cache nil
   "Cache for AWS profile credentials in the form of (PROFILE . CREDS).")
 
+(defvar gptel-bedrock-aws-cli-command (executable-find "aws")
+  "Path to the AWS CLI command.
+
+Can be customized to use a specific AWS CLI installation,
+e.g. \"/usr/local/bin/aws\".")
+
 (defun gptel-bedrock--fetch-aws-profile-credentials (profile &optional clear-cache)
   "Fetch & cache AWS credentials for PROFILE using aws-cli.
 
@@ -491,7 +538,8 @@ Non-nil CLEAR-CACHE will refresh credentials."
              (or (and (not clear-cache) (cdr cell))
                  (setf (cdr cell)
                        (with-temp-buffer
-		           (unless (zerop (apply #'call-process "aws" nil t nil "configure" "export-credentials"
+		           (unless (zerop (apply #'call-process gptel-bedrock-aws-cli-command
+                                                 nil t nil "configure" "export-credentials"
                                                  (unless (eql profile :static) (list (format "--profile=%s" profile)))))
 		             (user-error "Failed to get AWS credentials from profile"))
 		         (json-parse-string (buffer-string)))))))
@@ -533,7 +581,9 @@ Convenient to use with `cl-multiple-value-bind'"
 
 (defvar gptel-bedrock--model-ids
   ;; https://docs.aws.amazon.com/bedrock/latest/userguide/models-supported.html
-  '((claude-sonnet-4-5-20250929  . "anthropic.claude-sonnet-4-5-20250929-v1:0")
+  '((claude-sonnet-4-6           . "anthropic.claude-sonnet-4-6")
+    (claude-opus-4-6             . "anthropic.claude-opus-4-6-v1")
+    (claude-sonnet-4-5-20250929  . "anthropic.claude-sonnet-4-5-20250929-v1:0")
     (claude-haiku-4-5-20251001   . "anthropic.claude-haiku-4-5-20251001-v1:0")
 	(claude-opus-4-5-20251101    . "anthropic.claude-opus-4-5-20251101-v1:0")
     (claude-opus-4-1-20250805    . "anthropic.claude-opus-4-1-20250805-v1:0")
