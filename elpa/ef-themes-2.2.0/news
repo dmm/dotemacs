@@ -1,0 +1,115 @@
+                     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                      CHANGE LOG OF THE EF THEMES
+                     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+This document contains the release notes for each tagged commit on the
+project's main git repository:
+<https://github.com/protesilaos/ef-themes>.
+
+The newest release is at the top. For further details, please consult
+the manual: <https://protesilaos.com/emacs/ef-themes>.
+
+Table of Contents
+─────────────────
+
+Version 2.2.0 on 2026-06-21
+Version 2.1.0 on 2026-01-27
+Version 2.0.0 on 2025-11-09
+
+
+Version 2.2.0 on 2026-06-21
+═══════════════════════════
+
+  This version contains two new themes and several stylistic refinements
+  to existing items in the collection.
+
+
+Enjoy `ef-arcadia' and `ef-atlantis' themes
+───────────────────────────────────────────
+
+  `ef-arcadia' is a light theme with a green, humid feel. `ef-atlantis'
+  is a dark theme with aquatic colours.
+
+
+Improved style for `company' and `corfu' popups
+───────────────────────────────────────────────
+
+  I have revised the colour that each theme applies to the popup
+  background. It should now be more consistent with all other elements
+  on display.
+
+  Thanks to aikrahguzar for suggesting a review in issue 70:
+  <https://github.com/protesilaos/ef-themes/issues/70>.
+
+
+The current line highlight for completions is easier to spot
+────────────────────────────────────────────────────────────
+
+  This is the background of the selected candidate in the minibuffer
+  while using the `vertico' package (among other similar interfaces).
+  The colours I am now using are more consistent with their context and
+  also work better as part of a popup completion interface, as noted
+  above.
+
+
+Palette refinements for several themes
+──────────────────────────────────────
+
+  I have made subtle changes to a few colour values. These are fine
+  details. The overarching goal is to be consistent throughout.
+
+
+Version 2.1.0 on 2026-01-27
+═══════════════════════════
+
+  This version introduces two carefully designed, legible and colourful
+  themes: `ef-orange' (light) and `ef-fig' (dark). Both draw inspiration
+  from the fruits they are name after.
+
+  The convenience commands `ef-themes-select-dark' and
+  `ef-themes-select-light' use the minibuffer to select+load an Ef theme
+  that is either dark or light, respectively. The more general command
+  is `ef-themes-select'.
+
+  All screen shots of the themes are updated to reflect their current
+  status: <https://protesilaos.com/emacs/ef-themes-pictures>.
+
+  Remember that since version `2.0.0', the `ef-themes' are built on top
+  of my `modus-themes'. This means that most of the changes happen to
+  Modus and are inherited by Ef.
+
+
+Version 2.0.0 on 2025-11-09
+═══════════════════════════
+
+  The Ef themes are now derived from my Modus themes. This means that
+  they inherit the wide face coverage and extensive customisability of
+  Modus, while retaining their stylistic flair.
+
+  The Ef themes no longer provide any user options of their own. Each of
+  the options we had before is now an alias for the Modus equivalent. As
+  part of this transition, the Ef themes actually gain new customisation
+  options, which are documented herein.
+
+  Furthermore, the Ef themes do not define any commands to load a theme.
+  What we had before is once again an alias for the equivalent Modus
+  command.
+
+  The manual of the Ef themes describes these compatibility
+  arrangements. Further documentation and code samples are available in
+  the manual of the Modus themes:
+
+  Info page
+        Evaluate `(info "(modus-themes) Top")'.
+  Weg page
+        Visit <https://protesilaos.com/emacs/modus-themes>.
+
+
+Old user options and hooks are mere aliases for Modus options
+─────────────────────────────────────────────────────────────
+
+  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   Old name  Is alias for CURRENT NAME 
+  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  …  …
