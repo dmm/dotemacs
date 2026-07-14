@@ -15,3 +15,5 @@ elpa/vterm*/build
 elpa/vterm*/*.so
 lock-files/
 workspace/
+elpa/ghostel*/*.so
+elpa/ghostel*/*.version
