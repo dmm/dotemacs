@@ -66,7 +66,9 @@ worksapce for commands like `cargo check`."
         (goto-char 0)
         (let ((output (let ((json-object-type 'alist))
                         (json-read))))
-          (cdr (assoc-string "root" output)))))))
+          (concat
+           (file-remote-p default-directory)
+           (cdr (assoc-string "root" output))))))))
 
 (defun rust-buffer-crate ()
   "Try to locate Cargo.toml using `locate-dominating-file'."
@@ -129,10 +131,29 @@ output buffer will be in comint mode, i.e. interactive."
   (interactive "P")
   (rust--compile comint "%s run --release" rust-cargo-bin))
 
-(defun rust-test ()
-  "Test using `cargo test`"
-  (interactive)
-  (rust--compile nil "%s test %s" rust-cargo-bin rust-cargo-default-arguments))
+(defun rust-test (&optional arg is-test)
+  "Test using `cargo test`.
+
+If prefixed with `C-u`, pass additional arguments to the command
+(from a string read from the minibuffer).
+
+If optional arg IS-TEST is non-nil,
+the argument `-- --show-output' will be automatically
+added instead of being read from the minibuffer.
+
+Note that the IS-TEST arg is not meant for general use,
+and only exists for testing the `rust-mode' package. "
+  (interactive "P")
+  (let ((test-command
+         (if arg
+             (progn
+               (let ((custom-arg
+                      (if is-test
+                          "-- --show-output"
+                      (string-trim (read-string "Enter Arguments: ")))))
+                 (concat "%s test " custom-arg " %s")))
+           "%s test %s")))
+    (rust--compile nil test-command rust-cargo-bin rust-cargo-default-arguments)))
 
 (defun rust-run-clippy ()
   "Run `cargo clippy'."
@@ -140,7 +161,7 @@ output buffer will be in comint mode, i.e. interactive."
   (when (null rust-buffer-project)
     (rust-update-buffer-project))
   (let* ((args (append (list rust-cargo-bin "clippy"
-                             (concat "--manifest-path=" rust-buffer-project))
+                             (concat "--manifest-path=" (file-local-name rust-buffer-project)))
                        rust-cargo-clippy-default-arguments))
          ;; set `compile-command' temporarily so `compile' doesn't
          ;; clobber the existing value

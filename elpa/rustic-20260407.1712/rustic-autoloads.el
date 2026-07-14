@@ -107,6 +107,12 @@ Run `cargo build' for the current project, allow configuring
 `rustic-cargo-build-arguments' when prefix argument (C-u) is enabled.
 
 (fn &optional ARG)" t)
+(autoload 'rustic-cargo-custom-command "rustic-cargo" "\
+Run a custom `cargo' command for the current project.
+The command is stored on a per-project basis.
+When called with a prefix argument (C-u), prompt for a new command.
+
+(fn &optional ARG)" t)
 (autoload 'rustic-cargo-clean "rustic-cargo" "\
 Run `cargo clean' for the current project.
 
