@@ -79,7 +79,8 @@
  '(c-basic-offset 2)
  '(column-number-mode t)
  '(custom-safe-themes
-   '("5e39e95c703e17a743fb05a132d727aa1d69d9d2c9cde9353f5350e545c793d4"
+   '("b3ba955a30f22fe444831d7bc89f6466b23db8ce87530076d1f1c30505a4c23b"
+     "5e39e95c703e17a743fb05a132d727aa1d69d9d2c9cde9353f5350e545c793d4"
      "b9c002dc827fb75b825da3311935c9f505d48d7ee48f470f0aa7ac5d2a595ab2"
      "b41d0a9413fb0034cea34eb8c9f89f6e243bdd76bccecf8292eb1fefa42eaf0a"
      "00d7122017db83578ef6fba39c131efdcb59910f0fac0defbe726da8072a0729"
@@ -160,12 +161,12 @@
         buttercup cargo-mode claude-code command-log-mode company-lsp
         consult dash dracula-theme eat ef-themes eglot embark
         embark-consult exec-path-from-shell flycheck-inline
-        flycheck-rust gptel hc-zenburn-theme indent-tools jinja2-mode
-        jtsx lsp-java lsp-javacomp lsp-ui magit magit-lfs marginalia
-        modus-themes org ox-hugo ox-rss phoenix-dark-pink-theme
-        poly-ansible polymode prettier quelpa quelpa-use-package rg
-        rust-mode smart-shift switch-window tide vagrant-tramp vterm
-        yaml-mode yasnippet zenburn-theme))
+        flycheck-rust ghostel gptel hc-zenburn-theme indent-tools
+        jinja2-mode jtsx lsp-java lsp-javacomp lsp-ui magit magit-lfs
+        marginalia modus-themes org ox-hugo ox-rss
+        phoenix-dark-pink-theme poly-ansible polymode prettier quelpa
+        quelpa-use-package rg rust-mode smart-shift switch-window tide
+        vagrant-tramp vterm yaml-mode yasnippet zenburn-theme))
  '(package-vc-selected-packages
    '((aidermacs :url "https://github.com/MatthewZMD/aidermacs.git")))
  '(remember-annotation-functions '(org-remember-annotation))
