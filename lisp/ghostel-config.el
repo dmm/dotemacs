@@ -40,11 +40,15 @@ Each element has the form (SESSION-NAME . BUFFER)."
 
   (current-buffer))
 
-(defun my-create-or-switch-ghostel (name)
-  "Switch to the Ghostel session NAME, creating it when necessary."
-  (if-let ((buffer (my-ghostel-session-buffer name)))
-      (switch-to-buffer buffer)
-    (switch-to-buffer (my-create-ghostel-session name))))
+(defun my-create-ghostel-session (name)
+  "Create and return a Ghostel session named NAME."
+  (let ((ghostel-buffer-name (format "*ghostel:%s*" name))
+        ;; Prevent OSC title or directory changes from changing the name.
+        (ghostel-buffer-name-function nil))
+    (let ((buffer (ghostel)))
+      (with-current-buffer buffer
+        (setq-local my-ghostel-session-name name))
+      buffer)))
 
 (defun create-or-cycle-ghostel ()
   "Create a named Ghostel session or switch to an existing one."
