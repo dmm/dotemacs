@@ -37,7 +37,9 @@
 ;;   header      `# X' .. `###### X'      face `agent-shell-markdown-header-1' .. `-6'
 ;;   inline code `` `X` ``                face `agent-shell-markdown-inline-code'
 ;;   link        `[title](url)'           face `agent-shell-markdown-link', keymap opens URL
+;;                 (`(<url>)' also OK — angle brackets allow spaces in the url)
 ;;   image       `![alt](url)'            `display' property carries image
+;;                 (`(<url>)' also OK — angle brackets allow spaces in the url)
 ;;   image path  bare image path on a line  same as `![alt](url)' (no markup)
 ;;   divider     `---' / `***' / `___'    rendered as an underlined rule line
 ;;   fenced code ```LANG\nX\n```          body syntax-highlighted via LANG mode
@@ -86,7 +88,7 @@
   :group 'agent-shell-markdown)
 
 (defface agent-shell-markdown-inline-code
-  '((t :inherit font-lock-doc-markup-face))
+  '((t :inherit org-code))
   "Face for inline code rendered by `agent-shell-markdown-convert'."
   :group 'agent-shell-markdown)
 
@@ -641,20 +643,18 @@ with face `agent-shell-markdown-header-2' on \"My title\"."
                                                     'agent-shell-markdown-source)
                            (agent-shell-markdown-reconstruct
                             markup-start (match-end 2))))
-                 ;; The trailing `\\n' we re-insert below would otherwise
-                 ;; punch a hole in the caller's contiguous block range
-                 ;; (eg. `invisible'/`agent-shell-ui-section') and break
-                 ;; toggle/replace operations — same hazard called out in
-                 ;; `--style-source-blocks'.  Carry over the original
-                 ;; newline's caller props.
-                 (carried (agent-shell-markdown--carry-properties
-                           (1- markup-end))))
+                 ;; `text' keeps the title's own properties.  Carry the newline
+                 ;; separately so its trailing-whitespace invisibility does not
+                 ;; hide the title.
+                 (newline-properties
+                  (agent-shell-markdown--carry-properties (1- markup-end))))
             (delete-region markup-start markup-end)
             (goto-char markup-start)
-            (insert text "\n")
-            (when carried
-              (add-text-properties markup-start (point) carried))
-            (let ((end (+ markup-start (length text))))
+            (insert text)
+            (let ((end (point)))
+              (insert "\n")
+              (when newline-properties
+                (add-text-properties end (point) newline-properties))
               (add-face-text-property
                markup-start end
                (intern (format "agent-shell-markdown-header-%d"
@@ -702,6 +702,35 @@ face `agent-shell-markdown-inline-code' on \"code\"."
                 (put-text-property markup-start end
                                    'agent-shell-markdown-source source)))))))))
 
+(cl-defun agent-shell-markdown--link-markup-regexp (&key as-image?)
+  "Return a regexp matching link (or image, when AS-IMAGE?) markup.
+
+The destination accepts both the bare `(url)' form and the
+CommonMark angle-bracketed `(<url>)' form, the latter allowing the
+URL to contain spaces (e.g. `(</path/with spaces.png>)').
+
+Capture groups: group 1 is the label (link title or image alt);
+group 2 is the angle-bracketed destination body; group 3 is the
+bare destination body.  Exactly one of groups 2 and 3 participates
+in any match — read the URL from whichever did."
+  (rx-to-string
+   `(seq ,@(when as-image? '("!"))
+         "["
+         (group (,(if as-image? 'zero-or-more 'one-or-more) (not (any "]"))))
+         "]"
+         "("
+         (or (seq "<" (group (zero-or-more (not (any "<" ">" "\n")))) ">")
+             (group (one-or-more (not (any ")")))))
+         ")")
+   t))
+
+(defun agent-shell-markdown--link-markup-url ()
+  "Return the URL from the last `agent-shell-markdown--link-markup-regexp' match.
+Reads capture group 2 (angle-bracketed form) when it participated,
+otherwise group 3 (bare form)."
+  (let ((group (if (match-beginning 2) 2 3)))
+    (buffer-substring-no-properties (match-beginning group) (match-end group))))
+
 (cl-defun agent-shell-markdown--replace-links (&key avoid-ranges)
   "Replace `[title](url)' markup with title faced as link.
 
@@ -711,19 +740,17 @@ opens the URL on RET or mouse-1.  Matches preceded by `!' (the
 image syntax) are skipped, as are links inside any of
 AVOID-RANGES.
 
+A bare `(url)' destination and the CommonMark angle-bracketed
+`(<url>)' form are both accepted; the latter allows spaces in the
+URL (see `agent-shell-markdown--link-markup-regexp').
+
 For example, the buffer \"see [docs](https://example.com)\"
 becomes \"see docs\" with face `agent-shell-markdown-link' on \"docs\"
 and a keymap that opens the URL."
-  (let ((case-fold-search nil))
+  (let ((case-fold-search nil)
+        (regexp (agent-shell-markdown--link-markup-regexp)))
     (goto-char (point-min))
-    (while (re-search-forward
-            (rx "["
-                (group (one-or-more (not (any "]"))))
-                "]"
-                "("
-                (group (one-or-more (not (any ")"))))
-                ")")
-            nil t)
+    (while (re-search-forward regexp nil t)
       (let* ((markup-start (match-beginning 0))
              (markup-end (match-end 0))
              (is-image (eq (char-before markup-start) ?!))
@@ -735,8 +762,7 @@ and a keymap that opens the URL."
          (is-image nil)
          (t
           (let ((title (buffer-substring (match-beginning 1) (match-end 1)))
-                (url (buffer-substring-no-properties
-                      (match-beginning 2) (match-end 2)))
+                (url (agent-shell-markdown--link-markup-url))
                 (source (unless (get-text-property markup-start
                                                    'agent-shell-markdown-source)
                           (agent-shell-markdown-reconstruct
@@ -778,19 +804,16 @@ faced as `agent-shell-markdown-link' with a keymap that opens the
 URL on RET or mouse-1.  Any other unresolvable markup is left
 untouched.  Images inside any of AVOID-RANGES are left alone.
 
+A bare `(url)' destination and the CommonMark angle-bracketed
+`(<url>)' form are both accepted; the latter allows spaces in the
+URL (see `agent-shell-markdown--link-markup-regexp').
+
 For example, the buffer \"see ![logo](logo.png)\" becomes
 \"see logo\" with the image shown in place of \"logo\"."
-  (let ((case-fold-search nil))
+  (let ((case-fold-search nil)
+        (regexp (agent-shell-markdown--link-markup-regexp :as-image? t)))
     (goto-char (point-min))
-    (while (re-search-forward
-            (rx "!"
-                "["
-                (group (zero-or-more (not (any "]"))))
-                "]"
-                "("
-                (group (one-or-more (not (any ")"))))
-                ")")
-            nil t)
+    (while (re-search-forward regexp nil t)
       (let* ((markup-start (match-beginning 0))
              (markup-end (match-end 0))
              (avoid (agent-shell-markdown-in-avoid-range-p
@@ -816,8 +839,7 @@ For example, the buffer \"see ![logo](logo.png)\" becomes
                                          (text-properties-at markup-start))
                                 (buffer-substring (match-beginning 1)
                                                   (match-end 1))))
-                 (url (buffer-substring-no-properties
-                       (match-beginning 2) (match-end 2)))
+                 (url (agent-shell-markdown--link-markup-url))
                  ;; Stash the original `![alt](url)' markup so
                  ;; `agent-shell-copy-as-markdown' round-trips the image back to
                  ;; source rather than yielding the bare alt placeholder (mirrors
@@ -917,7 +939,7 @@ renders the image in place of that text."
                 (put-text-property path-start path-end 'mouse-face 'highlight)
                 (add-text-properties path-start path-end
                                      '(agent-shell-markdown-frozen t
-                                       rear-nonsticky (agent-shell-markdown-frozen))))))))))))
+                                                                   rear-nonsticky (agent-shell-markdown-frozen))))))))))))
 
 (cl-defun agent-shell-markdown--style-dividers (&key avoid-ranges)
   "Render `---' / `***' / `___' horizontal-rule lines as styled rules.
@@ -1000,7 +1022,7 @@ left untouched."
                                   'agent-shell-markdown-blockquote)
           (add-text-properties line-start line-end
                                '(agent-shell-markdown-frozen t
-                                 rear-nonsticky (agent-shell-markdown-frozen))))))))
+                                                             rear-nonsticky (agent-shell-markdown-frozen))))))))
 
 (defun agent-shell-markdown--display-width ()
   "Return a usable display width for divider rendering.

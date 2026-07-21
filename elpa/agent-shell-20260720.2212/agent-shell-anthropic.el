@@ -149,6 +149,15 @@ Returns an agent configuration alist using `agent-shell-make-agent-config'."
                                     (funcall agent-shell-anthropic-default-model-id)
                                   agent-shell-anthropic-default-model-id))
    :default-session-mode-id (lambda () agent-shell-anthropic-default-session-mode-id)
+   ;; Recent Claude models default `thinking.display' to "omitted", which
+   ;; streams signature-only thinking blocks with no visible text.  Request
+   ;; "summarized" so thinking is shown.  This is orthogonal to the effort /
+   ;; thought level, which the agent advertises as a config option.
+   :session-meta '((claudeCode
+                    . ((options
+                        . ((thinking
+                            . ((type . "adaptive")
+                               (display . "summarized"))))))))
    :install-instructions "See https://github.com/agentclientprotocol/claude-agent-acp for installation."))
 
 (defun agent-shell-anthropic-start-claude-code ()

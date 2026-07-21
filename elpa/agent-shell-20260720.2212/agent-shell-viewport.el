@@ -80,6 +80,7 @@
 
 (defvar agent-shell-header-style)
 (defvar agent-shell-prefer-viewport-interaction)
+(defvar agent-shell-viewport-dismiss-on-send)
 (defvar agent-shell-preferred-agent-config)
 (defvar agent-shell-session-strategy)
 (defvar agent-shell--state)
@@ -126,11 +127,6 @@ Returns an alist with insertion details or nil otherwise:
     (error "Not yet supported"))
   (when (and append override)
     (error "Use :append or :override but not both"))
-  (when shell-buffer
-    ;; Momentarily set buffer to same window, so it's recent in stack.
-    (let ((current (current-buffer)))
-      (pop-to-buffer-same-window shell-buffer)
-      (pop-to-buffer-same-window current)))
   (when-let* ((shell-buffer (or shell-buffer (agent-shell--shell-buffer)))
               (viewport-buffer (agent-shell-viewport--buffer :shell-buffer shell-buffer))
               (text (or append (agent-shell--context :shell-buffer shell-buffer) "")))
@@ -195,10 +191,14 @@ Returns an alist with insertion details or nil otherwise:
         (:start . ,insert-start)
         (:end . ,insert-end)))))
 
-(defun agent-shell-viewport-compose-send ()
-  "Send the viewport composed prompt to the agent shell."
+(defun agent-shell-viewport-compose-send (&optional keep-composing)
+  "Send the viewport composed prompt to the agent shell.
+
+With prefix argument KEEP-COMPOSING, queue or send the prompt and keep the
+compose buffer open in edit mode so another prompt can be composed and
+queued right away, regardless of `agent-shell-viewport-dismiss-on-send'."
   (declare (modes agent-shell-viewport-edit-mode))
-  (interactive)
+  (interactive "P")
   (unless (derived-mode-p 'agent-shell-viewport-edit-mode)
     (user-error "Not in a shell viewport buffer"))
   (when (and (not (eq agent-shell-session-strategy 'new-deferred))
@@ -208,9 +208,15 @@ Returns an alist with insertion details or nil otherwise:
   (setq agent-shell-viewport--compose-snapshot nil)
   (setq agent-shell-viewport--ring-index nil)
   (setq agent-shell-viewport--peek-location nil)
-  (if agent-shell-prefer-viewport-interaction
-      (agent-shell-viewport-compose-send-and-wait-for-response)
-    (agent-shell-viewport-compose-send-and-kill)))
+  (cond
+   (keep-composing
+    (agent-shell-viewport--compose-queue))
+   (agent-shell-viewport-dismiss-on-send
+    (agent-shell-viewport-compose-send-and-dismiss))
+   (agent-shell-prefer-viewport-interaction
+    (agent-shell-viewport-compose-send-and-wait-for-response))
+   (t
+    (agent-shell-viewport-compose-send-and-kill))))
 
 (defun agent-shell-viewport-compose-send-and-kill ()
   "Send the viewport composed prompt to the agent shell and kill compose buffer."
@@ -229,6 +235,42 @@ Returns an alist with insertion details or nil otherwise:
          :submit t)))
     (kill-buffer viewport-buffer)
     (pop-to-buffer shell-buffer)))
+
+(defun agent-shell-viewport--compose-queue ()
+  "Queue or submit the composed prompt, then clear the compose buffer.
+
+The prompt is queued when the shell is busy and submitted otherwise, so
+prompts can be fired in a row.  Signals a `user-error' when the draft is
+empty.  Leaves the compose buffer open in edit mode, cleared."
+  (let ((shell-buffer (agent-shell-viewport--shell-buffer))
+        (prompt (string-trim (buffer-string))))
+    (when (string-empty-p prompt)
+      (user-error "Nothing to send"))
+    (with-current-buffer shell-buffer
+      (agent-shell-queue-request prompt))
+    (agent-shell-viewport--initialize)))
+
+(defun agent-shell-viewport-compose-send-and-dismiss ()
+  "Queue or send the composed prompt, then dismiss the compose window.
+
+The compose window is dismissed, restoring the previous window layout."
+  (declare (modes agent-shell-viewport-edit-mode))
+  (interactive)
+  (unless (derived-mode-p 'agent-shell-viewport-edit-mode)
+    (user-error "Not in a shell viewport buffer"))
+  (let ((viewport-buffer (current-buffer)))
+    (agent-shell-viewport--compose-queue)
+    (agent-shell-viewport--dismiss viewport-buffer)))
+
+(defun agent-shell-viewport--dismiss (viewport-buffer)
+  "Hide VIEWPORT-BUFFER's window, restoring the previous layout.
+
+Uses `quit-restore-window' so the window returns to what it displayed
+before the compose buffer, matching `agent-shell-toggle'.  VIEWPORT-BUFFER
+is not buried, so it stays recent and `agent-shell-buffers' keeps
+resolving to its shell on the next invocation."
+  (when-let* ((window (get-buffer-window viewport-buffer)))
+    (quit-restore-window window)))
 
 (defun agent-shell-viewport-compose-send-and-wait-for-response ()
   "Send the viewport composed prompt and display response in viewport."
@@ -388,6 +430,12 @@ Optionally set its PROMPT and RESPONSE."
   (let ((viewport-buffer (current-buffer))
         (shell-buffer (agent-shell-viewport--shell-buffer)))
     (cond
+     ((and agent-shell-viewport-dismiss-on-send
+           (derived-mode-p 'agent-shell-viewport-edit-mode))
+      (when (or (string-empty-p (string-trim (buffer-string)))
+                (y-or-n-p "Discard composed prompt? "))
+        (agent-shell-viewport--initialize)
+        (agent-shell-viewport--dismiss viewport-buffer)))
      ;; View mode
      ((derived-mode-p 'agent-shell-viewport-view-mode)
       (bury-buffer))
@@ -1277,8 +1325,8 @@ Returns only suffixes whose function has a binding in KEYMAP."
 (defun agent-shell-viewport--update-header ()
   "Update header and mode line based on `agent-shell-header-style'.
 
-Automatically determines position, status and bindings based on current
-major mode."
+Automatically determines position, status, key hints and menu keys based
+on current major mode."
   (agent-shell-viewport--ensure-buffer)
   (let* ((pos (or (agent-shell-viewport--position)
                   (list (cons :current 1) (cons :total 1))))
@@ -1292,7 +1340,7 @@ major mode."
                    (propertize "Edit" 'face 'agent-shell-viewport-status-edit))
                   ((derived-mode-p 'agent-shell-viewport-view-mode)
                    (propertize "View" 'face 'agent-shell-viewport-status-view))))
-         (bindings (cond
+         (key-hints (cond
                     ((derived-mode-p 'agent-shell-viewport-edit-mode)
                      (list
                       `((:key . ,(key-description (where-is-internal
@@ -1362,10 +1410,10 @@ major mode."
                           (agent-shell--make-header (agent-shell--state)
                                                     :position position-label
                                                     :status status
-                                                    :bindings bindings
-                                                    :model-binding model-binding
-                                                    :mode-binding mode-binding
-                                                    :thought-level-binding thought-level-binding))))
+                                                    :key-hints key-hints
+                                                    :menu-keys `((:model . ,model-binding)
+                                                                 (:mode . ,mode-binding)
+                                                                 (:thought-level . ,thought-level-binding))))))
       (setq-local header-line-format header))))
 
 (defvar-local agent-shell-viewport--clean-up t)

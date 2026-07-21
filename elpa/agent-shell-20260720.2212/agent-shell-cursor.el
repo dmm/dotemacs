@@ -60,12 +60,12 @@ Only one of API-KEY, AUTH-TOKEN, LOGIN, or NONE should be provided."
   (agent-shell-cursor-make-authentication :none t)
   "Configuration for Cursor authentication.
 
-By default authentication is handled externally: agent-shell sends no
+By default authentication is handled externally: `agent-shell' sends no
 ACP authenticate request and relies on an existing Cursor login (run
 `agent login' once outside Emacs).  This matches how Cursor was used
 before and needs no configuration.
 
-Optionally, configure agent-shell to manage authentication instead.
+Optionally, configure `agent-shell' to manage authentication instead.
 
 For no authentication, handled externally (default):
 
@@ -121,6 +121,145 @@ starting the Cursor agent process."
   :type '(repeat string)
   :group 'agent-shell)
 
+(defun agent-shell-cursor--make-text-content-block (text)
+  "Wrap TEXT in a standard ACP tool-call content block alist.
+
+Return nil when TEXT is nil or empty.
+
+Examples:
+
+  (agent-shell-cursor--make-text-content-block \"hello\")
+    => \\='((type . \"content\")
+         (content (type . \"text\") (text . \"hello\")))"
+  (when (and (stringp text) (not (string-empty-p text)))
+    `((type . "content")
+      (content (type . "text") (text . ,text)))))
+
+(defun agent-shell-cursor--content-from-raw-output (raw-output)
+  "Convert Cursor-style RAW-OUTPUT alist into ACP content blocks.
+
+Examples:
+
+  ;; raw output
+  (agent-shell-cursor--content-from-raw-output \\='((stdout . \"done\")))
+    => \\='(((type . \"content\")
+          (content (type . \"text\") (text . \"```\\ndone\\n```\"))))
+
+  ;; error message
+  (agent-shell-cursor--content-from-raw-output
+   \\='((error . \"permission denied\")))
+   => \\='(((type . \"content\")
+          (content (type . \"text\") (text . \"permission denied\"))))
+
+  ;; read/content
+  (agent-shell-cursor--content-from-raw-output
+   \\='((content . \"file contents\")))
+   => \\='(((type . \"content\")
+          (content (type . \"text\") (text . \"file contents\"))))
+
+  ;; grep matches
+  (agent-shell-cursor--content-from-raw-output
+   \\='((totalMatches . 42) (truncated . t)))
+   => \\='(((type . \"content\")
+          (content (type . \"text\") (text . \"42 matches (truncated)\"))))
+
+  ;; glob/search results
+  (agent-shell-cursor--content-from-raw-output \\='((resultCount . 7)))
+   => \\='(((type . \"content\")
+          (content (type . \"text\") (text . \"7 results\"))))"
+  (when raw-output
+    (cond
+     ((map-elt raw-output 'error)
+      (list (agent-shell-cursor--make-text-content-block
+             (map-elt raw-output 'error))))
+     ((stringp (map-elt raw-output 'content))
+      (list (agent-shell-cursor--make-text-content-block
+             (map-elt raw-output 'content))))
+     ((or (map-elt raw-output 'stdout)
+          (map-elt raw-output 'stderr)
+          (map-elt raw-output 'exitCode))
+      (let* ((exit (map-elt raw-output 'exitCode))
+             (stdout (or (map-elt raw-output 'stdout) ""))
+             (stderr (or (map-elt raw-output 'stderr) ""))
+             (parts (delq nil
+                          (list (when (numberp exit) (format "Exit code: %s" exit))
+                                (when (not (string-empty-p stdout)) stdout)
+                                (when (and (stringp stderr)
+                                           (not (string-empty-p stderr)))
+                                  stderr))))
+             (text (if parts
+                       (mapconcat #'identity parts "\n\n")
+                     "(no output)")))
+        (list (agent-shell-cursor--make-text-content-block
+               (format "```\n%s\n```" text)))))
+     ((map-elt raw-output 'totalMatches)
+      (list (agent-shell-cursor--make-text-content-block
+             (format "%s matches%s"
+                     (map-elt raw-output 'totalMatches)
+                     (if (map-elt raw-output 'truncated)
+                         " (truncated)"
+                       "")))))
+     ((map-elt raw-output 'resultCount)
+      (list (agent-shell-cursor--make-text-content-block
+             (format "%s results"
+                     (map-elt raw-output 'resultCount)))))
+     (t nil))))
+
+(cl-defun agent-shell-cursor--notification-adapter (&key acp-notification)
+  "Adapt Cursor ACP notifications by filling tool call content from rawOutput.
+
+When a completed `tool_call_update' notification has `rawOutput' but no
+`content', convert `rawOutput' into standard ACP content blocks and
+attach them to the notification in place.
+
+Examples:
+
+  ;; completed shell tool with stdout only
+  (agent-shell-cursor--notification-adapter :ACP-NOTIFICATION
+      \\='((method . \"session/update\")
+                 (params (update (sessionUpdate . \"tool_call_update\")
+                                 (status . \"completed\")
+                                 (rawOutput (stdout . \"done\"))))))
+
+   => \\='((method . \"session/update\")
+        (params (update (sessionUpdate . \"tool_call_update\")
+                        (status . \"completed\")
+                        (content ((type . \"content\")
+                                  (content (type . \"text\")
+                                           (text . \"```\\ndone\\n```\")))))))
+
+
+  ;; existing content is left unchanged
+  (agent-shell-cursor--notification-adapter :acp-notification
+      \\='((method . \"session/update\")
+          (params (update (sessionUpdate . \"tool_call_update\")
+                          (status . \"completed\")
+                          (content ((type . \"content\")
+                                    (content (type . \"text\")
+                                             (text . \"keep me\"))))
+                          (rawOutput (stdout . \"ignored\"))))))
+  
+    => \\='((method . \"session/update\")
+          (params (update (sessionUpdate . \"tool_call_update\")
+                          (status . \"completed\")
+                          (content ((type . \"content\")
+                                      (content (type . \"text\")
+                                               (text . \"keep me\"))))
+                          (rawOutput (stdout . \"ignored\")))))"
+  (when-let* ((method (map-elt acp-notification 'method))
+              ((equal method "session/update"))
+              (update-type (map-nested-elt acp-notification
+                                            '(params update sessionUpdate)))
+              ((equal update-type "tool_call_update"))
+              ((seq-empty-p (map-nested-elt acp-notification
+                                                 '(params update content))))
+              (raw-output (map-nested-elt acp-notification
+                                          '(params update rawOutput)))
+              (content (agent-shell-cursor--content-from-raw-output raw-output)))
+    (setf (alist-get 'content (alist-get 'update (alist-get 'params acp-notification)))
+          content))
+  acp-notification)
+
 (defun agent-shell-cursor-make-agent-config ()
   "Create a Cursor agent configuration.
 
@@ -142,6 +281,7 @@ Returns an agent configuration alist using `agent-shell-make-agent-config'."
                                  (acp-make-authenticate-request :method-id "cursor_login"))
    :client-maker (lambda (buffer)
                    (agent-shell-cursor-make-client :buffer buffer))
+   :notification-adapter #'agent-shell-cursor--notification-adapter
    :install-instructions "See https://cursor.com/docs/cli for installation."))
 
 (defun agent-shell-cursor-start-agent ()

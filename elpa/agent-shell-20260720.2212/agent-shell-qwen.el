@@ -37,20 +37,23 @@
 (autoload 'agent-shell-make-agent-config "agent-shell")
 (declare-function agent-shell--dwim "agent-shell")
 
-(cl-defun agent-shell-qwen-make-authentication (&key login none)
+(cl-defun agent-shell-qwen-make-authentication (&key login openai-api-key)
   "Create Qwen Code authentication configuration.
 
-LOGIN when non-nil indicates to use login-based authentication (default).
-NONE when non-nil disables authentication.
+LOGIN when non-nil uses Qwen OAuth login-based authentication.
+OPENAI-API-KEY is an OpenAI API key string (or a function returning it)
+for authenticating against an OpenAI-compatible provider (for example
+OpenRouter).  Set the provider's base URL and model via
+`agent-shell-qwen-environment'.
 
-Only one of LOGIN or NONE should be provided, never both."
-  (when (and login none)
-    (error "Cannot specify both :login and :none - choose one"))
-  (unless (or login none)
-    (error "Must specify either :login or :none"))
+Only one of LOGIN or OPENAI-API-KEY should be provided, never both."
+  (when (and login openai-api-key)
+    (error "Cannot specify both :login and :openai-api-key - choose one"))
+  (unless (or login openai-api-key)
+    (error "Must specify either :login or :openai-api-key"))
   (cond
    (login `((:login . ,login)))
-   (none `((:none . t)))))
+   (openai-api-key `((:openai-api-key . ,openai-api-key)))))
 
 (defcustom agent-shell-qwen-authentication
   (agent-shell-qwen-make-authentication :login t)
@@ -61,10 +64,16 @@ For OAuth login-based authentication:
   (setq agent-shell-qwen-authentication
         (agent-shell-qwen-make-authentication :login t))
 
-For no authentication (when using alternative authentication methods):
+For an OpenAI-compatible provider (for example OpenRouter), pass the
+API key and set the base URL and model via `agent-shell-qwen-environment':
 
   (setq agent-shell-qwen-authentication
-        (agent-shell-qwen-make-authentication :none t))"
+        (agent-shell-qwen-make-authentication :openai-api-key \"your-key\"))
+
+  (setq agent-shell-qwen-environment
+        (agent-shell-make-environment-variables
+         \"OPENAI_BASE_URL\" \"https://openrouter.ai/api/v1\"
+         \"OPENAI_MODEL\" \"x-ai/grok-4.3\"))"
   :type 'alist
   :group 'agent-shell)
 
@@ -104,13 +113,13 @@ Returns an agent configuration alist using `agent-shell-make-agent-config'."
    :shell-prompt-regexp "qwen> "
    :icon-name "qwen.png"
    :welcome-function #'agent-shell-qwen--welcome-message
-   :needs-authentication (not (map-elt agent-shell-qwen-authentication :none))
+   :needs-authentication t
    :authenticate-request-maker (lambda ()
                                  (cond
                                   ((map-elt agent-shell-qwen-authentication :login)
                                    (acp-make-authenticate-request :method-id "qwen-oauth"))
-                                  ((map-elt agent-shell-qwen-authentication :none)
-                                   nil)
+                                  ((map-elt agent-shell-qwen-authentication :openai-api-key)
+                                   (acp-make-authenticate-request :method-id "openai"))
                                   (t
                                    (user-error "Unknown authentication: %s" agent-shell-qwen-authentication))))
    :client-maker (lambda (buffer)
@@ -131,8 +140,22 @@ Returns an agent configuration alist using `agent-shell-make-agent-config'."
     (user-error "Please migrate to use agent-shell-qwen-acp-command and eval (setq agent-shell-qwen-command nil)"))
   (agent-shell--make-acp-client :command (car agent-shell-qwen-acp-command)
                                 :command-params (cdr agent-shell-qwen-acp-command)
-                                :environment-variables agent-shell-qwen-environment
+                                :environment-variables (append (when-let* ((api-key (agent-shell-qwen--openai-api-key)))
+                                                                 (list (format "OPENAI_API_KEY=%s" api-key)))
+                                                               agent-shell-qwen-environment)
                                 :context-buffer buffer))
+
+(defun agent-shell-qwen--openai-api-key ()
+  "Get the OpenAI API key from `agent-shell-qwen-authentication'."
+  (cond ((stringp (map-elt agent-shell-qwen-authentication :openai-api-key))
+         (map-elt agent-shell-qwen-authentication :openai-api-key))
+        ((functionp (map-elt agent-shell-qwen-authentication :openai-api-key))
+         (condition-case _err
+             (funcall (map-elt agent-shell-qwen-authentication :openai-api-key))
+           (error
+            (error "OpenAI API key not found.  Check out `agent-shell-qwen-authentication'"))))
+        (t
+         nil)))
 
 (defun agent-shell-qwen--welcome-message (config)
   "Return Qwen Code ASCII art as welcome message using `shell-maker' CONFIG."

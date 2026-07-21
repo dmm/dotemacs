@@ -4,11 +4,11 @@
 
 ;; Author: Alvaro Ramirez https://xenodium.com
 ;; URL: https://github.com/xenodium/agent-shell
-;; Package-Version: 20260713.847
-;; Package-Revision: 14185caae7be
-;; Package-Requires: ((emacs "29.1") (shell-maker "0.93.5") (acp "0.12.2"))
+;; Package-Version: 20260720.2212
+;; Package-Revision: 8a6ea7a22afb
+;; Package-Requires: ((emacs "29.1") (shell-maker "0.93.5") (acp "0.13.1"))
 
-(defconst agent-shell--version "0.59.1")
+(defconst agent-shell--version "0.63.2")
 
 ;; This package is free software; you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
@@ -29,8 +29,8 @@
 ;; interact with any agent powered by ACP (Agent Client Protocol).
 ;;
 ;; `agent-shell' currently provides access to Claude Code, Cursor,
-;; CodeBuddy, Gemini CLI, Goose, Codex, OpenCode, Qwen, and Auggie
-;; amongst other agents.
+;; CodeBuddy, Gemini CLI, Goose, Grok Build (xAI), Codex, OpenCode,
+;; Qwen, and Auggie amongst other agents.
 ;;
 ;; This package depends on the `acp' package to provide the ACP layer
 ;; as per https://agentclientprotocol.com spec.
@@ -87,6 +87,7 @@
 (require 'agent-shell-worktree)
 (require 'agent-shell-ui)
 (require 'agent-shell-viewport)
+(require 'agent-shell-xai)
 (require 'image)
 (require 'markdown-overlays)
 (require 'shell-maker)
@@ -138,13 +139,15 @@ When non-nil, tool use sections are expanded."
   :type 'boolean
   :group 'agent-shell)
 
-(defcustom agent-shell-tool-use-group-expand-by-default t
-  "Whether the \"Tool calls\" group header is expanded by default.
+(defcustom agent-shell-activity-group-expand-by-default t
+  "Whether an activity group header is expanded by default.
 
-When non-nil (the default), a run of consecutive tool calls shows its
-members.  When nil, the group starts collapsed, showing only the header
-with its aggregated status and completed/total count.  Individual members
-still follow `agent-shell-tool-use-expand-by-default'."
+An activity group is a run of consecutive agent actions (tool calls,
+and eventually thoughts) rendered under one collapsible header.  When
+non-nil (the default), the group shows its members.  When nil, it starts
+collapsed, showing only the header with its aggregated status and
+completed/total count.  Individual members still follow
+`agent-shell-tool-use-expand-by-default'."
   :type 'boolean
   :group 'agent-shell)
 
@@ -414,6 +417,16 @@ will be created."
   :type 'boolean
   :group 'agent-shell)
 
+(defcustom agent-shell-viewport-dismiss-on-send nil
+  "Non-nil dismisses the viewport compose window after sending.
+
+Enables a fire-and-forget workflow: `agent-shell-viewport-compose-send'
+queues the composed prompt (or submits it when the shell is idle) and
+then dismisses the compose window, restoring the previous window layout.
+Prompts are sent without switching to watch the response."
+  :type 'boolean
+  :group 'agent-shell)
+
 (defcustom agent-shell-embed-file-size-limit 102400
   "Maximum file size in bytes for embedding with ContentBlock::Resource.
 Files larger than this will use ContentBlock::ResourceLink instead.
@@ -471,7 +484,7 @@ is added automatically."
 
 Long-running agent turns can outlast the system idle-sleep timeout,
 suspending the machine (and the agent) before the turn completes.  When
-non-nil, agent-shell blocks system idle sleep for the duration of each
+non-nil, `agent-shell' blocks system idle sleep for the duration of each
 turn and releases the block once the turn finishes, so the system is
 only kept awake while there is work in progress.  The display is still
 allowed to blank.
@@ -565,6 +578,9 @@ Each element can be:
                                               authenticate-request-maker
                                               default-model-id
                                               default-session-mode-id
+                                              session-meta
+                                              mcp-servers
+                                              notification-adapter
                                               icon-name
                                               install-instructions)
   "Create an agent configuration alist.
@@ -581,6 +597,13 @@ Keyword arguments:
 - AUTHENTICATE-REQUEST-MAKER: Function to create authentication requests
 - DEFAULT-MODEL-ID: Default model ID (function returning value).
 - DEFAULT-SESSION-MODE-ID: Default session mode ID (function returning value).
+- SESSION-META: Optional alist of agent-specific metadata sent as `_meta'
+  with session-creating requests (`session/new', `session/load',
+  `session/resume', and `session/fork').
+- MCP-SERVERS: Optional list of MCP servers for this agent, taking
+  precedence over the global `agent-shell-mcp-servers'.  Same shape as
+  that variable.
+- NOTIFICATION-ADAPTER: Optional function to modify/normalize `notification'
 - ICON-NAME: Name of the icon to use
 - INSTALL-INSTRUCTIONS: Instructions to show when executable is not found
 
@@ -596,40 +619,65 @@ Returns an alist with all specified values."
     (:authenticate-request-maker . ,authenticate-request-maker) ;; function
     (:default-model-id . ,default-model-id)                     ;; function
     (:default-session-mode-id . ,default-session-mode-id)       ;; function
+    (:session-meta . ,session-meta)
+    (:mcp-servers . ,mcp-servers)
+    (:notification-adapter . ,notification-adapter)            ;; function
     (:icon-name . ,icon-name)
     (:install-instructions . ,install-instructions)))
 
-(defun agent-shell--make-default-agent-configs ()
-  "Create a list of default agent configs.
+(defun agent-shell--default-agent-config-makers ()
+  "Return the list of default agent config maker functions.
 
-This function aggregates agents from OpenAI, Anthropic, Google,
-Goose, Cursor, CodeBuddy, Auggie, and others."
-  (list (agent-shell-auggie-make-agent-config)
-        (agent-shell-anthropic-make-claude-code-config)
-        (agent-shell-codebuddy-make-agent-config)
-        (agent-shell-cline-make-agent-config)
-        (agent-shell-openai-make-codex-config)
-        (agent-shell-cursor-make-agent-config)
-        (agent-shell-droid-make-agent-config)
-        (agent-shell-github-make-copilot-config)
-        (agent-shell-google-make-gemini-config)
-        (agent-shell-goose-make-agent-config)
-        (agent-shell-hermes-make-agent-config)
-        (agent-shell-kimi-make-config)
-        (agent-shell-kiro-make-config)
-        (agent-shell-mistral-make-config)
-        (agent-shell-omp-make-agent-config)
-        (agent-shell-opencode-make-agent-config)
-        (agent-shell-pi-make-agent-config)
-        (agent-shell-qwen-make-agent-config)))
+Each element is a function that returns a configuration alist when
+called.  Keeping makers (rather than pre-built configurations) means
+configurations are rebuilt on access and stay current across code
+reloads.  See `agent-shell-agent-configs'."
+  (list #'agent-shell-auggie-make-agent-config
+        #'agent-shell-anthropic-make-claude-code-config
+        #'agent-shell-codebuddy-make-agent-config
+        #'agent-shell-cline-make-agent-config
+        #'agent-shell-openai-make-codex-config
+        #'agent-shell-cursor-make-agent-config
+        #'agent-shell-droid-make-agent-config
+        #'agent-shell-github-make-copilot-config
+        #'agent-shell-google-make-gemini-config
+        #'agent-shell-goose-make-agent-config
+        #'agent-shell-hermes-make-agent-config
+        #'agent-shell-kimi-make-config
+        #'agent-shell-kiro-make-config
+        #'agent-shell-mistral-make-config
+        #'agent-shell-omp-make-agent-config
+        #'agent-shell-opencode-make-agent-config
+        #'agent-shell-pi-make-agent-config
+        #'agent-shell-qwen-make-agent-config
+        #'agent-shell-xai-make-grok-config))
 
 (defcustom agent-shell-agent-configs
-  (agent-shell--make-default-agent-configs)
+  (agent-shell--default-agent-config-makers)
   "The list of known agent configurations.
 
+Each entry is either a function that returns a configuration alist, or a
+configuration alist itself.  Functions are preferred and used by
+default: they are called on every access, so agent definitions stay
+current across code reloads.  Concrete alists are accepted for
+backwards compatibility.
+
 See `agent-shell-*-make-*-config' for details."
-  :type '(repeat (alist :key-type symbol :value-type sexp))
+  :type '(repeat (choice function
+                         (alist :key-type symbol :value-type sexp)))
   :group 'agent-shell)
+
+(defun agent-shell--resolved-agent-configs ()
+  "Return `agent-shell-agent-configs' with maker entries realized.
+
+Each entry is either a configuration alist or a function (a symbol or
+lambda) that returns one.  Functions are called on every access, so
+edits to the underlying makers take effect without rebuilding the list."
+  (mapcar (lambda (entry)
+            (if (functionp entry)
+                (funcall entry)
+              entry))
+          agent-shell-agent-configs))
 
 (defcustom agent-shell-preferred-agent-config nil
   "Default agent to use for all new shells.
@@ -657,6 +705,7 @@ behavior explicitly."
                  (const :tag "Droid" droid)
                  (const :tag "Gemini CLI" gemini-cli)
                  (const :tag "Goose" goose)
+                 (const :tag "Grok Build" grok-build)
                  (const :tag "Hermes" hermes)
                  (const :tag "Kimi" kimi)
                  (const :tag "Kiro" kiro)
@@ -717,7 +766,7 @@ value and signals a migration error.")
 (defun agent-shell--validate-session-strategy (value)
   "Signal an error if VALUE is not a supported `agent-shell-session-strategy'.
 
-`new-deferred' was removed in agent-shell 0.54.  Use `new' for a fresh
+`new-deferred' was removed in `agent-shell' 0.54.  Use `new' for a fresh
 session without prompting, or `prompt' to choose."
   (unless (memq value '(new latest prompt))
     (user-error
@@ -742,6 +791,65 @@ Available values:
          (agent-shell--validate-session-strategy value)
          (set-default sym value))
   :group 'agent-shell)
+
+(defcustom agent-shell-session-choices-function nil
+  "Function to transform the choices offered when starting a shell.
+
+When nil, all choices are offered unchanged.
+
+Otherwise called with the list of candidate choices and must return the
+choices to actually offer.  Each candidate is a cons cell (LABEL . TOKEN)
+where LABEL is the displayed string and TOKEN identifies the choice:
+
+  `:new-shell': Start a new shell.
+  `:downloads-shell': Start a new shell in ~/Downloads.
+  `:temp-shell': Start a new shell in a temporary directory.
+  `:other-shell': Switch to an existing shell buffer.
+
+Resumable session candidates use their session alist as TOKEN.
+
+The function may filter, reorder, or relabel the choices.  Labels are
+display-only, so renaming them is fine, but it must not introduce a
+choice whose TOKEN was not offered.  Returning a non-list, an empty list,
+or a choice with an unknown token signals an error.
+
+For example, to hide the Downloads and temp choices:
+
+  (setq agent-shell-session-choices-function
+        (lambda (choices)
+          (seq-remove (lambda (choice)
+                        (memq (cdr choice) \='(:downloads-shell :temp-shell)))
+                      choices)))"
+  :type '(choice (const :tag "Offer all choices" nil)
+                 (function :tag "Transform function"))
+  :group 'agent-shell)
+
+(defun agent-shell--apply-session-choices (choices)
+  "Apply `agent-shell-session-choices-function' to CHOICES.
+
+CHOICES is a list of (LABEL . TOKEN) candidate conses.  Returns the
+transformed list.  Signals a `user-error' when the configured function
+returns something invalid, so a broken configuration is reported against
+the setting rather than failing obscurely downstream.
+
+For example, with the default nil value choices pass through unchanged:
+
+  (agent-shell--apply-session-choices \\='((\"New shell\" . :new-shell)))
+  => \\='((\"New shell\" . :new-shell))"
+  (if agent-shell-session-choices-function
+      (let ((result (funcall agent-shell-session-choices-function choices)))
+        (unless (listp result)
+          (user-error "`agent-shell-session-choices-function' must return a list, got: %S"
+                      result))
+        (unless result
+          (user-error "`agent-shell-session-choices-function' returned no choices"))
+        (let ((tokens (mapcar #'cdr choices)))
+          (dolist (choice result)
+            (unless (member (cdr choice) tokens)
+              (user-error "`agent-shell-session-choices-function' returned a choice with an unknown token: %S"
+                          (cdr choice)))))
+        result)
+    choices))
 
 (defvar agent-shell-idle-timeout 30
   "Seconds before an `idle' event is emitted.
@@ -799,7 +907,7 @@ Returns nil if no matching configuration is found."
    ((symbolp designator)
     (seq-find (lambda (config)
                 (eq (map-elt config :identifier) designator))
-              agent-shell-agent-configs))
+              (agent-shell--resolved-agent-configs)))
    ((listp designator) designator)))
 
 (defun agent-shell--preferred-config-and-mode ()
@@ -929,8 +1037,10 @@ OUTGOING-REQUEST-DECORATOR (passed through to `acp-make-client')."
                              (cons :title nil)))
         (cons :config-options nil)
         (cons :last-entry-type nil)
+        (cons :last-agent-message-id nil)
         (cons :chunked-group-count 0)
-        (cons :tool-call-group-count 0)
+        (cons :activity-group-count 0)
+        (cons :activity-thoughts nil)
         (cons :request-count 0)
         (cons :last-activity-time nil)
         (cons :tool-calls nil)
@@ -1372,10 +1482,15 @@ Returns nil if no icon should be displayed."
 
 When `agent-shell-preferred-agent-config' is set, its configuration is
 listed first and offered as the default selection."
-  (let* ((preferred (agent-shell--resolve-preferred-config))
+  (let* ((configs (agent-shell--resolved-agent-configs))
+         (preferred (agent-shell--resolve-preferred-config))
          (configs (if preferred
-                      (cons preferred (remove preferred agent-shell-agent-configs))
-                    agent-shell-agent-configs))
+                      (cons preferred
+                            (seq-remove (lambda (config)
+                                          (eq (map-elt config :identifier)
+                                              (map-elt preferred :identifier)))
+                                        configs))
+                    configs))
          (choices (mapcar
                    (lambda (config)
                      (cons (propertize
@@ -1933,32 +2048,18 @@ COMMAND, when present, may be a shell command string or an argv vector."
   "Return non-nil if STATE has in-flight requests awaiting responses."
   (map-elt state :active-requests))
 
-(defun agent-shell--session-bound-notification-p (acp-notification)
-  "Return non-nil if ACP-NOTIFICATION reports session request progress.
-
-These notifications must arrive while an agent request is in
-flight (`session/prompt', `session/load', or `session/push').
-A server emitting one with no request active is non-conformant."
-  (and (equal (map-elt acp-notification 'method) "session/update")
-       (member (map-nested-elt acp-notification '(params update sessionUpdate))
-               '("tool_call" "tool_call_update"
-                 "agent_thought_chunk" "agent_message_chunk"
-                 "user_message_chunk" "plan"))))
-
 (defun agent-shell--make-out-of-session-turn-notification-body (state acp-notification)
-  "Build a fragment body for ACP-NOTIFICATION arriving out of turn.
-Frames the event as a protocol violation by the ACP server and
-points the user at STATE's agent for reporting, since the bug is
-not in agent-shell."
+  "Build a fragment body for ACP-NOTIFICATION arriving out of turn using STATE."
   (let ((agent-name (or (map-nested-elt state '(:agent-config :mode-line-name))
                         (map-nested-elt state '(:agent-config :buffer-name))
                         "the ACP server")))
-    (format "This `session/update` arrived after the turn ended, which
-violates the ACP protocol — per-turn updates must arrive while
-a `session/prompt' is active.
+    (format "This `session/update` arrived after the turn ended, with no
+request in flight to attach it to.  Per-turn updates are expected
+while a `session/prompt', `session/load', or `session/push' is
+active.
 
-This is a bug in %s ACP implementation, not in agent-shell.  Please report it to
-the maintainer with the payload below:
+This is unexpected and likely a bug in %s.  Please report it to the
+maintainer with the payload below:
 
 ```json
 %s
@@ -1994,6 +2095,17 @@ Includes pretty-printed JSON and a `file a feature request' link."
             (json-pretty-print (point-min) (point-max))
             (buffer-string))))
 
+(cl-defun agent-shell--adapt-notification (&key state acp-notification)
+  "Return ACP-NOTIFICATION after optional agent-specific adaptation.
+
+When STATE's agent config defines `:notification-adapter', invoke it
+with `:acp-notification' and return the result.  Otherwise return
+original ACP-NOTIFICATION."
+  (if-let* ((adapter (map-nested-elt state '(:agent-config :notification-adapter)))
+            ((functionp adapter)))
+      (funcall adapter :acp-notification acp-notification)
+    acp-notification))
+
 (defun agent-shell--format-tool-call-input (acp-raw-input)
   "Format ACP-RAW-INPUT from a tool call as a fenced code block.
 
@@ -2011,28 +2123,46 @@ pretty-printed JSON inside a json fence."
               (json-pretty-print-buffer)
               (buffer-string)))))
 
-(defconst agent-shell--tool-call-group-label "Tool calls"
-  "Header label for a collapsible run of consecutive tool calls.")
+(defconst agent-shell--activity-group-label "Activity"
+  "Neutral placeholder heading for an activity group before it is refreshed.
+Shown until `agent-shell--refresh-activity-group-header' relabels the
+group from its members (e.g. \"✓ Activity 2/2\"), and kept while the
+active label function still has nothing to summarize (an empty group).")
 
-(defun agent-shell--tool-call-group-id (state tool-call-id)
-  "Return the group-id assigned to TOOL-CALL-ID, assigning one on first sight.
+(defconst agent-shell--activity-group-run-entry-types
+  '("tool_call" "tool_call_update" "session/request_permission"
+    "agent_thought_chunk")
+  "Entry types that keep the current activity run open.
+Consecutive tool calls and thoughts share one activity group; any other
+rendered entry between them (e.g. a streamed message) starts a fresh one.
+A permission request is part of a tool call's own flow (its dialog is
+transient, deleted on completion), so it must not break the run.")
 
-Consecutive tool calls share a group; any other rendered entry between
-them (e.g. a streamed message) starts a fresh one.  The assignment is
-stored on the tool call and reused by later updates, so a completion
-arriving after an interleaving message keeps its original group.  Advances
-STATE's `:tool-call-group-count' on a new run, mirroring the
-`:chunked-group-count' pattern used for message/thought chunks."
+(defun agent-shell--activity-group-current-id (state)
+  "Return the current activity group id for STATE, advancing on a new run.
+
+Advances STATE's `:activity-group-count' unless `:last-entry-type' keeps
+the run open (see `agent-shell--activity-group-run-entry-types'),
+mirroring the `:chunked-group-count' pattern used for message/thought
+chunks.  Shared by tool-call and thought rendering so both land in the
+same group."
+  (unless (member (map-elt state :last-entry-type)
+                  agent-shell--activity-group-run-entry-types)
+    (map-put! state :activity-group-count
+              (1+ (or (map-elt state :activity-group-count) 0))))
+  (format "activity-%s" (map-elt state :activity-group-count)))
+
+(defun agent-shell--activity-group-id (state tool-call-id)
+  "Return TOOL-CALL-ID's activity group-id in STATE, assigning it on first sight.
+
+The assignment is stored on the tool call and reused by later updates, so
+a completion arriving after an interleaving message keeps its original
+group.  The run counter is shared with thoughts via
+`agent-shell--activity-group-current-id'."
   (or (map-nested-elt state `(:tool-calls ,tool-call-id :group-id))
-      (progn
-        ;; Advance the run counter before formatting the id.
-        (unless (member (map-elt state :last-entry-type)
-                        '("tool_call" "tool_call_update"))
-          (map-put! state :tool-call-group-count
-                    (1+ (or (map-elt state :tool-call-group-count) 0))))
-        (let ((group-id (format "tool-calls-%s" (map-elt state :tool-call-group-count))))
-          (agent-shell--save-tool-call state tool-call-id (list (cons :group-id group-id)))
-          group-id))))
+      (let ((group-id (agent-shell--activity-group-current-id state)))
+        (agent-shell--save-tool-call state tool-call-id (list (cons :group-id group-id)))
+        group-id)))
 
 (defconst agent-shell--tool-call-status-precedence
   '("failed" "in_progress" "pending" "completed")
@@ -2053,29 +2183,29 @@ otherwise the worst present status surfaces (one failure shows `failed').")
                 (map-elt (cdr pair) :status)))
             (map-elt state :tool-calls)))
 
-(defun agent-shell--tool-call-group-status-glyph (status)
+(defun agent-shell--activity-group-status-glyph (status)
   "Return a propertized status icon for a group header, or nil for no STATUS."
   (when-let* ((config (and status (agent-shell--status-config status))))
     (propertize (map-elt config :icon)
                 'font-lock-face (map-elt config :face))))
 
-(defun agent-shell--tool-call-group-header-label (statuses)
-  "Return the header label for a tool-call group with member STATUSES.
+(defun agent-shell--activity-group-header-label (statuses)
+  "Return the header label for an activity group with member STATUSES.
 
-Formats as `<glyph> Tool calls completed/total': the glyph is the dominant
+Formats as `<glyph> Activity completed/total': the glyph is the dominant
 status (the first of `agent-shell--tool-call-status-precedence' present,
 so `completed' shows only when every member completed), and the count is
 how many members completed out of the total, so a non-completed member
 counts toward the total but not the numerator.
 
-  (agent-shell--tool-call-group-header-label \\='(\"completed\" \"completed\"))
-  ;; => \"✓ Tool calls 2/2\"
-  (agent-shell--tool-call-group-header-label \\='(\"completed\" \"failed\"))
-  ;; => \"✗ Tool calls 1/2\""
-  (let ((glyph (agent-shell--tool-call-group-status-glyph
+  (agent-shell--activity-group-header-label \\='(\"completed\" \"completed\"))
+  ;; => \"✓ Activity 2/2\"
+  (agent-shell--activity-group-header-label \\='(\"completed\" \"failed\"))
+  ;; => \"✗ Activity 1/2\""
+  (let ((glyph (agent-shell--activity-group-status-glyph
                 (seq-find (lambda (status) (member status statuses))
                           agent-shell--tool-call-status-precedence)))
-        (heading (propertize agent-shell--tool-call-group-label
+        (heading (propertize "Activity"
                              'font-lock-face 'agent-shell-section-heading))
         (count (propertize
                 (format "%d/%d"
@@ -2084,14 +2214,265 @@ counts toward the total but not the numerator.
                 'font-lock-face 'agent-shell-section-annotation)))
     (string-join (delq nil (list glyph heading count)) " ")))
 
-(defun agent-shell--refresh-tool-call-group-header (state group-id)
-  "Relabel GROUP-ID's header in STATE from its members' aggregated status.
-No-op with no members yet."
-  (when-let* ((statuses (agent-shell--group-tool-statuses state group-id)))
+(cl-defun agent-shell--group-tool-calls (&key state group-id)
+  "Return (ID . TOOL-CALL) pairs in STATE assigned to GROUP-ID, in call order.
+
+STATE's `:tool-calls' alist stores the most recent call first, so the
+result is reversed to reflect the order the calls were made."
+  (nreverse
+   (seq-keep (lambda (pair)
+               (when (equal (map-elt (cdr pair) :group-id) group-id)
+                 pair))
+             (map-elt state :tool-calls))))
+
+(defun agent-shell--count-group-thought (state group-id)
+  "Record one more thought for the activity group GROUP-ID in STATE.
+
+Thoughts are not stored in `:tool-calls', so the header label functions
+cannot see them from the tool-call members alone.  `:activity-thoughts'
+keeps a per-group thought count (an alist of group-id to count) so labels
+can report how many thoughts a group holds.  Call once per thought, not
+per streamed chunk.
+
+  ;; STATE `:activity-thoughts' = ((\"g\" . 1))
+  (agent-shell--count-group-thought state \"g\")
+  ;; STATE `:activity-thoughts' = ((\"g\" . 2))"
+  (let ((counts (map-elt state :activity-thoughts)))
+    (setf (map-elt counts group-id) (1+ (map-elt counts group-id 0)))
+    (map-put! state :activity-thoughts counts)))
+
+(defun agent-shell--group-thought-count (state group-id)
+  "Return the number of thoughts recorded for GROUP-ID in STATE.
+
+  (agent-shell--group-thought-count
+   \\='((:activity-thoughts . ((\"g\" . 2)))) \"g\")
+  ;; => 2"
+  (map-nested-elt state (list :activity-thoughts group-id) 0))
+
+(defun agent-shell--group-has-thought-p (state group-id)
+  "Return non-nil when the activity group GROUP-ID in STATE holds a thought.
+
+  (agent-shell--group-has-thought-p
+   \\='((:activity-thoughts . ((\"g\" . 1)))) \"g\")
+  ;; => t"
+  (> (agent-shell--group-thought-count state group-id) 0))
+
+(defconst agent-shell--tool-call-kind-phrases
+  '(("execute" . ((:past . "ran") (:present . "run")
+                  (:singular . "command") (:plural . "commands")))
+    ("read" . ((:past . "read") (:present . "read")
+               (:singular . "file") (:plural . "files")))
+    ("edit" . ((:past . "edited") (:present . "edit")
+               (:singular . "file") (:plural . "files")))
+    ("delete" . ((:past . "deleted") (:present . "delete")
+                 (:singular . "file") (:plural . "files")))
+    ("move" . ((:past . "moved") (:present . "move")
+               (:singular . "file") (:plural . "files")))
+    ("search" . ((:past . "ran") (:present . "run")
+                 (:singular . "search") (:plural . "searches")))
+    ("fetch" . ((:past . "fetched") (:present . "fetch")
+                (:singular . "resource") (:plural . "resources"))))
+  "Per-kind phrasing for descriptive group headers.
+Each entry maps a tool-call kind to an alist with `:past'/`:present'
+verbs and `:singular'/`:plural' nouns.  The present verb is used while
+any member of that kind is still pending or in progress, the past once
+all have finished.  Kinds absent here (including nil and \"other\") fall
+back to `agent-shell--tool-call-kind-phrase-default'.  Verbs are
+lowercase; the assembled summary capitalizes its first word.  See URL
+`https://agentclientprotocol.com/protocol/tool-calls'.")
+
+(defconst agent-shell--tool-call-kind-phrase-default
+  '((:past . "ran") (:present . "run")
+    (:singular . "tool call") (:plural . "tool calls"))
+  "Phrasing for kinds absent from `agent-shell--tool-call-kind-phrases'.")
+
+(cl-defun agent-shell--tool-call-kind-phrase (&key kind count pending)
+  "Return a lowercase phrase for KIND repeated COUNT times.
+When PENDING is non-nil the present-tense verb is used, so a not-yet-run
+action reads \"run a command\" rather than \"ran a command\".  Callers
+capitalize as needed.
+
+  (agent-shell--tool-call-kind-phrase :kind \"execute\" :count 2)
+  ;; => \"ran 2 commands\"
+  (agent-shell--tool-call-kind-phrase :kind \"execute\" :count 1 :pending t)
+  ;; => \"run a command\""
+  (let ((phrase (or (assoc-default kind agent-shell--tool-call-kind-phrases)
+                    agent-shell--tool-call-kind-phrase-default)))
+    (format "%s %s %s"
+            (map-elt phrase (if pending :present :past))
+            (if (= count 1) "a" (number-to-string count))
+            (map-elt phrase (if (= count 1) :singular :plural)))))
+
+(cl-defun agent-shell--activity-group-descriptive-text (&key members thought)
+  "Return a Claude Code style summary phrase for MEMBERS.
+
+MEMBERS is a list of (ID . TOOL-CALL) pairs in call order.  Kinds are
+collapsed into counted phrases joined by commas, e.g. \"Ran 3 commands,
+read a file\", in first-seen order.  Only the first word is capitalized.
+A kind reads in the present tense (\"Run a command\") while any of its
+members is still pending or in progress, past tense once all have
+finished.
+
+When THOUGHT is non-nil, or any member is a `think'-kind call, the group
+also contains a thought, summarized as a leading \"Thought\" phrase
+\(e.g. \"Thought, ran 2 commands\", or just \"Thought\" when there are no
+other tool calls).  A `think'-kind call is an act of thinking rather than
+a tool action, so it folds into that phrase instead of being counted.
+Thoughts are not counted."
+  (let* ((member-kind (lambda (member) (or (map-elt (cdr member) :kind) "other")))
+         (think-p (lambda (member) (equal (funcall member-kind member) "think")))
+         (thought (or thought (seq-some think-p members)))
+         (tool-members (seq-remove think-p members))
+         (tool-phrases
+          (seq-map
+           (lambda (kind)
+             (let ((of-kind (seq-filter (lambda (member)
+                                          (equal (funcall member-kind member) kind))
+                                        tool-members)))
+               (agent-shell--tool-call-kind-phrase
+                :kind kind
+                :count (length of-kind)
+                :pending (seq-some (lambda (member)
+                                     (member (map-elt (cdr member) :status)
+                                             '("pending" "in_progress")))
+                                   of-kind))))
+           (seq-uniq (seq-map member-kind tool-members))))
+         (summary (string-join (if thought (cons "thought" tool-phrases) tool-phrases)
+                               ", ")))
+    (if (string-empty-p summary)
+        summary
+      (concat (upcase (substring summary 0 1)) (substring summary 1)))))
+
+(defun agent-shell-activity-group-descriptive-label (group)
+  "Return a Claude Code style header label for GROUP.
+
+GROUP is an alist with :state and :group-id.  A group with a single tool
+call whose title is a description (a task or MCP tool) shows that title
+\(like \"Backend modularity and dispatch structure\"); larger groups show
+a counted summary such as \"Ran 3 commands, read a file\", prefixed with
+\"Thought\" when the group also contains a thought.  A group holding only
+thoughts reads \"Thought\".  No status glyph is shown, matching Claude
+Code's plain-text grouping.  Returns nil with nothing to summarize yet.
+See `agent-shell-activity-group-header-label-function'."
+  (let* ((state (map-elt group :state))
+         (group-id (map-elt group :group-id))
+         (members (agent-shell--group-tool-calls :state state :group-id group-id))
+         (thought (agent-shell--group-has-thought-p state group-id)))
+    (cond
+     ;; A lone call whose title is a genuine description (a task or MCP
+     ;; tool, of kind nil/"other") stands in for the summary, as Claude
+     ;; Code does.  Standard kinds (execute, read, ...) have titles that
+     ;; are just a command or path already shown on the member row below,
+     ;; so they use the counted summary instead.
+     ((and (= (length members) 1) (not thought)
+           (member (map-elt (cdar members) :kind) '(nil "other")))
+      (map-elt (agent-shell-make-tool-call-label state (caar members)) :title))
+     ((or members thought)
+      (propertize (agent-shell--activity-group-descriptive-text
+                   :members members :thought thought)
+                  'font-lock-face 'agent-shell-secondary)))))
+
+(defun agent-shell-activity-group-count-label (group)
+  "Return the count-style header label for GROUP.
+GROUP is an alist with :state and :group-id.  Formats as
+\"✓ Activity 2/2\", counting each tool call and thought as one item (a
+thought is always done), so a group of 2 tool calls and a thought reads
+\"✓ Activity 3/3\" and a thought-only group reads \"✓ Activity 1/1\".
+Returns nil with nothing in the group yet.
+See `agent-shell-activity-group-header-label-function'."
+  (let* ((state (map-elt group :state))
+         (group-id (map-elt group :group-id))
+         (statuses (append (agent-shell--group-tool-statuses state group-id)
+                           (make-list (agent-shell--group-thought-count state group-id)
+                                      "completed"))))
+    (when statuses
+      (agent-shell--activity-group-header-label statuses))))
+
+(defun agent-shell-activity-group-tally-label (group)
+  "Return a per-category tally header for GROUP.
+
+GROUP is an alist with :state and :group-id.  Counts the group's tool
+calls by category (one per ACP tool kind, with untyped/MCP calls under
+\"Other\") plus a \"Thinking\" count of its thoughts and any `think'-kind
+calls.  Shows only non-zero categories in order, e.g. \"Commands: 1
+Reads: 3 Edits: 2 Thinking: 3\".  Each label uses the section-heading
+face and its count the default face.  Returns nil with nothing to count
+yet.
+See `agent-shell-activity-group-header-label-function'."
+  (let* ((state (map-elt group :state))
+         (group-id (map-elt group :group-id))
+         ;; Ordered categories, one per ACP tool kind.  A `think'-kind call
+         ;; folds into "Thinking" below instead of getting its own category.
+         (categories '(((:label . "Commands") (:kind . "execute"))
+                       ((:label . "Reads") (:kind . "read"))
+                       ((:label . "Edits") (:kind . "edit"))
+                       ((:label . "Moves") (:kind . "move"))
+                       ((:label . "Deletes") (:kind . "delete"))
+                       ((:label . "Searches") (:kind . "search"))
+                       ((:label . "Fetches") (:kind . "fetch"))
+                       ((:label . "Other") (:kind . "other"))))
+         ;; Normalize untyped/MCP calls (nil kind) to "other" so they land
+         ;; under the "Other" category.
+         (kinds (seq-map (lambda (member) (or (map-elt (cdr member) :kind) "other"))
+                         (agent-shell--group-tool-calls :state state :group-id group-id)))
+         (tally (append
+                 (seq-map (lambda (category)
+                            (list (cons :label (map-elt category :label))
+                                  (cons :count (seq-count
+                                                (lambda (kind)
+                                                  (equal kind (map-elt category :kind)))
+                                                kinds))))
+                          categories)
+                 ;; Thoughts plus any `think'-kind calls fold into "Thinking".
+                 (list (list (cons :label "Thinking")
+                             (cons :count (+ (agent-shell--group-thought-count state group-id)
+                                             (seq-count (lambda (kind) (equal kind "think"))
+                                                        kinds)))))))
+         (parts (seq-keep (lambda (entry)
+                            (when (> (map-elt entry :count 0) 0)
+                              (concat (propertize (format "%s: " (map-elt entry :label))
+                                                  'font-lock-face 'agent-shell-section-heading)
+                                      (propertize (number-to-string (map-elt entry :count))
+                                                  'font-lock-face 'default))))
+                          tally)))
+    (when parts
+      (string-join parts " "))))
+
+(defvar agent-shell-activity-group-header-label-function
+  #'agent-shell-activity-group-descriptive-label
+  "Function that renders an activity group's collapsible header label.
+
+Called with an alist containing:
+
+  :state    - the shell state
+  :group-id - the activity group id
+
+Returns the propertized header string, or nil when the group is empty (no
+tool calls or thoughts yet).
+
+Built-in options:
+- `agent-shell-activity-group-count-label' -- count style,
+  e.g. \"✓ Activity 2/2\".
+- `agent-shell-activity-group-descriptive-label' (default) -- Claude Code
+  style, e.g. \"Ran 3 commands, read a file\".
+- `agent-shell-activity-group-tally-label' -- per-category counts,
+  e.g. \"Commands: 1 Reads: 3 Edits: 2 Thinking: 3\".
+
+This is a plain variable rather than a `defcustom' while the header
+style settles; promote it once the rendering choice is worth exposing.")
+
+(defun agent-shell--refresh-activity-group-header (state group-id)
+  "Relabel GROUP-ID's header in STATE from its tool calls and thoughts.
+Delegates to `agent-shell-activity-group-header-label-function'.
+No-op while that function has nothing to summarize (an empty group)."
+  (when-let* ((label (funcall agent-shell-activity-group-header-label-function
+                              (list (cons :state state)
+                                    (cons :group-id group-id)))))
     (agent-shell--update-fragment
      :state state
      :block-id group-id
-     :label-left (agent-shell--tool-call-group-header-label statuses))))
+     :label-left label
+     :above-last-prompt (not (agent-shell--active-requests-p state)))))
 
 (cl-defun agent-shell--on-notification (&key state acp-notification)
   "Handle incoming ACP-NOTIFICATION using STATE."
@@ -2118,17 +2499,28 @@ No-op with no members yet."
           ((map-elt state :pending-restore)
            (agent-shell--append-restore-notification state acp-notification))
           ((equal (map-nested-elt acp-notification '(params update sessionUpdate)) "agent_message_chunk")
-           (unless (equal (map-elt state :last-entry-type) "agent_message_chunk")
-             (map-put! state :chunked-group-count (1+ (map-elt state :chunked-group-count)))
-             (agent-shell--append-transcript
-              :text (format "\n## Agent (%s)\n\n" (format-time-string "%F %T"))
-              :file-path agent-shell--transcript-file))
-           ;; Indent markdown headers in LLM output so they nest
-           ;; below the transcript's ## section headers.  Applied
-           ;; per-chunk: if a header is split across chunks it may
-           ;; not be indented (graceful degradation).
-           (let ((content (agent-shell--content-block-to-markdown
-                           (map-nested-elt acp-notification '(params update content)))))
+           ;; Decide message boundaries by ACP's `messageId' when present:
+           ;; distinct messages must never coalesce, even if an interleaved
+           ;; entry (e.g. a tool call) failed to advance `:last-entry-type'
+           ;; and left it looking like a continuation.  `messageId' is
+           ;; optional (older agents omit it), so fall back to the turn
+           ;; boundary heuristic: a new run whenever the previous rendered
+           ;; entry was not itself a message chunk.
+           (let* ((message-id (map-nested-elt acp-notification '(params update messageId)))
+                  (new-message (if message-id
+                                   (not (equal message-id (map-elt state :last-agent-message-id)))
+                                 (not (equal (map-elt state :last-entry-type) "agent_message_chunk"))))
+                  (content (agent-shell--content-block-to-markdown
+                            (map-nested-elt acp-notification '(params update content)))))
+             (when new-message
+               (map-put! state :chunked-group-count (1+ (map-elt state :chunked-group-count)))
+               (agent-shell--append-transcript
+                :text (format "\n## Agent (%s)\n\n" (format-time-string "%F %T"))
+                :file-path agent-shell--transcript-file))
+             ;; Indent markdown headers in LLM output so they nest
+             ;; below the transcript's ## section headers.  Applied
+             ;; per-chunk: if a header is split across chunks it may
+             ;; not be indented (graceful degradation).
              (agent-shell--append-transcript
               :text (agent-shell--indent-markdown-headers content)
               :file-path agent-shell--transcript-file)
@@ -2136,36 +2528,22 @@ No-op with no members yet."
               :state state
               ;; Out of turn, key under a dedicated namespace so the
               ;; message forms its own fragment rather than coalescing
-              ;; into the previous turn's final message, which shares the
-              ;; (unchanged) request-count and group-count.
+              ;; into the previous turn's final message.
               :namespace-id (unless (agent-shell--active-requests-p state) "out-of-turn")
+              ;; Key on `messageId' when present so distinct messages stay
+              ;; distinct; otherwise fall back to the per-run group count.
               :block-id (format "%s-agent_message_chunk"
-                                (map-elt state :chunked-group-count))
+                                (or message-id (map-elt state :chunked-group-count)))
               :body content
-              :create-new (not (equal (map-elt state :last-entry-type)
-                                      "agent_message_chunk"))
+              :create-new new-message
               :append t
               :navigation 'never
               :render-body-images t
               ;; Out of turn (no prompt request in flight) lands the
               ;; message above the fresh prompt rather than after it.
-              :above-last-prompt (not (agent-shell--active-requests-p state))))
+              :above-last-prompt (not (agent-shell--active-requests-p state)))
+             (map-put! state :last-agent-message-id message-id))
            (map-put! state :last-entry-type "agent_message_chunk"))
-          ((and (not (agent-shell--active-requests-p state))
-                (agent-shell--session-bound-notification-p acp-notification))
-           ;; Turn-bound notification arriving with no agent request in
-           ;; flight is a protocol violation: these notifications must
-           ;; accompany an active `session/prompt', `session/load', or
-           ;; `session/push'.  Show it visibly above the fresh prompt so
-           ;; users can report it.
-           (agent-shell--update-fragment
-            :state state
-            :block-id "out-of-turn-acp-bug"
-            :label-left (propertize "Out of turn - ACP server bug"
-                                    'font-lock-face 'agent-shell-section-heading)
-            :body (agent-shell--make-out-of-session-turn-notification-body state acp-notification)
-            :append t
-            :above-last-prompt t))
           ((equal (map-nested-elt acp-notification '(params update sessionUpdate)) "tool_call")
            (agent-shell--save-tool-call
             state
@@ -2195,7 +2573,7 @@ No-op with no members yet."
                         (cons :tool-call (map-nested-elt state (list :tool-calls (map-nested-elt acp-notification '(params update toolCallId)))))))
            (let ((tool-call-labels (agent-shell-make-tool-call-label
                                     state (map-nested-elt acp-notification '(params update toolCallId))))
-                 (group-id (agent-shell--tool-call-group-id
+                 (group-id (agent-shell--activity-group-id
                             state (map-nested-elt acp-notification '(params update toolCallId)))))
              (agent-shell--update-fragment
               :state state
@@ -2203,10 +2581,11 @@ No-op with no members yet."
               :label-left (map-elt tool-call-labels :status)
               :label-right (map-elt tool-call-labels :title)
               :group-id group-id
-              :group-label agent-shell--tool-call-group-label
-              :group-expanded agent-shell-tool-use-group-expand-by-default
-              :expanded agent-shell-tool-use-expand-by-default)
-             (agent-shell--refresh-tool-call-group-header state group-id)
+              :group-label agent-shell--activity-group-label
+              :group-expanded agent-shell-activity-group-expand-by-default
+              :expanded agent-shell-tool-use-expand-by-default
+              :above-last-prompt (not (agent-shell--active-requests-p state)))
+             (agent-shell--refresh-activity-group-header state group-id)
              ;; Display plan as markdown block if present
              (when (map-nested-elt acp-notification '(params update rawInput plan))
                (agent-shell--update-fragment
@@ -2214,43 +2593,74 @@ No-op with no members yet."
                 :block-id (concat (map-nested-elt acp-notification '(params update toolCallId)) "-plan")
                 :label-left (propertize "Proposed plan" 'font-lock-face 'agent-shell-section-heading)
                 :body (agent-shell--format-plan (map-nested-elt acp-notification '(params update rawInput plan)))
-                :expanded t)))
+                :expanded t
+                :above-last-prompt (not (agent-shell--active-requests-p state)))))
            (map-put! state :last-entry-type "tool_call"))
           ((equal (map-nested-elt acp-notification '(params update sessionUpdate)) "agent_thought_chunk")
-           (unless (equal (map-elt state :last-entry-type)
-                          "agent_thought_chunk")
-             (map-put! state :chunked-group-count (1+ (map-elt state :chunked-group-count)))
-             (agent-shell--append-transcript
-              :text (format "## Agent's Thoughts (%s)\n\n" (format-time-string "%F %T"))
-              :file-path agent-shell--transcript-file))
-           (let ((content (agent-shell--content-block-to-markdown
-                           (map-nested-elt acp-notification '(params update content)))))
+           (let ((new-thought-p (not (equal (map-elt state :last-entry-type)
+                                            "agent_thought_chunk")))
+                 (content (agent-shell--content-block-to-markdown
+                           (map-nested-elt acp-notification '(params update content))))
+                 ;; Share the tool-call run counter so a thought lands in
+                 ;; the same activity group as the surrounding tool calls.
+                 ;; Read before `:last-entry-type' is advanced below;
+                 ;; stable across a thought's streamed chunks since
+                 ;; "agent_thought_chunk" keeps the run open.
+                 (group-id (agent-shell--activity-group-current-id state)))
+             (when new-thought-p
+               (map-put! state :chunked-group-count (1+ (map-elt state :chunked-group-count)))
+               (agent-shell--append-transcript
+                :text (format "## Agent's Thoughts (%s)\n\n" (format-time-string "%F %T"))
+                :file-path agent-shell--transcript-file))
              (agent-shell--append-transcript
               :text (agent-shell--indent-markdown-headers content)
               :file-path agent-shell--transcript-file)
              (agent-shell--update-fragment
               :state state
+              ;; Out of turn, key under a dedicated namespace so the
+              ;; thought forms its own fragment rather than coalescing
+              ;; into the previous turn's final thought (same request-count
+              ;; and group-count).  ACP's ContentChunk.messageId is the
+              ;; spec's intended discriminator here, but it is optional and
+              ;; only populated by newer agents, so we group by turn
+              ;; boundary instead.
+              :namespace-id (unless (agent-shell--active-requests-p state) "out-of-turn")
               :block-id (format "%s-agent_thought_chunk"
                                 (map-elt state :chunked-group-count))
               :label-left  (concat
-                            agent-shell-thought-process-icon
-                            " "
+                            (when (and agent-shell-thought-process-icon
+                                       (not (string-empty-p agent-shell-thought-process-icon)))
+                              (concat agent-shell-thought-process-icon " "))
                             (propertize "Thinking" 'font-lock-face 'agent-shell-section-heading))
               :body content
               :append (equal (map-elt state :last-entry-type)
                              "agent_thought_chunk")
               :expanded agent-shell-thought-process-expand-by-default
-              :render-body-images t))
+              :group-id group-id
+              :group-label agent-shell--activity-group-label
+              :group-expanded agent-shell-activity-group-expand-by-default
+              :render-body-images t
+              :above-last-prompt (not (agent-shell--active-requests-p state)))
+             ;; Count this thought (once per thought run, not per streamed
+             ;; chunk) and relabel the header so a thought-only group reads
+             ;; "Thinking"/"Thought" instead of the neutral placeholder, and
+             ;; a mixed group can mention it.
+             (when new-thought-p
+               (agent-shell--count-group-thought state group-id))
+             (agent-shell--refresh-activity-group-header state group-id))
            (map-put! state :last-entry-type "agent_thought_chunk"))
           ((equal (map-nested-elt acp-notification '(params update sessionUpdate)) "user_message_chunk")
-           ;; Only handle user_message_chunks when there's an active session/load
-           ;; or session/push to avoid inserting a redundant shell prompt
-           ;; with the existing user submission.
-           (when (seq-find (lambda (r)
-                             (member (map-elt r :method)
-                                     (append '("session/load")
-                                             (agent-shell-experimental--methods))))
-                           (map-elt state :active-requests))
+           ;; A user_message_chunk replays a user submission.  Render it
+           ;; while a `session/load' or `session/push' is active; with no
+           ;; request in flight at all it has nothing to attach to, so
+           ;; flag it as anomalous; during a live `session/prompt' it is
+           ;; a suppressed no-op.
+           (cond
+            ((seq-find (lambda (r)
+                         (member (map-elt r :method)
+                                 (append '("session/load")
+                                         (agent-shell-experimental--methods))))
+                       (map-elt state :active-requests))
              (let ((new-prompt-p (not (equal (map-elt state :last-entry-type)
                                              "user_message_chunk")))
                    (content-text (or (map-nested-elt acp-notification '(params update content text))
@@ -2287,14 +2697,28 @@ No-op with no members yet."
                                     'font-lock-face 'agent-shell-input))
                 :create-new new-prompt-p
                 :append t))
-             (map-put! state :last-entry-type "user_message_chunk")))
+             (map-put! state :last-entry-type "user_message_chunk"))
+            ((not (agent-shell--active-requests-p state))
+             ;; No session/load or session/push to attach this echo to,
+             ;; and unlike tool calls or message chunks from a background
+             ;; subagent, nothing to render.  Surface it above the fresh
+             ;; prompt for reporting.
+             (agent-shell--update-fragment
+              :state state
+              :block-id "out-of-turn-user-message-chunk"
+              :label-left (propertize "Out of turn user_message_chunk - ACP server bug"
+                                      'font-lock-face 'agent-shell-section-heading)
+              :body (agent-shell--make-out-of-session-turn-notification-body state acp-notification)
+              :append t
+              :above-last-prompt t))))
           ((equal (map-nested-elt acp-notification '(params update sessionUpdate)) "plan")
            (agent-shell--update-fragment
             :state state
             :block-id "plan"
             :label-left (propertize "Plan" 'font-lock-face 'agent-shell-section-heading)
             :body (agent-shell--format-plan (map-nested-elt acp-notification '(params update entries)))
-            :expanded t)
+            :expanded t
+            :above-last-prompt (not (agent-shell--active-requests-p state)))
            (map-put! state :last-entry-type "plan"))
           ((equal (map-nested-elt acp-notification '(params update sessionUpdate)) "tool_call_update")
            ;; Update stored tool call data with new status and content
@@ -2360,7 +2784,13 @@ No-op with no members yet."
                   (diff-text (agent-shell--format-diffs-as-text diffs))
                   (body-text (if diff-text
                                  (concat output "\n\n" diff-text)
-                               output)))
+                               output))
+                  ;; Whether this update introduces a new tool call rather than
+                  ;; editing an earlier one in place.  Captured before the
+                  ;; group-id helper assigns a group, so an in-place update
+                  ;; does not look new.
+                  (tool-newly-grouped
+                   (not (map-nested-elt state `(:tool-calls ,(map-nested-elt acp-notification '(params update toolCallId)) :group-id)))))
              ;; Log tool call to transcript when completed or failed
              (when (and (map-nested-elt acp-notification '(params update status))
                         (member (map-nested-elt acp-notification '(params update status)) '("completed" "failed")))
@@ -2385,7 +2815,7 @@ No-op with no members yet."
                ;; agent-shell--update-fragment param by "session/request_permission".
                (agent-shell--delete-fragment :state state :block-id (format "permission-%s" (map-nested-elt acp-notification '(params update toolCallId)))))
              (let* ((tool-call-labels (agent-shell-make-tool-call-label state (map-nested-elt acp-notification '(params update toolCallId))))
-                    (group-id (agent-shell--tool-call-group-id
+                    (group-id (agent-shell--activity-group-id
                                state (map-nested-elt acp-notification '(params update toolCallId))))
                     (tool-call-id (map-nested-elt acp-notification '(params update toolCallId)))
                     (saved-command (map-nested-elt state `(:tool-calls ,tool-call-id :command)))
@@ -2412,8 +2842,8 @@ No-op with no members yet."
                 :label-left (map-elt tool-call-labels :status)
                 :label-right (map-elt tool-call-labels :title)
                 :group-id group-id
-                :group-label agent-shell--tool-call-group-label
-                :group-expanded agent-shell-tool-use-group-expand-by-default
+                :group-label agent-shell--activity-group-label
+                :group-expanded agent-shell-activity-group-expand-by-default
                 :body (cond
                        (command-block
                         (concat command-block "\n\n" (string-trim body-text)))
@@ -2421,9 +2851,14 @@ No-op with no members yet."
                         (concat input-block "\n\n" (string-trim body-text)))
                        (t
                         (string-trim body-text)))
-                :expanded agent-shell-tool-use-expand-by-default)
-               (agent-shell--refresh-tool-call-group-header state group-id)))
-           (map-put! state :last-entry-type "tool_call_update"))
+                :expanded agent-shell-tool-use-expand-by-default
+                :above-last-prompt (not (agent-shell--active-requests-p state)))
+               (agent-shell--refresh-activity-group-header state group-id))
+             ;; Only advance the run boundary when this update introduced a new
+             ;; tool call (appended at the end).  An in-place update of an
+             ;; earlier tool must not erase an intervening entry's boundary.
+             (when tool-newly-grouped
+               (map-put! state :last-entry-type "tool_call_update"))))
           ((equal (map-nested-elt acp-notification '(params update sessionUpdate)) "available_commands_update")
            (map-put! state :available-commands (map-nested-elt acp-notification '(params update availableCommands)))
            (agent-shell--update-fragment
@@ -2789,7 +3224,7 @@ https://agentclientprotocol.com/protocol/schema#param-stop-reason"
                    'font-lock-face 'agent-shell-list-name)
        "\n"
        (propertize (map-elt cmd 'description)
-                   'font-lock-face 'agent-shell-list-description)))
+                   'font-lock-face 'agent-shell-secondary)))
     commands)
    "\n\n"))
 
@@ -2859,7 +3294,7 @@ Example output:
                (lambda (pair)
                  (when (cdr pair)
                    (propertize (cdr pair)
-                               'font-lock-face 'agent-shell-list-description))))
+                               'font-lock-face 'agent-shell-secondary))))
      :joiner "\n")))
 
 (cl-defun agent-shell--make-diff-infos (&key acp-tool-call)
@@ -3620,8 +4055,8 @@ FORK-SESSION-ID forks an existing session by its id string.
 OUTGOING-REQUEST-DECORATOR is passed through to `acp-make-client'."
   (unless (version<= "0.91.2" shell-maker-version)
     (error "Please update shell-maker to version 0.91.2 or newer"))
-  (unless (version<= "0.12.2" acp-package-version)
-    (error "Please update acp.el to version 0.12.2 or newer"))
+  (unless (version<= "0.13.1" acp-package-version)
+    (error "Please update acp.el to version 0.13.1 or newer"))
   (when (boundp 'agent-shell--transcript-file-path-function)
     (user-error "'agent-shell--transcript-file-path-function is retired.
 
@@ -3680,7 +4115,8 @@ variable (see makunbound)"))
                                                     (when (or (eq status 'ended)
                                                               (get-buffer-window shell-buffer t))
                                                       (with-current-buffer shell-buffer
-                                                        (agent-shell--update-header-and-mode-line)))
+                                                        (agent-shell--update-header-and-mode-line
+                                                         :cache-enabled (eq status 'busy))))
                                                     ;; 'ended is the final tick; render even
                                                     ;; if off-screen to ensure animation is hidden.
                                                     (when-let* ((using-viewports agent-shell-prefer-viewport-interaction)
@@ -3830,7 +4266,11 @@ variable (see makunbound)"))
   (when-let* (((map-elt state :buffer))
               (viewport-buffer (agent-shell-viewport--buffer
                                 :shell-buffer (map-elt state :buffer)
-                                :existing-only t)))
+                                :existing-only t))
+              ;; Fragment deletion only makes sense when viewport is
+              ;; displaying conversation, never while it's an active compose buffer.
+              ((with-current-buffer viewport-buffer
+                 (derived-mode-p 'agent-shell-viewport-view-mode))))
     (with-current-buffer viewport-buffer
       (agent-shell-ui-delete-fragment :namespace-id (map-elt state :request-count) :block-id block-id :no-undo t)))
   (with-current-buffer (map-elt state :buffer)
@@ -4248,6 +4688,14 @@ Returns:
 
 A buffer-local hash table mapping cache keys to header strings.")
 
+(defvar-local agent-shell--header-last-model nil
+  "Header model from the last full header update.
+
+Reused by heartbeat ticks, refreshing only the animated frame, so the
+model (project lookup, context usage, model/mode names, menu keys,
+frame metrics, ...) is not rebuilt on every beat.")
+
+
 (defun agent-shell--session-id-indicator ()
   "Return a propertized session ID string, or nil if unavailable or disabled."
   (when-let* ((agent-shell-show-session-id)
@@ -4288,9 +4736,11 @@ to fall back to black."
         (apply #'color-rgb-to-hex (append rgb '(2)))
       "#ffffff")))
 
-(cl-defun agent-shell--make-header-model (state &key position status bindings)
-  "Create a header model alist from STATE, POSITION, STATUS, and BINDINGS.
-The model contains all inputs needed to render the graphical header."
+(cl-defun agent-shell--make-header-model (state &key position status key-hints menu-keys)
+  "Create a header model alist from STATE and the given header fields.
+The model contains all inputs needed to render the header.  POSITION,
+STATUS, KEY-HINTS and MENU-KEYS are as documented in
+`agent-shell--make-header'."
   `((:buffer-name . ,(map-nested-elt state '(:agent-config :buffer-name)))
     (:icon-name . ,(map-nested-elt state '(:agent-config :icon-name)))
     (:model-id . ,(map-nested-elt state '(:session :model-id)))
@@ -4315,7 +4765,8 @@ The model contains all inputs needed to render the graphical header."
     (:busy-indicator-frame . ,(agent-shell--busy-indicator-frame))
     (:position . ,position)
     (:status . ,status)
-    (:bindings . ,bindings)))
+    (:key-hints . ,key-hints)
+    (:menu-keys . ,menu-keys)))
 
 (defun agent-shell--header-cache-key (model)
   "Generate a cache key from header MODEL.
@@ -4323,7 +4774,7 @@ Joins all values from the model alist."
   (mapconcat (lambda (pair) (format "%s" (cdr pair)))
              model "|"))
 
-(cl-defun agent-shell--make-header (state &key position status bindings model-binding mode-binding thought-level-binding)
+(cl-defun agent-shell--make-header (state &key position status key-hints menu-keys)
   "Return header text for current STATE.
 
 STATE should contain :agent-config with :icon-name, :buffer-name, and
@@ -4336,26 +4787,59 @@ STATUS: Optional string rendered at the end of the bottom line (e.g.
 propertize \"Edit\" with `success' face).  Honors text-property face for
 foreground color.
 
-BINDINGS is a list of alists defining key bindings to display, each with:
+KEY-HINTS is a list of alists defining the key hint row to display, each with:
   :key         - Key string (e.g., \"n\")
   :description - Description to display (e.g., \"next hunk\")
 
-MODEL-BINDING: Optional key description string for the model menu command.
-MODE-BINDING: Optional key description string for the session mode menu command.
-THOUGHT-LEVEL-BINDING: Optional key description string for the thought level
-menu command.
-When provided, included in help-echo tooltips."
+MENU-KEYS is an alist mapping each clickable label to the key description
+string shown in its help-echo tooltip, each with:
+  :model         - Key that opens the model menu
+  :mode          - Key that opens the session mode menu
+  :thought-level - Key that opens the thought level menu"
   (unless state
     (error "STATE is required"))
-  (let* ((header-model (agent-shell--make-header-model state :position position :status status :bindings bindings))
-         (help-binding (seq-find (lambda (b)
-                                   (equal (map-elt b :description) "Help"))
-                                 (map-elt header-model :bindings)))
-         (help-chunk (when help-binding
-                       (concat (propertize (map-elt help-binding :key)
+  (agent-shell--render-header-model
+   (agent-shell--make-header-model state :position position :status status
+                                   :key-hints key-hints :menu-keys menu-keys)))
+
+(defun agent-shell--render-header-model (header-model)
+  "Render HEADER-MODEL to a header string, caching the result.
+
+HEADER-MODEL is an alist produced by `agent-shell--make-header-model',
+holding every input needed to render, including the menu keys.
+
+Rendering builds the whole propertized header string, including three
+clickable menu keymaps, so it is expensive relative to a heartbeat tick.
+The result is cached in `agent-shell--header-cache' keyed on the model.
+During busy animation only the frame glyph varies, so ticks cycle through
+a small fixed set of keys and become cache hits after the first animation
+cycle.  The cache is cleared on every full header update (see
+`agent-shell--update-header-and-mode-line'), which bounds its size and
+keeps entries fresh."
+  (unless (memq agent-shell-header-style '(none nil))
+    (unless agent-shell--header-cache
+      (setq agent-shell--header-cache (make-hash-table :test #'equal)))
+    (let ((cache-key (agent-shell--header-cache-key header-model)))
+      (or (map-elt agent-shell--header-cache cache-key)
+          (let ((header (agent-shell--render-header-model-uncached header-model)))
+            (map-put! agent-shell--header-cache cache-key header)
+            header)))))
+
+(defun agent-shell--render-header-model-uncached (header-model)
+  "Render HEADER-MODEL to a header string without caching."
+  (let* ((key-hints (map-elt header-model :key-hints))
+         (menu-keys (map-elt header-model :menu-keys))
+         (model-binding (map-elt menu-keys :model))
+         (mode-binding (map-elt menu-keys :mode))
+         (thought-level-binding (map-elt menu-keys :thought-level))
+         (help-hint (seq-find (lambda (b)
+                                (equal (map-elt b :description) "Help"))
+                              key-hints))
+         (help-chunk (when help-hint
+                       (concat (propertize (map-elt help-hint :key)
                                            'face 'agent-shell-key-binding)
                                " "
-                               (map-elt help-binding :description))))
+                               (map-elt help-hint :description))))
          (text-header (format " %s%s%s%s%s ➤ %s%s%s%s%s"
                               (cond
                                ((and (map-elt header-model :position)
@@ -4436,213 +4920,207 @@ When provided, included in help-echo tooltips."
            ;; | icon | Top text line
            ;; |      | Bottom text line
            ;; +------+
-           ;; Bindings row (optional, last row)
-           (let* ((cache-key (agent-shell--header-cache-key header-model))
-                  (cached (progn
-                            (unless agent-shell--header-cache
-                              (setq agent-shell--header-cache (make-hash-table :test #'equal)))
-                            (map-elt agent-shell--header-cache cache-key))))
-             (or cached
-                 (let* ((char-height (map-elt header-model :font-height))
-                        (font-size (map-elt header-model :font-size))
-                        (has-bindings bindings)
-                        (image-height (* 3 char-height))
-                        (image-width image-height)
-                        (text-height char-height)
-                        (top-padding-height (/ font-size 2))
-                        (bottom-padding-height (if has-bindings (+ text-height top-padding-height) top-padding-height))
-                        ;; Match the natural inter-line stride between top and
-                        ;; bottom text rows so the bindings row sits the same
-                        ;; vertical distance below the bottom row.
-                        (row-spacing (if has-bindings (- char-height font-size) 0))
-                        (total-height (+ image-height row-spacing top-padding-height bottom-padding-height))
-                        ;; icon position
-                        (icon-x 6)
-                        (icon-y top-padding-height)
-                        ;; text position right of the icon area
-                        (icon-text-x (+ icon-x image-width 10))
-                        (icon-text-y (+ icon-y char-height (/ (- char-height font-size) 2)))
-                        ;; Bindings positioned below the icon area
-                        (bindings-x icon-x)
-                        (bindings-y (+ image-height font-size row-spacing))
-                        (svg (svg-create (map-elt header-model :frame-width) total-height))
-                        (icon-filename
-                         (if (map-elt header-model :icon-name)
-                             (agent-shell--fetch-agent-icon (map-elt header-model :icon-name))
-                           (agent-shell--make-agent-fallback-icon (map-elt header-model :buffer-name) 100)))
-                        (image-type (or (agent-shell--image-type-to-mime icon-filename)
-                                        "image/png")))
-                   ;; Icon
-                   (when (and icon-filename image-type)
-                     (svg-embed svg icon-filename
-                                image-type nil
-                                :x icon-x :y icon-y :width image-width :height image-height))
-                   ;; Top text line
-                   (svg--append svg (let ((text-node (dom-node 'text
-                                                               `((x . ,icon-text-x)
-                                                                 (y . ,icon-text-y)
-                                                                 (font-size . ,font-size)))))
-                                      ;; Agent name
+           ;; Key hints row (optional, last row)
+           ;; Caching is handled by `agent-shell--render-header-model'.
+           (let* ((char-height (map-elt header-model :font-height))
+                  (font-size (map-elt header-model :font-size))
+                  (has-key-hints key-hints)
+                  (image-height (* 3 char-height))
+                  (image-width image-height)
+                  (text-height char-height)
+                  (top-padding-height (/ font-size 2))
+                  (bottom-padding-height (if has-key-hints (+ text-height top-padding-height) top-padding-height))
+                  ;; Match the natural inter-line stride between top and
+                  ;; bottom text rows so the key hints row sits the same
+                  ;; vertical distance below the bottom row.
+                  (row-spacing (if has-key-hints (- char-height font-size) 0))
+                  (total-height (+ image-height row-spacing top-padding-height bottom-padding-height))
+                  ;; icon position
+                  (icon-x 6)
+                  (icon-y top-padding-height)
+                  ;; text position right of the icon area
+                  (icon-text-x (+ icon-x image-width 10))
+                  (icon-text-y (+ icon-y char-height (/ (- char-height font-size) 2)))
+                  ;; Key hints positioned below the icon area
+                  (key-hints-x icon-x)
+                  (key-hints-y (+ image-height font-size row-spacing))
+                  (svg (svg-create (map-elt header-model :frame-width) total-height))
+                  (icon-filename
+                   (if (map-elt header-model :icon-name)
+                       (agent-shell--fetch-agent-icon (map-elt header-model :icon-name))
+                     (agent-shell--make-agent-fallback-icon (map-elt header-model :buffer-name) 100)))
+                  (image-type (or (agent-shell--image-type-to-mime icon-filename)
+                                  "image/png")))
+             ;; Icon
+             (when (and icon-filename image-type)
+               (svg-embed svg icon-filename
+                          image-type nil
+                          :x icon-x :y icon-y :width image-width :height image-height))
+             ;; Top text line
+             (svg--append svg (let ((text-node (dom-node 'text
+                                                         `((x . ,icon-text-x)
+                                                           (y . ,icon-text-y)
+                                                           (font-size . ,font-size)))))
+                                ;; Agent name
+                                (dom-append-child text-node
+                                                  (dom-node 'tspan
+                                                            `((fill . ,(agent-shell--svg-fill-color 'agent-shell-buffer-name)))
+                                                            (map-elt header-model :buffer-name)))
+                                ;; Model name (optional)
+                                (when (map-elt header-model :model-name)
+                                  ;; Add separator arrow
+                                  (dom-append-child text-node
+                                                    (dom-node 'tspan
+                                                              `((fill . ,(agent-shell--svg-fill-color 'default))
+                                                                (dx . "8"))
+                                                              "➤"))
+                                  ;; Add model name
+                                  (dom-append-child text-node
+                                                    (dom-node 'tspan
+                                                              `((fill . ,(agent-shell--svg-fill-color 'agent-shell-model))
+                                                                (dx . "8"))
+                                                              (map-elt header-model :model-name))))
+                                ;; Thought level (optional)
+                                (when (map-elt header-model :thought-level-id)
+                                  (dom-append-child text-node
+                                                    (dom-node 'tspan
+                                                              `((fill . ,(agent-shell--svg-fill-color 'default))
+                                                                (dx . "8"))
+                                                              "➤"))
+                                  (dom-append-child text-node
+                                                    (dom-node 'tspan
+                                                              `((fill . ,(agent-shell--svg-fill-color 'agent-shell-thought-level))
+                                                                (dx . "8"))
+                                                              (map-elt header-model :thought-level-name))))
+                                ;; Session mode (optional)
+                                (when (map-elt header-model :mode-name)
+                                  ;; Add separator arrow
+                                  (dom-append-child text-node
+                                                    (dom-node 'tspan
+                                                              `((fill . ,(agent-shell--svg-fill-color 'default))
+                                                                (dx . "8"))
+                                                              "➤"))
+                                  ;; Add session mode text
+                                  (dom-append-child text-node
+                                                    (dom-node 'tspan
+                                                              `((fill . ,(agent-shell--svg-fill-color 'agent-shell-session-mode))
+                                                                (dx . "8"))
+                                                              (map-elt header-model :mode-name))))
+                                (when (map-elt header-model :context-indicator)
+                                  (when (> (length (map-elt header-model :context-indicator)) 1)
+                                    ;; Add separator arrow
+                                    (dom-append-child text-node
+                                                      (dom-node 'tspan
+                                                                `((fill . ,(agent-shell--svg-fill-color 'default))
+                                                                  (dx . "8"))
+                                                                "➤")))
+                                  ;; Add context indicator
+                                  (dom-append-child text-node
+                                                    (dom-node 'tspan
+                                                              `((fill . ,(agent-shell--svg-fill-color
+                                                                          (or (get-text-property 0 'face (map-elt header-model :context-indicator))
+                                                                              'default)))
+                                                                (dx . "8"))
+                                                              (format-mode-line (map-elt header-model :context-indicator)))))
+                                text-node))
+             ;; Bottom text line
+             (svg--append svg (let ((text-node (dom-node 'text
+                                                         `((x . ,icon-text-x)
+                                                           (y . ,(+ icon-text-y text-height (- char-height font-size)))
+                                                           (font-size . ,font-size)))))
+                                ;; Position (optional, before project)
+                                (when (map-elt header-model :position)
+                                  (dom-append-child text-node
+                                                    (dom-node 'tspan
+                                                              `((fill . ,(agent-shell--svg-fill-color
+                                                                          (or (get-text-property 0 'face (map-elt header-model :position))
+                                                                              'default))))
+                                                              (substring-no-properties (map-elt header-model :position))))
+                                  (dom-append-child text-node
+                                                    (dom-node 'tspan
+                                                              `((fill . ,(agent-shell--svg-fill-color 'default))
+                                                                (dx . "8"))
+                                                              "➤")))
+                                ;; Directory path
+                                (dom-append-child text-node
+                                                  (dom-node 'tspan
+                                                            `((fill . ,(agent-shell--svg-fill-color 'agent-shell-session-directory))
+                                                              ,@(when (map-elt header-model :position) '((dx . "8"))))
+                                                            (map-elt header-model :project-name)))
+                                ;; Session ID (optional)
+                                (when (map-elt header-model :session-id)
+                                  ;; Separator arrow (default foreground)
+                                  (dom-append-child text-node
+                                                    (dom-node 'tspan
+                                                              `((fill . ,(agent-shell--svg-fill-color 'default))
+                                                                (dx . "8"))
+                                                              "➤"))
+                                  ;; Session ID text
+                                  (dom-append-child text-node
+                                                    (dom-node 'tspan
+                                                              `((fill . ,(agent-shell--svg-fill-color 'agent-shell-session-id))
+                                                                (dx . "8"))
+                                                              (substring-no-properties (map-elt header-model :session-id)))))
+                                ;; Status (optional)
+                                (when (map-elt header-model :status)
+                                  (dom-append-child text-node
+                                                    (dom-node 'tspan
+                                                              `((fill . ,(agent-shell--svg-fill-color 'default))
+                                                                (dx . "8"))
+                                                              "➤"))
+                                  (dom-append-child text-node
+                                                    (dom-node 'tspan
+                                                              `((fill . ,(agent-shell--svg-fill-color
+                                                                          (or (get-text-property 0 'face (map-elt header-model :status))
+                                                                              'default)))
+                                                                (dx . "8"))
+                                                              (substring-no-properties (map-elt header-model :status)))))
+                                (when (map-elt header-model :busy-indicator-frame)
+                                  (dom-append-child text-node
+                                                    (dom-node 'tspan
+                                                              `((fill . ,(agent-shell--svg-fill-color 'default))
+                                                                (dx . "8"))
+                                                              (map-elt header-model :busy-indicator-frame))))
+                                text-node))
+             ;; Key hints row (last row if key hints present)
+             (when key-hints
+               (svg--append svg (let ((text-node (dom-node 'text
+                                                           `((x . ,key-hints-x)
+                                                             (y . ,key-hints-y)
+                                                             (font-size . ,font-size))))
+                                      (first t))
+                                  (dolist (hint key-hints)
+                                    (when (map-elt hint :description)
+                                      ;; Add key (XML-escape angle brackets)
                                       (dom-append-child text-node
                                                         (dom-node 'tspan
-                                                                  `((fill . ,(agent-shell--svg-fill-color 'agent-shell-buffer-name)))
-                                                                  (map-elt header-model :buffer-name)))
-                                      ;; Model name (optional)
-                                      (when (map-elt header-model :model-name)
-                                        ;; Add separator arrow
-                                        (dom-append-child text-node
-                                                          (dom-node 'tspan
-                                                                    `((fill . ,(agent-shell--svg-fill-color 'default))
-                                                                      (dx . "8"))
-                                                                    "➤"))
-                                        ;; Add model name
-                                        (dom-append-child text-node
-                                                          (dom-node 'tspan
-                                                                    `((fill . ,(agent-shell--svg-fill-color 'agent-shell-model))
-                                                                      (dx . "8"))
-                                                                    (map-elt header-model :model-name))))
-                                      ;; Thought level (optional)
-                                      (when (map-elt header-model :thought-level-id)
-                                        (dom-append-child text-node
-                                                          (dom-node 'tspan
-                                                                    `((fill . ,(agent-shell--svg-fill-color 'default))
-                                                                      (dx . "8"))
-                                                                    "➤"))
-                                        (dom-append-child text-node
-                                                          (dom-node 'tspan
-                                                                    `((fill . ,(agent-shell--svg-fill-color 'agent-shell-thought-level))
-                                                                      (dx . "8"))
-                                                                    (map-elt header-model :thought-level-name))))
-                                      ;; Session mode (optional)
-                                      (when (map-elt header-model :mode-name)
-                                        ;; Add separator arrow
-                                        (dom-append-child text-node
-                                                          (dom-node 'tspan
-                                                                    `((fill . ,(agent-shell--svg-fill-color 'default))
-                                                                      (dx . "8"))
-                                                                    "➤"))
-                                        ;; Add session mode text
-                                        (dom-append-child text-node
-                                                          (dom-node 'tspan
-                                                                    `((fill . ,(agent-shell--svg-fill-color 'agent-shell-session-mode))
-                                                                      (dx . "8"))
-                                                                    (map-elt header-model :mode-name))))
-                                      (when (map-elt header-model :context-indicator)
-                                        (when (> (length (map-elt header-model :context-indicator)) 1)
-                                          ;; Add separator arrow
-                                          (dom-append-child text-node
-                                                            (dom-node 'tspan
-                                                                      `((fill . ,(agent-shell--svg-fill-color 'default))
-                                                                        (dx . "8"))
-                                                                      "➤")))
-                                        ;; Add context indicator
-                                        (dom-append-child text-node
-                                                          (dom-node 'tspan
-                                                                    `((fill . ,(agent-shell--svg-fill-color
-                                                                                (or (get-text-property 0 'face (map-elt header-model :context-indicator))
-                                                                                    'default)))
-                                                                      (dx . "8"))
-                                                                    (format-mode-line (map-elt header-model :context-indicator)))))
-                                      text-node))
-                   ;; Bottom text line
-                   (svg--append svg (let ((text-node (dom-node 'text
-                                                               `((x . ,icon-text-x)
-                                                                 (y . ,(+ icon-text-y text-height (- char-height font-size)))
-                                                                 (font-size . ,font-size)))))
-                                      ;; Position (optional, before project)
-                                      (when (map-elt header-model :position)
-                                        (dom-append-child text-node
-                                                          (dom-node 'tspan
-                                                                    `((fill . ,(agent-shell--svg-fill-color
-                                                                                (or (get-text-property 0 'face (map-elt header-model :position))
-                                                                                    'default))))
-                                                                    (substring-no-properties (map-elt header-model :position))))
-                                        (dom-append-child text-node
-                                                          (dom-node 'tspan
-                                                                    `((fill . ,(agent-shell--svg-fill-color 'default))
-                                                                      (dx . "8"))
-                                                                    "➤")))
-                                      ;; Directory path
+                                                                  `((fill . ,(agent-shell--svg-fill-color 'agent-shell-key-binding))
+                                                                    ,@(unless first '((dx . "8"))))
+                                                                  (replace-regexp-in-string
+                                                                   "<" "&lt;"
+                                                                   (replace-regexp-in-string
+                                                                    ">" "&gt;"
+                                                                    (map-elt hint :key)))))
+                                      (setq first nil)
+                                      ;; Add space and description
                                       (dom-append-child text-node
                                                         (dom-node 'tspan
-                                                                  `((fill . ,(agent-shell--svg-fill-color 'agent-shell-session-directory))
-                                                                    ,@(when (map-elt header-model :position) '((dx . "8"))))
-                                                                  (map-elt header-model :project-name)))
-                                      ;; Session ID (optional)
-                                      (when (map-elt header-model :session-id)
-                                        ;; Separator arrow (default foreground)
-                                        (dom-append-child text-node
-                                                          (dom-node 'tspan
-                                                                    `((fill . ,(agent-shell--svg-fill-color 'default))
-                                                                      (dx . "8"))
-                                                                    "➤"))
-                                        ;; Session ID text
-                                        (dom-append-child text-node
-                                                          (dom-node 'tspan
-                                                                    `((fill . ,(agent-shell--svg-fill-color 'agent-shell-session-id))
-                                                                      (dx . "8"))
-                                                                    (substring-no-properties (map-elt header-model :session-id)))))
-                                      ;; Status (optional)
-                                      (when (map-elt header-model :status)
-                                        (dom-append-child text-node
-                                                          (dom-node 'tspan
-                                                                    `((fill . ,(agent-shell--svg-fill-color 'default))
-                                                                      (dx . "8"))
-                                                                    "➤"))
-                                        (dom-append-child text-node
-                                                          (dom-node 'tspan
-                                                                    `((fill . ,(agent-shell--svg-fill-color
-                                                                                (or (get-text-property 0 'face (map-elt header-model :status))
-                                                                                    'default)))
-                                                                      (dx . "8"))
-                                                                    (substring-no-properties (map-elt header-model :status)))))
-                                      (when (map-elt header-model :busy-indicator-frame)
-                                        (dom-append-child text-node
-                                                          (dom-node 'tspan
-                                                                    `((fill . ,(agent-shell--svg-fill-color 'default))
-                                                                      (dx . "8"))
-                                                                    (map-elt header-model :busy-indicator-frame))))
-                                      text-node))
-                   ;; Bindings row (last row if bindings present)
-                   (when bindings
-                     (svg--append svg (let ((text-node (dom-node 'text
-                                                                 `((x . ,bindings-x)
-                                                                   (y . ,bindings-y)
-                                                                   (font-size . ,font-size))))
-                                            (first t))
-                                        (dolist (binding bindings)
-                                          (when (map-elt binding :description)
-                                            ;; Add key (XML-escape angle brackets)
-                                            (dom-append-child text-node
-                                                              (dom-node 'tspan
-                                                                        `((fill . ,(agent-shell--svg-fill-color 'agent-shell-key-binding))
-                                                                          ,@(unless first '((dx . "8"))))
-                                                                        (replace-regexp-in-string
-                                                                         "<" "&lt;"
-                                                                         (replace-regexp-in-string
-                                                                          ">" "&gt;"
-                                                                          (map-elt binding :key)))))
-                                            (setq first nil)
-                                            ;; Add space and description
-                                            (dom-append-child text-node
-                                                              (dom-node 'tspan
-                                                                        `((fill . ,(agent-shell--svg-fill-color 'font-lock-comment-face))
-                                                                          (dx . "8"))
-                                                                        (map-elt binding :description)))))
-                                        text-node)))
-                   (let ((result (propertize
-                                  (format " %s" (with-temp-buffer
-                                                  (svg-insert-image svg)
-                                                  (buffer-string)))
-                                  'help-echo "Click to open settings menu"
-                                  'mouse-face 'mode-line-highlight
-                                  'local-map (let ((map (make-sparse-keymap)))
-                                               (define-key map [header-line down-mouse-1] #'ignore)
-                                               (define-key map [header-line mouse-1]
-                                                           (agent-shell--mode-line-combined-menu))
-                                               map))))
-                     (map-put! agent-shell--header-cache cache-key result)
-                     result))))
+                                                                  `((fill . ,(agent-shell--svg-fill-color 'font-lock-comment-face))
+                                                                    (dx . "8"))
+                                                                  (map-elt hint :description)))))
+                                  text-node)))
+             (let ((result (propertize
+                            (format " %s" (with-temp-buffer
+                                            (svg-insert-image svg)
+                                            (buffer-string)))
+                            'help-echo "Click to open settings menu"
+                            'mouse-face 'mode-line-highlight
+                            'local-map (let ((map (make-sparse-keymap)))
+                                         (define-key map [header-line down-mouse-1] #'ignore)
+                                         (define-key map [header-line mouse-1]
+                                                     (agent-shell--mode-line-combined-menu))
+                                         map))))
+               result))
          text-header))
       (_ text-header))))
 
@@ -4655,23 +5133,45 @@ Returns a MIME type like \"image/png\" or \"image/jpeg\"."
       ('svg "image/svg+xml")
       (_ (format "image/%s" type)))))
 
-(defun agent-shell--update-header-and-mode-line ()
-  "Update header and mode line based on `agent-shell-header-style'."
+(cl-defun agent-shell--update-header-and-mode-line (&key cache-enabled)
+  "Update header and mode line based on `agent-shell-header-style'.
+
+With CACHE-ENABLED non-nil (used by heartbeat ticks), reuse the model
+from the last full update and refresh only the animated busy frame,
+avoiding a full rebuild.  With CACHE-ENABLED nil (a full update), rebuild
+everything and clear the render cache."
   (unless (derived-mode-p 'agent-shell-mode)
     (error "Not in a shell"))
+  ;; A full update means some non-animation input changed, so drop the
+  ;; render cache.  This bounds its size to the animation's frame count
+  ;; and keeps entries fresh.  Cached (busy tick) updates keep it.
+  (unless cache-enabled
+    (setq agent-shell--header-cache nil))
   (setq header-line-format
-        (agent-shell--make-header (agent-shell--state)
-                                  :model-binding (key-description (where-is-internal
-                                                                   'agent-shell-set-session-model
-                                                                   agent-shell-mode-map t))
-                                  :mode-binding (key-description (where-is-internal
-                                                                  'agent-shell-set-session-mode
-                                                                  agent-shell-mode-map t))
-                                  :thought-level-binding (key-description (where-is-internal
-                                                                           'agent-shell-set-session-thought-level
-                                                                           agent-shell-mode-map t))))
+        (agent-shell--render-header-model
+         (if (and cache-enabled agent-shell--header-last-model)
+             (agent-shell--header-model-refresh-frame agent-shell--header-last-model)
+           (setq agent-shell--header-last-model
+                 (agent-shell--make-header-model
+                  (agent-shell--state)
+                  :menu-keys `((:model . ,(key-description (where-is-internal
+                                                            'agent-shell-set-session-model
+                                                            agent-shell-mode-map t)))
+                               (:mode . ,(key-description (where-is-internal
+                                                           'agent-shell-set-session-mode
+                                                           agent-shell-mode-map t)))
+                               (:thought-level . ,(key-description (where-is-internal
+                                                                    'agent-shell-set-session-thought-level
+                                                                    agent-shell-mode-map t)))))))))
   (when (memq agent-shell-header-style '(text none nil))
     (force-mode-line-update)))
+
+(defun agent-shell--header-model-refresh-frame (model)
+  "Return a copy of MODEL with its busy-indicator frame refreshed.
+Copies so the cached MODEL is left untouched."
+  (let ((copy (copy-alist model)))
+    (map-put! copy :busy-indicator-frame (agent-shell--busy-indicator-frame))
+    copy))
 
 (defun agent-shell--fetch-agent-icon (icon-name)
   "Download icon with ICON-NAME from GitHub, only if it exists, and save as binary.
@@ -4943,9 +5443,18 @@ recorded in STATE and released by `agent-shell--uninhibit-sleep'."
   ;; Block system idle sleep but allow the display to blank.
   (when-let* ((agent-shell-inhibit-system-sleep)
               ((not (map-elt state :sleep-token)))
-              ((fboundp 'system-sleep-block-sleep))
-              (token (system-sleep-block-sleep "agent-shell (agent busy)" t)))
-    (map-put! state :sleep-token token)))
+              ((fboundp 'system-sleep-block-sleep)))
+    ;; `system-sleep-block-sleep' talks to logind over D-Bus, which can fail
+    ;; (e.g. "Permission denied" under WSL where no logind session exists).
+    ;; Degrade gracefully instead of letting the error break event dispatch.
+    ;; Report the failure so the user can set `agent-shell-inhibit-system-sleep'
+    ;; to nil to opt out.
+    (condition-case err
+        (when-let* ((token (system-sleep-block-sleep "agent-shell (agent busy)" t)))
+          (map-put! state :sleep-token token))
+      (error
+       (message "Sleep inhibit unavailable (%s).  Set `agent-shell-inhibit-system-sleep' to nil to disable."
+                (error-message-string err))))))
 
 (defun agent-shell--uninhibit-sleep (state)
   "Release any system sleep block held by STATE's shell."
@@ -5564,18 +6073,18 @@ Falls back to latest session in batch mode (e.g. tests)."
                                                               acp-sessions))))
                                    columns)))
              ;; TODO: Consolidate choices with `agent-shell--shell-buffer'.
-             (session-choices (append (list (cons new-session-choice nil)
-                                            (cons "New Downloads shell" :downloads-shell)
-                                            (cons "New temp shell" :temp-shell))
-                                      (when other-shells
-                                        (list (cons "Switch to shell buffer" :other-shell)))
-                                      (mapcar (lambda (acp-session)
-                                                (cons (agent-shell--session-choice-label
-                                                       :acp-session acp-session
-                                                       :max-widths max-widths)
-                                                      acp-session))
-                                              acp-sessions)))
-             (candidates (mapcar #'car session-choices))
+             (session-choices (agent-shell--apply-session-choices
+                               (append (list (cons new-session-choice :new-shell)
+                                             (cons "New Downloads shell" :downloads-shell)
+                                             (cons "New temp shell" :temp-shell))
+                                       (when other-shells
+                                         (list (cons "Switch to shell buffer" :other-shell)))
+                                       (mapcar (lambda (acp-session)
+                                                 (cons (agent-shell--session-choice-label
+                                                        :acp-session acp-session
+                                                        :max-widths max-widths)
+                                                       acp-session))
+                                               acp-sessions))))
              ;; Some completion frameworks yielded appended (nil) to each line
              ;; unless this-command was bound.
              ;;
@@ -5585,17 +6094,29 @@ Falls back to latest session in batch mode (e.g. tests)."
              ;; Let's optimize the rocket engine      Feb 12, 21:02 (nil)
              (this-command 'agent-shell))
         (agent-shell--emit-event :event 'session-prompt)
-        (let ((selection (completing-read "Start shell (default: new): "
-                                          (lambda (string pred action)
-                                            (if (eq action 'metadata)
-                                                '(metadata
-                                                  (display-sort-function . identity)
-                                                  (eager-display . t)
-                                                  (eager-update . t))
-                                              (complete-with-action action candidates string pred)))
-                                          nil t nil nil
-                                          new-session-choice)))
+        ;; Default to the first surviving choice, since a transform may have
+        ;; reordered or dropped new-shell.  Sessions get a generic label
+        ;; (their real label is a long column-padded string).
+        (let* ((default-choice (caar session-choices))
+               (selection (if (length= session-choices 1)
+                              ;; Only one choice available; follow it without prompting.
+                              default-choice
+                            (completing-read
+                             (format "Start shell (default: %s): "
+                                     (if (keywordp (cdar session-choices))
+                                         default-choice
+                                       "Resume session"))
+                             (lambda (string pred action)
+                               (if (eq action 'metadata)
+                                   '(metadata
+                                     (display-sort-function . identity)
+                                     (eager-display . t)
+                                     (eager-update . t))
+                                 (complete-with-action action session-choices string pred)))
+                             nil t nil nil
+                             default-choice))))
           (pcase (map-elt session-choices selection)
+            (:new-shell nil)
             (:other-shell
              (let ((other-shell (agent-shell--read-shell-buffer
                                  :prompt "Switch to shell buffer: "
@@ -5734,7 +6255,8 @@ overwrites an existing fragment with equivalent content."
    :client (map-elt (agent-shell--state) :client)
    :request (acp-make-session-new-request
              :cwd (agent-shell--resolve-path (agent-shell-cwd))
-             :mcp-servers (agent-shell--mcp-servers))
+             :mcp-servers (agent-shell--mcp-servers)
+             :meta (map-nested-elt (agent-shell--state) '(:agent-config :session-meta)))
    :buffer (current-buffer)
    :on-success (lambda (acp-response)
                  (map-put! agent-shell--state
@@ -5962,11 +6484,13 @@ SESSION-TITLE is an optional display title for the resumed session."
                     (acp-make-session-load-request
                      :session-id session-id
                      :cwd cwd
-                     :mcp-servers mcp-servers)
+                     :mcp-servers mcp-servers
+                     :meta (map-nested-elt (agent-shell--state) '(:agent-config :session-meta)))
                   (acp-make-session-resume-request
                    :session-id session-id
                    :cwd cwd
-                   :mcp-servers mcp-servers)))
+                   :mcp-servers mcp-servers
+                   :meta (map-nested-elt (agent-shell--state) '(:agent-config :session-meta)))))
      :buffer (current-buffer)
      :on-success (lambda (acp-load-response)
                    (agent-shell--set-session-from-response
@@ -6014,7 +6538,8 @@ SESSION-TITLE is an optional display title for the resumed session."
    :request (acp-make-session-fork-request
              :session-id session-id
              :cwd (agent-shell--resolve-path (agent-shell-cwd))
-             :mcp-servers (agent-shell--mcp-servers))
+             :mcp-servers (agent-shell--mcp-servers)
+             :meta (map-nested-elt (agent-shell--state) '(:agent-config :session-meta)))
    :buffer (current-buffer)
    :on-success (lambda (acp-fork-response)
                  (let ((new-session-id (map-elt acp-fork-response 'sessionId)))
@@ -6105,11 +6630,13 @@ SESSION-TITLE is an optional display title for the resumed session."
                                                    (acp-make-session-load-request
                                                     :session-id acp-session-id
                                                     :cwd cwd
-                                                    :mcp-servers mcp-servers)
+                                                    :mcp-servers mcp-servers
+                                                    :meta (map-nested-elt (agent-shell--state) '(:agent-config :session-meta)))
                                                  (acp-make-session-resume-request
                                                   :session-id acp-session-id
                                                   :cwd cwd
-                                                  :mcp-servers mcp-servers)))
+                                                  :mcp-servers mcp-servers
+                                                  :meta (map-nested-elt (agent-shell--state) '(:agent-config :session-meta)))))
                                     :buffer (current-buffer)
                                     :on-success (lambda (acp-load-response)
                                                   (agent-shell--set-session-from-response
@@ -6209,13 +6736,16 @@ Example:
 (defun agent-shell--mcp-servers ()
   "Return normalized MCP servers configuration for JSON serialization.
 
-Each entry is normalized via `agent-shell--make-mcp-server'."
-  (when agent-shell-mcp-servers
+The agent config's `:mcp-servers' take precedence over the global
+`agent-shell-mcp-servers'.  Each entry is normalized via
+`agent-shell--make-mcp-server'."
+  (when-let* ((servers (or (map-nested-elt agent-shell--state '(:agent-config :mcp-servers))
+                           agent-shell-mcp-servers)))
     (apply #'vector
            (mapcar (lambda (server)
                      (agent-shell--make-mcp-server
                       :overrides (agent-shell--eval-dynamic-values server)))
-                   agent-shell-mcp-servers))))
+                   servers))))
 
 (cl-defun agent-shell--subscribe-to-client-events (&key state)
   "Subscribe SHELL and STATE to ACP events."
@@ -6235,7 +6765,13 @@ Each entry is normalized via `agent-shell--make-mcp-server'."
   (acp-subscribe-to-notifications
    :client (map-elt state :client)
    :on-notification (lambda (acp-notification)
-                      (agent-shell--on-notification :state state :acp-notification acp-notification)))
+                      (agent-shell--on-notification
+                       :state state
+                       :acp-notification
+                       (agent-shell--adapt-notification
+                        :state state
+                        :acp-notification acp-notification)
+                       )))
   (acp-subscribe-to-requests
    :client (map-elt state :client)
    :on-request (lambda (acp-request)
@@ -6639,19 +7175,12 @@ Each marked span is replaced by its `agent-shell-region-text' value."
                                   :shell-buffer shell-buffer
                                   :existing-only t)))
       (with-current-buffer viewport-buffer
-        ;; When a command is sent (e.g. a queued request executing)
-        ;; while the user is composing in the viewport edit buffer,
-        ;; preserve the draft so it can be restored on the next return
-        ;; to edit mode instead of being wiped by the view-mode switch.
-        (when (and (derived-mode-p 'agent-shell-viewport-edit-mode)
-                   (not (string-empty-p (string-trim (buffer-string))))
-                   (not agent-shell-viewport--compose-snapshot))
-          (setq agent-shell-viewport--compose-snapshot
-                `((:content . ,(buffer-string))
-                  (:location . ,(point)))))
-        (agent-shell-viewport-view-mode)
-        (agent-shell-viewport--initialize
-         :prompt  prompt)))
+        ;; Refresh the viewport to show the just-sent prompt, but only
+        ;; when it's displaying the conversation. Don't interrupt
+        ;; any potential prompt crafting (ie. edit mode).
+        (when (derived-mode-p 'agent-shell-viewport-view-mode)
+          (agent-shell-viewport--initialize
+           :prompt prompt))))
 
     (agent-shell--send-request
      :state agent-shell--state
@@ -6771,26 +7300,29 @@ Returns a buffer object or nil."
         (if (and (eq agent-shell-session-strategy 'new-deferred)
                  (agent-shell-buffers))
             ;; TODO: Consolidate choices with `agent-shell--prompt-select-session'.
-            (let* ((start-new "New shell")
-                   (start-downloads "New Downloads shell")
-                   (start-temp "New temp shell")
-                   (open-existing "Switch to shell buffer")
-                   (choice (completing-read "Start shell (default: new): "
-                                            (list start-new start-downloads start-temp open-existing) nil t)))
-              (cond
-               ((equal choice open-existing)
-                (agent-shell--read-shell-buffer :prompt "Switch to shell buffer: "))
-               ((equal choice start-downloads)
-                (agent-shell-new-downloads-shell :no-display t))
-               ((equal choice start-temp)
-                (agent-shell-new-temp-shell :no-display t))
-               (t
-                (agent-shell--start :config (or (agent-shell--auto-preferred-config)
-                                                (agent-shell-select-config
-                                                 :prompt "Start new agent: ")
-                                                (error "No agent config found"))
-                                    :no-focus t
-                                    :new-session t))))
+            (let* ((choices (agent-shell--apply-session-choices
+                             (list (cons "New shell" :new-shell)
+                                   (cons "New Downloads shell" :downloads-shell)
+                                   (cons "New temp shell" :temp-shell)
+                                   (cons "Switch to shell buffer" :other-shell))))
+                   (selection (if (length= choices 1)
+                                  ;; Only one choice available; follow it without prompting.
+                                  (caar choices)
+                                (completing-read "Start shell (default: new): " choices nil t))))
+              (pcase (map-elt choices selection)
+                (:other-shell
+                 (agent-shell--read-shell-buffer :prompt "Switch to shell buffer: "))
+                (:downloads-shell
+                 (agent-shell-new-downloads-shell :no-display t))
+                (:temp-shell
+                 (agent-shell-new-temp-shell :no-display t))
+                (_
+                 (agent-shell--start :config (or (agent-shell--auto-preferred-config)
+                                                 (agent-shell-select-config
+                                                  :prompt "Start new agent: ")
+                                                 (error "No agent config found"))
+                                     :no-focus t
+                                     :new-session t))))
           (agent-shell--start :config (or (agent-shell--auto-preferred-config)
                                           (agent-shell-select-config
                                            :prompt "Start new agent: ")
@@ -7813,7 +8345,8 @@ Returns an alist with insertion details or nil otherwise:
 Uses optional SHELL-BUFFER to make paths relative to shell project."
   (if (and (not (derived-mode-p 'agent-shell-mode))
            (or agent-shell-prefer-viewport-interaction
-               (derived-mode-p 'agent-shell-viewport-edit-mode)))
+               (derived-mode-p 'agent-shell-viewport-edit-mode)
+               (derived-mode-p 'agent-shell-viewport-view-mode)))
       (agent-shell-viewport--show-buffer :append text :submit submit
                                          :no-focus no-focus :shell-buffer shell-buffer)
     (agent-shell--insert-to-shell-buffer :text text :submit submit
@@ -8746,7 +9279,7 @@ with ON-SUCCESS function."
                                 'font-lock-face 'agent-shell-list-name)))
             (desc (when (map-elt mode :description)
                     (propertize (map-elt mode :description)
-                                'font-lock-face 'agent-shell-list-description))))
+                                'font-lock-face 'agent-shell-secondary))))
         (if desc
             (concat name "\n" desc)
           name)))
@@ -8767,7 +9300,7 @@ with ON-SUCCESS function."
                                  'font-lock-face 'agent-shell-list-name))))
             (desc (when (map-elt model :description)
                     (propertize (map-elt model :description)
-                                'font-lock-face 'agent-shell-list-description))))
+                                'font-lock-face 'agent-shell-secondary))))
         (if desc
             (concat name "\n" desc)
           name)))

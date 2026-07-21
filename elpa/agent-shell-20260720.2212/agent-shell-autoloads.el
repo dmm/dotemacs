@@ -26,12 +26,19 @@ Keyword arguments:
 - AUTHENTICATE-REQUEST-MAKER: Function to create authentication requests
 - DEFAULT-MODEL-ID: Default model ID (function returning value).
 - DEFAULT-SESSION-MODE-ID: Default session mode ID (function returning value).
+- SESSION-META: Optional alist of agent-specific metadata sent as `_meta'
+  with session-creating requests (`session/new', `session/load',
+  `session/resume', and `session/fork').
+- MCP-SERVERS: Optional list of MCP servers for this agent, taking
+  precedence over the global `agent-shell-mcp-servers'.  Same shape as
+  that variable.
+- NOTIFICATION-ADAPTER: Optional function to modify/normalize `notification'
 - ICON-NAME: Name of the icon to use
 - INSTALL-INSTRUCTIONS: Instructions to show when executable is not found
 
 Returns an alist with all specified values.
 
-(fn &key IDENTIFIER MODE-LINE-NAME WELCOME-FUNCTION BUFFER-NAME SHELL-PROMPT SHELL-PROMPT-REGEXP CLIENT-MAKER NEEDS-AUTHENTICATION AUTHENTICATE-REQUEST-MAKER DEFAULT-MODEL-ID DEFAULT-SESSION-MODE-ID ICON-NAME INSTALL-INSTRUCTIONS)")
+(fn &key IDENTIFIER MODE-LINE-NAME WELCOME-FUNCTION BUFFER-NAME SHELL-PROMPT SHELL-PROMPT-REGEXP CLIENT-MAKER NEEDS-AUTHENTICATION AUTHENTICATE-REQUEST-MAKER DEFAULT-MODEL-ID DEFAULT-SESSION-MODE-ID SESSION-META MCP-SERVERS NOTIFICATION-ADAPTER ICON-NAME INSTALL-INSTRUCTIONS)")
 (autoload 'agent-shell "agent-shell" "\
 Start or reuse an existing agent shell.
 
@@ -295,6 +302,8 @@ evaluate the variable `agent-shell-ui-mode'.
 The mode's hook is called both when the mode is enabled and when it is
 disabled.
 
+\\{agent-shell-ui-mode-map}
+
 (fn &optional ARG)" t)
 (register-definition-prefixes "agent-shell-ui" '("agent-shell-ui-"))
 
@@ -324,6 +333,11 @@ where <worktree-name> is a randomly generated name (e.g., \"adoring-hawking\").
 
 The user is prompted to confirm or edit the worktree path before creation." t)
 (register-definition-prefixes "agent-shell-worktree" '("agent-shell-worktree--"))
+
+
+;;; Generated autoloads from agent-shell-xai.el
+
+(register-definition-prefixes "agent-shell-xai" '("agent-shell-xai-"))
 
 ;;; End of scraped data
 

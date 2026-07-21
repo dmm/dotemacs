@@ -268,7 +268,7 @@ name, id, current value, and optional description."
                                  'font-lock-face 'agent-shell-list-value))
             (desc (when (map-elt option :description)
                     (propertize (map-elt option :description)
-                                'font-lock-face 'agent-shell-list-description))))
+                                'font-lock-face 'agent-shell-secondary))))
         (string-join (delq nil (list name current desc)) "\n")))
     config-options)
    "\n\n"))

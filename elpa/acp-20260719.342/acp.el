@@ -4,11 +4,11 @@
 
 ;; Author: Alvaro Ramirez https://xenodium.com
 ;; URL: https://github.com/xenodium/acp.el
-;; Package-Version: 20260709.759
-;; Package-Revision: 5140f4121156
+;; Package-Version: 20260719.342
+;; Package-Revision: a29cb161ac95
 ;; Package-Requires: ((emacs "28.1"))
 
-(defconst acp-package-version "0.12.2")
+(defconst acp-package-version "0.13.1")
 
 ;; This package is free software; you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
@@ -638,12 +638,13 @@ See https://agentclientprotocol.com/protocol/session-config-options"
                 (configId . ,config-id)
                 (value . ,value)))))
 
-(cl-defun acp-make-session-resume-request (&key session-id cwd mcp-servers)
+(cl-defun acp-make-session-resume-request (&key session-id cwd mcp-servers meta)
   "Instantiate a \"session/resume\" request.
 
 SESSION-ID is the ID of the session to resume.
 CWD is the current working directory for the resumed session.
 MCP-SERVERS is an optional list of MCP servers to use.
+META is an optional alist of metadata to pass to the agent.
 
 This method resumes an existing session without returning previous messages
 \(unlike `session/load').  Only available if the agent advertises the
@@ -660,14 +661,16 @@ See https://agentclientprotocol.com/rfds/session-resume."
     (:params . ((sessionId . ,session-id)
                 ;; directory-file-name removes any trailing /
                 (cwd . ,(directory-file-name (expand-file-name cwd)))
-                (mcpServers . ,(or mcp-servers []))))))
+                (mcpServers . ,(or mcp-servers []))
+                ,@(when meta `((_meta . ,meta)))))))
 
-(cl-defun acp-make-session-fork-request (&key session-id cwd mcp-servers)
+(cl-defun acp-make-session-fork-request (&key session-id cwd mcp-servers meta)
   "Instantiate a \"session/fork\" request.
 
 SESSION-ID is the ID of the session to fork from.
 CWD is the current working directory for the forked session.
 MCP-SERVERS is an optional list of MCP servers to use.
+META is an optional alist of metadata to pass to the agent.
 
 This method forks an existing session, creating a new session that
 shares the conversation history of the original.  Only available if the
@@ -684,7 +687,8 @@ See https://agentclientprotocol.com/rfds/session-fork."
     (:params . ((sessionId . ,session-id)
                 ;; directory-file-name removes any trailing /
                 (cwd . ,(directory-file-name (expand-file-name cwd)))
-                (mcpServers . ,(or mcp-servers []))))))
+                (mcpServers . ,(or mcp-servers []))
+                ,@(when meta `((_meta . ,meta)))))))
 
 (cl-defun acp-make-session-list-request (&key cwd)
   "Instantiate a \"session/list\" request.
@@ -700,12 +704,13 @@ See https://agentclientprotocol.com/rfds/session-list."
     ;; directory-file-name removes any trailing /
     (:params . ((cwd . ,(directory-file-name (expand-file-name cwd)))))))
 
-(cl-defun acp-make-session-load-request (&key session-id cwd mcp-servers)
+(cl-defun acp-make-session-load-request (&key session-id cwd mcp-servers meta)
   "Instantiate a \"session/load\" request.
 
 SESSION-ID is the ID of the session to load.
 CWD is the current working directory for the loaded session.
 MCP-SERVERS is an optional list of MCP servers to use.
+META is an optional alist of metadata to pass to the agent.
 
 See https://agentclientprotocol.com/protocol/schema#session-load."
   (unless session-id
@@ -716,7 +721,8 @@ See https://agentclientprotocol.com/protocol/schema#session-load."
     (:params . ((sessionId . ,session-id)
                 ;; directory-file-name removes any trailing /
                 (cwd . ,(directory-file-name (expand-file-name cwd)))
-                (mcpServers . ,(or mcp-servers []))))))
+                (mcpServers . ,(or mcp-servers []))
+                ,@(when meta `((_meta . ,meta)))))))
 
 (cl-defun acp-make-session-delete-request (&key session-id)
   "Instantiate a \"session/delete\" request.

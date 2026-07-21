@@ -98,6 +98,13 @@
   "Face for a section's inline annotation (e.g. a tool call's description)."
   :group 'agent-shell-faces)
 
+(defface agent-shell-secondary
+  '((t :inherit font-lock-comment-face))
+  "Face for de-emphasized secondary text.
+Shared muted style for supporting text such as activity-group summaries,
+listing descriptions and usage readouts."
+  :group 'agent-shell-faces)
+
 
 ;;; Status (semantic states)
 
@@ -130,22 +137,9 @@
 Used for command, capability, config option, model and mode names."
   :group 'agent-shell-faces)
 
-(defface agent-shell-list-description
-  '((t :inherit font-lock-comment-face))
-  "Face for an entry's description in an \"Available ...\" listing."
-  :group 'agent-shell-faces)
-
 (defface agent-shell-list-value
   '((t :inherit font-lock-constant-face))
   "Face for a config option's current value in a listing."
-  :group 'agent-shell-faces)
-
-
-;;; Usage
-
-(defface agent-shell-usage
-  '((t :inherit font-lock-comment-face))
-  "Face for the usage readout labels (context, tokens, cost)."
   :group 'agent-shell-faces)
 
 

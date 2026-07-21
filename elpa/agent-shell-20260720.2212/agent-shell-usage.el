@@ -172,29 +172,29 @@ When MULTILINE is non-nil, format as right-aligned labeled rows."
     (if multiline
         (concat
          (propertize " Context: "
-                     'face 'agent-shell-usage
-                     'font-lock-face 'agent-shell-usage)
+                     'face 'agent-shell-secondary
+                     'font-lock-face 'agent-shell-secondary)
          context "\n"
          (propertize "  Tokens: "
-                     'face 'agent-shell-usage
-                     'font-lock-face 'agent-shell-usage)
+                     'face 'agent-shell-secondary
+                     'font-lock-face 'agent-shell-secondary)
          tokens total "\n"
          (propertize "    Cost: "
-                     'face 'agent-shell-usage
-                     'font-lock-face 'agent-shell-usage)
+                     'face 'agent-shell-secondary
+                     'font-lock-face 'agent-shell-secondary)
          cost)
       (concat
        (propertize "Context: "
-                   'face 'agent-shell-usage
-                   'font-lock-face 'agent-shell-usage)
+                   'face 'agent-shell-secondary
+                   'font-lock-face 'agent-shell-secondary)
        context " "
        (propertize "Tokens: "
-                   'face 'agent-shell-usage
-                   'font-lock-face 'agent-shell-usage)
+                   'face 'agent-shell-secondary
+                   'font-lock-face 'agent-shell-secondary)
        tokens total " "
        (propertize "Cost: "
-                   'face 'agent-shell-usage
-                   'font-lock-face 'agent-shell-usage)
+                   'face 'agent-shell-secondary
+                   'font-lock-face 'agent-shell-secondary)
        cost))))
 
 (defun agent-shell--context-usage-face (percentage)

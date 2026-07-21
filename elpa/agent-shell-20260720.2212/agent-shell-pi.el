@@ -77,6 +77,7 @@ Returns an agent configuration alist using `agent-shell-make-agent-config'."
    :buffer-name "Pi"
    :shell-prompt "Pi> "
    :shell-prompt-regexp "Pi> "
+   :icon-name "pi.png"
    :welcome-function #'agent-shell-pi--welcome-message
    :client-maker (lambda (buffer)
                    (agent-shell-pi-make-client :buffer buffer))
