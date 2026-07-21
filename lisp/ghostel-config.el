@@ -40,7 +40,7 @@ Each element has the form (SESSION-NAME . BUFFER)."
 (defun my-create-or-switch-ghostel (name)
   "Switch to the Ghostel session NAME, creating it if necessary."
   (if-let ((buffer (my-ghostel-session-buffer name)))
-      (pop-to-buffer buffer)
+      (switch-to-buffer buffer)
     (my-create-ghostel-session name)))
 
 (defun create-or-cycle-ghostel ()
