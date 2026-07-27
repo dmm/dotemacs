@@ -3,6 +3,7 @@
 (tool-bar-mode -1)
 (xterm-mouse-mode 1)
 (setq visible-cursor nil)
+(tooltip-mode -1)
 
 (defvar user-temporary-file-directory
   (concat temporary-file-directory user-login-name "/"))
