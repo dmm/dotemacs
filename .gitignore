@@ -17,3 +17,4 @@ lock-files/
 workspace/
 elpa/ghostel*/*.so
 elpa/ghostel*/*.version
+elfeed/
