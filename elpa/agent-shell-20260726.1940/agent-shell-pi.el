@@ -84,6 +84,7 @@ Returns an agent configuration alist using `agent-shell-make-agent-config'."
    :install-instructions "See https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent for Pi installation.
 Requires pi-acp adapter for ACP integration."))
 
+;;;###autoload
 (defun agent-shell-pi-start-agent ()
   "Start an interactive Pi coding agent shell."
   (interactive)

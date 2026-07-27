@@ -407,6 +407,11 @@ body un-fontified."
         ;; selection to empty, silently breaking mouse copy of rendered
         ;; text (keyboard selection is unaffected).
         (put-text-property (point-min) (point-max) 'fontified t))
+      ;; Frame rendered blocks with a blank line where they butt against
+      ;; prose.  Runs outside the watermark narrow, since a block's lower
+      ;; boundary sits behind the watermark by the time its successor
+      ;; streams in.
+      (agent-shell-markdown--pad-source-blocks)
       (agent-shell-markdown--update-watermark
        :source-blocks source-blocks
        :external-candidates (seq-keep (lambda (result) (map-elt result :watermark))
@@ -1238,11 +1243,112 @@ with `emacs-lisp-mode' face properties on the body and a
                                    'agent-shell-markdown-source "")
                 (put-text-property (marker-position content-start)
                                    (marker-position body-end)
-                                   'agent-shell-markdown-source source))
+                                   'agent-shell-markdown-source source)
+                ;; Tag the whole block (top vpad through bottom vpad) so
+                ;; `--pad-source-blocks' can find it.  `body-start' has
+                ;; collapsed to the block's top after the header insert
+                ;; above.
+                (put-text-property (marker-position body-start) panel-bottom
+                                   'agent-shell-markdown-source-block-rendered t))
               ;; Move point past the body so the outer `re-search-forward'
               ;; loop doesn't backtrack into body content (e.g. shorter
               ;; inner fences inside a wider outer fence).
               (goto-char (marker-position body-end)))))))))
+
+(defun agent-shell-markdown--blank-line-at-p (pos)
+  "Return non-nil when the line holding POS is blank.
+A line is blank when it holds only whitespace before its newline
+\(or the buffer end)."
+  (save-excursion
+    (goto-char pos)
+    (beginning-of-line)
+    (looking-at-p "[[:blank:]]*$")))
+
+(defun agent-shell-markdown--insert-source-block-padding ()
+  "Insert an untinted blank line at point to frame a rendered source block.
+
+The `\\n' carries `agent-shell-markdown-source' `\"\\n\"' so copy
+reconstructs a normal blank line, and `agent-shell-non-trimmable'
+so `agent-shell-trim' keeps it at a response's edge.  Caller
+properties at point (block ids, `read-only', `field') are carried
+over so the gap stays part of the caller's block range.
+
+A top gap is inserted on the block's tinted first line, so the box
+chrome that would tint the gap is stripped afterwards: the block
+tag, `line-prefix' / `wrap-prefix', and `font-lock-face' (which,
+unlike `face', survives `--carry-properties')."
+  (let ((start (point))
+        (carried (agent-shell-markdown--carry-properties (point))))
+    (insert (propertize "\n"
+                        'agent-shell-markdown-source "\n"
+                        'agent-shell-non-trimmable t
+                        'fontified t
+                        'rear-nonsticky '(agent-shell-non-trimmable)))
+    (when carried
+      (add-text-properties start (point) carried))
+    (remove-text-properties start (point)
+                            '(font-lock-face nil
+                              line-prefix nil
+                              wrap-prefix nil
+                              agent-shell-markdown-source-block-rendered nil))))
+
+(defun agent-shell-markdown--pad-source-blocks ()
+  "Frame each rendered source block with a blank line.
+
+A source block tagged `agent-shell-markdown-source-block-rendered'
+by `--style-source-blocks' whose immediately adjacent line (above
+or below) carries visible text sits flush against that text, which
+reads as cramped.  For each such side this inserts a single blank
+line between the block and its neighbour.
+
+A side that is already blank (the agent's own blank line, or one
+from a prior pass) is skipped, so the pass is idempotent and won't
+double the gap.  The bottom side waits until following text has
+streamed in, so a block whose successor hasn't arrived yet is left
+alone; the agent's own trailing blank line then counts as
+already-separated.
+
+For example, a block the agent emitted flush against the text on
+both sides:
+
+  intro
+  ```emacs-lisp
+  (message \"hello\")
+  ```
+  outro
+
+gains a blank line above and below it:
+
+  intro
+
+  ```emacs-lisp
+  (message \"hello\")
+  ```
+
+  outro"
+  (save-excursion
+    (goto-char (point-min))
+    (let ((match))
+      (while (setq match (text-property-search-forward
+                          'agent-shell-markdown-source-block-rendered t t))
+        (let ((block-start (copy-marker (prop-match-beginning match)))
+              (block-end (copy-marker (prop-match-end match))))
+          ;; Markers track both inserts, so either order works.
+          (when (and (< (marker-position block-end) (point-max))
+                     (not (agent-shell-markdown--blank-line-at-p
+                           (marker-position block-end))))
+            (goto-char (marker-position block-end))
+            (agent-shell-markdown--insert-source-block-padding))
+          (when (and (> (marker-position block-start) (point-min))
+                     (not (save-excursion
+                            (goto-char (marker-position block-start))
+                            (forward-line -1)
+                            (agent-shell-markdown--blank-line-at-p (point)))))
+            (goto-char (marker-position block-start))
+            (agent-shell-markdown--insert-source-block-padding))
+          (goto-char (marker-position block-end))
+          (set-marker block-start nil)
+          (set-marker block-end nil))))))
 
 (defconst agent-shell-markdown--table-line-regexp
   (rx line-start

@@ -284,6 +284,7 @@ Returns an agent configuration alist using `agent-shell-make-agent-config'."
    :notification-adapter #'agent-shell-cursor--notification-adapter
    :install-instructions "See https://cursor.com/docs/cli for installation."))
 
+;;;###autoload
 (defun agent-shell-cursor-start-agent ()
   "Start an interactive Cursor agent shell."
   (interactive)

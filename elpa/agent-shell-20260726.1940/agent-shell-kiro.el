@@ -81,6 +81,7 @@ Returns an agent configuration alist using `agent-shell-make-agent-config'."
    :shell-prompt "Kiro> "
    :shell-prompt-regexp "Kiro> "
    :welcome-function #'agent-shell-kiro--welcome-message
+   :icon-name "kiro.png"
    :client-maker (lambda (buffer)
                    (agent-shell-kiro-make-client :buffer buffer))
    :default-model-id (lambda () (if (functionp agent-shell-kiro-default-model-id)
@@ -89,6 +90,7 @@ Returns an agent configuration alist using `agent-shell-make-agent-config'."
    :default-session-mode-id (lambda () agent-shell-kiro-default-session-mode-id)
    :install-instructions "See https://kiro.dev/docs/cli/acp/ for installation."))
 
+;;;###autoload
 (defun agent-shell-kiro-start-agent ()
   "Start an interactive Kiro agent shell."
   (interactive)

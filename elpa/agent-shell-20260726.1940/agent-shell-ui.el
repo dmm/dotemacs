@@ -120,6 +120,7 @@ O(accumulated-body).  Label-only updates leave the body untouched."
                  (block-start nil)
                  (padding-start nil)
                  (padding-end nil)
+                 (group-header nil)
                  (match (save-mark-and-excursion
                           (goto-char (point-max))
                           (text-property-search-backward
@@ -145,16 +146,15 @@ O(accumulated-body).  Label-only updates leave the body untouched."
                                           (cons :group-indent
                                                 (or (map-elt state :group-indent) "  ")))))))
              (group-member-id
-              (let ((group-qualified-id
-                     (agent-shell-ui--ensure-group-header
-                      :namespace-id namespace-id
-                      :group-id group-member-id
-                      :group-label (map-elt model :group-label)
-                      :expanded (map-elt model :group-expanded)
-                      :navigation navigation)))
-                (setq model (append model
-                                    (list (cons :group-qualified-id group-qualified-id)
-                                          (cons :group-indent "  ")))))))
+              (setq group-header (agent-shell-ui--insert-group-header
+                                  :namespace-id namespace-id
+                                  :group-id group-member-id
+                                  :group-label (map-elt model :group-label)
+                                  :expanded (map-elt model :group-expanded)
+                                  :navigation navigation))
+              (setq model (append model
+                                  (list (cons :group-qualified-id (map-elt group-header :qualified-id))
+                                        (cons :group-indent "  "))))))
             (when (or new-label-left new-label-right new-body)
               (cond
                ;; Existing block — apply edits per changed section.
@@ -243,6 +243,11 @@ O(accumulated-body).  Label-only updates leave the body untouched."
                 (agent-shell-ui--insert-read-only (agent-shell-ui--required-newlines 2))
                 (setq block-start (point))
                 (agent-shell-ui--insert-fragment model qualified-id effective-expanded navigation)
+                ;; The group's trailing separator (the header's `\n\n', inserted
+                ;; once) now sits right after this last member; fold it into
+                ;; this member's padding so it is not stranded outside every
+                ;; block's range.
+                (skip-chars-forward "\n")
                 (setq padding-end (point)))
                ;; New block.
                (t
@@ -282,7 +287,8 @@ O(accumulated-body).  Label-only updates leave the body untouched."
                                         :to (map-elt block-range :end)))
                     (cons :padding (when (and padding-start padding-end)
                                      (list (cons :start padding-start)
-                                           (cons :end padding-end))))))))
+                                           (cons :end padding-end))))
+                    (cons :group-header (map-elt group-header :range))))))
       (when window
         (set-window-start window saved-window-start t)))))
 
@@ -587,22 +593,29 @@ After the current last member, or just after the header when empty."
         (map-elt (car (last children)) :end)
       (map-elt header :end))))
 
-(cl-defun agent-shell-ui--ensure-group-header (&key namespace-id group-id group-label (expanded t) navigation)
-  "Ensure a header for NAMESPACE-ID/GROUP-ID exists, creating it if not.
-When absent, create it at `point-max' with GROUP-LABEL as its label and
+(cl-defun agent-shell-ui--insert-group-header (&key namespace-id group-id group-label (expanded t) navigation)
+  "Insert a header for NAMESPACE-ID/GROUP-ID unless one already exists.
+When created, it lands at `point-max' with GROUP-LABEL as its label,
 EXPANDED as its initial fold state, and NAVIGATION for navigability.
-Return the header's qualified-id."
-  (let ((group-qualified-id (format "%s-%s" namespace-id group-id)))
+Return an alist with `:qualified-id' and, only when this call created
+the header, `:range' as (:start . :end) spanning the inserted header
+plus its surrounding padding."
+  (let ((group-qualified-id (format "%s-%s" namespace-id group-id))
+        (range nil))
     (unless (agent-shell-ui--group-header-range group-qualified-id)
       (goto-char (point-max))
-      (agent-shell-ui--insert-read-only (agent-shell-ui--required-newlines 2))
-      (agent-shell-ui--insert-fragment
-       (agent-shell-ui-make-group-model
-        :namespace-id namespace-id :block-id group-id
-        :label-left group-label :expanded expanded)
-       group-qualified-id expanded navigation)
-      (agent-shell-ui--insert-read-only "\n\n"))
-    group-qualified-id))
+      (let ((start (point)))
+        (agent-shell-ui--insert-read-only (agent-shell-ui--required-newlines 2))
+        (agent-shell-ui--insert-fragment
+         (agent-shell-ui-make-group-model
+          :namespace-id namespace-id :block-id group-id
+          :label-left group-label :expanded expanded)
+         group-qualified-id expanded navigation)
+        (agent-shell-ui--insert-read-only "\n\n")
+        (setq range (list (cons :start start)
+                          (cons :end (point))))))
+    (list (cons :qualified-id group-qualified-id)
+          (cons :range range))))
 
 (defun agent-shell-ui--labels-end (block)
   "Return the end of BLOCK's label-right, else label-left, else nil."

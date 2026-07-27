@@ -81,6 +81,7 @@ Returns an agent configuration alist using `agent-shell-make-agent-config'."
    :shell-prompt "Kimi> "
    :shell-prompt-regexp "Kimi> "
    :welcome-function #'agent-shell-kimi--welcome-message
+   :icon-name "kimi.png"
    :client-maker (lambda (buffer)
                    (agent-shell-kimi-make-client :buffer buffer))
    :default-model-id (lambda () (if (functionp agent-shell-kimi-default-model-id)
@@ -89,6 +90,7 @@ Returns an agent configuration alist using `agent-shell-make-agent-config'."
    :default-session-mode-id (lambda () agent-shell-kimi-default-session-mode-id)
    :install-instructions "See https://www.kimi.com/code for installation."))
 
+;;;###autoload
 (defun agent-shell-kimi-start-agent ()
   "Start an interactive Kimi Code agent shell."
   (interactive)

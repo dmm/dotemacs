@@ -4,11 +4,11 @@
 
 ;; Author: Alvaro Ramirez https://xenodium.com
 ;; URL: https://github.com/xenodium/agent-shell
-;; Package-Version: 20260720.2212
-;; Package-Revision: 8a6ea7a22afb
+;; Package-Version: 20260726.1940
+;; Package-Revision: 1780e0b2501a
 ;; Package-Requires: ((emacs "29.1") (shell-maker "0.93.5") (acp "0.13.1"))
 
-(defconst agent-shell--version "0.63.2")
+(defconst agent-shell--version "0.63.6")
 
 ;; This package is free software; you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
@@ -139,7 +139,7 @@ When non-nil, tool use sections are expanded."
   :type 'boolean
   :group 'agent-shell)
 
-(defcustom agent-shell-activity-group-expand-by-default t
+(defcustom agent-shell-activity-group-expand-by-default nil
   "Whether an activity group header is expanded by default.
 
 An activity group is a run of consecutive agent actions (tool calls,
@@ -1138,6 +1138,26 @@ inserted."
       (agent-shell--insert-to-shell-buffer :text text
                                            :shell-buffer shell-buffer))))
 
+(cl-defun agent-shell--display-viewport-when-ready (&key shell-buffer append override)
+  "Show the viewport for SHELL-BUFFER, deferring until its session is ready.
+
+When SHELL-BUFFER uses the `prompt' session strategy and has no session id
+yet, wait for the `session-selected' event before showing the viewport.
+Otherwise the session picker `completing-read' races a visible compose
+buffer, which is confusing.  APPEND and OVERRIDE are forwarded to
+`agent-shell-viewport--show-buffer'."
+  (if (and (eq (buffer-local-value 'agent-shell-session-strategy shell-buffer) 'prompt)
+           (not (map-nested-elt (buffer-local-value 'agent-shell--state shell-buffer)
+                                '(:session :id))))
+      (agent-shell-subscribe-to
+       :shell-buffer shell-buffer
+       :event 'session-selected
+       :on-event (lambda (_event)
+                   (agent-shell-viewport--show-buffer
+                    :append append :override override :shell-buffer shell-buffer)))
+    (agent-shell-viewport--show-buffer
+     :append append :override override :shell-buffer shell-buffer)))
+
 (cl-defun agent-shell--dwim (&key config new-shell switch-to-shell)
   "Start or reuse an agent shell with DWIM behavior.
 
@@ -1170,20 +1190,9 @@ handles viewport mode detection, existing shell reuse, and project context."
                       (t
                        (agent-shell--shell-buffer))))
                (text (agent-shell--context :shell-buffer shell-buffer)))
-          (if (and (eq (buffer-local-value 'agent-shell-session-strategy shell-buffer) 'prompt)
-                   (not (map-nested-elt (buffer-local-value 'agent-shell--state shell-buffer)
-                                        '(:session :id))))
-              ;; Defer viewport display until session is selected.
-              (agent-shell-subscribe-to
-               :shell-buffer shell-buffer
-               :event 'session-selected
-               :on-event (lambda (_event)
-                           (agent-shell-viewport--show-buffer
-                            :append text
-                            :shell-buffer shell-buffer)))
-            (agent-shell-viewport--show-buffer
-             :append text
-             :shell-buffer shell-buffer))))
+          (agent-shell--display-viewport-when-ready
+           :shell-buffer shell-buffer
+           :append text)))
     (cond (switch-to-shell
            (let* ((shell-buffer (agent-shell--read-shell-buffer
                                  :prompt "Switch to shell: "))
@@ -1428,22 +1437,37 @@ the session identified by SESSION-ID."
 
 If currently visiting an `agent-shell', transfer latest input."
   (interactive)
-  (if-let* (((derived-mode-p 'agent-shell-mode))
-            ((shell-maker-point-at-last-prompt-p))
-            (input (agent-shell--input)))
-      (progn
-        ;; Clear shell prompt as it's now
-        ;; transferred to the compose buffer.
-        ;; Use delete-region to point-max rather than comint-kill-input
-        ;; which only deletes to point.  Text appended after point
-        ;; (e.g. attachments inserted via save-excursion) would otherwise
-        ;; survive and get duplicated on viewport submission.
-        (delete-region
-         (or (marker-position comint-accum-marker)
-             (process-mark (get-buffer-process (current-buffer))))
-         (point-max))
-        (agent-shell-viewport--show-buffer :override input))
-    (agent-shell-viewport--show-buffer)))
+  (let ((shell-buffer (agent-shell--shell-buffer)))
+    ;; Without viewport interaction, compose is a fire-and-forget pop-up:
+    ;; sending should dismiss back to the previous layout rather than kill
+    ;; the compose buffer and pull focus into the shell.  Scope this to the
+    ;; resolved viewport buffer so the global default is left untouched.
+    (unless agent-shell-prefer-viewport-interaction
+      (when-let* ((viewport-buffer (agent-shell-viewport--buffer
+                                    :shell-buffer shell-buffer)))
+        (with-current-buffer viewport-buffer
+          (setq-local agent-shell-viewport-dismiss-on-send t))))
+    (if-let* (((derived-mode-p 'agent-shell-mode))
+              ((shell-maker-point-at-last-prompt-p))
+              (input (agent-shell--input)))
+        (progn
+          ;; Clear shell prompt as it's now
+          ;; transferred to the compose buffer.
+          ;; Use delete-region to point-max rather than comint-kill-input
+          ;; which only deletes to point.  Text appended after point
+          ;; (e.g. attachments inserted via save-excursion) would otherwise
+          ;; survive and get duplicated on viewport submission.
+          (delete-region
+           (or (marker-position comint-accum-marker)
+               (process-mark (get-buffer-process (current-buffer))))
+           (point-max))
+          ;; Already in a shell, so its session is established.  Show now.
+          (agent-shell-viewport--show-buffer :override input
+                                             :shell-buffer shell-buffer))
+      ;; May create a fresh shell.  Defer the viewport so the session picker
+      ;; isn't racing a visible compose buffer.
+      (agent-shell--display-viewport-when-ready
+       :shell-buffer shell-buffer))))
 
 (cl-defun agent-shell-start (&key config session-id outgoing-request-decorator)
   "Programmatically start shell with CONFIG.
@@ -1973,6 +1997,8 @@ Flow:
                                  (agent-shell--create-bootstrapping-placeholders (agent-shell--state))
                                  (shell-maker-finish-output :config shell-maker--config
                                                             :success nil)
+                                 ;; Ensure point always starts at prompt upon init.
+                                 (goto-char (point-max))
                                  (agent-shell--emit-event :event 'prompt-ready))
                                (agent-shell--handle :command command :shell-buffer shell-buffer))))
           ;; Send ACP request to set default model (optional)
@@ -2909,7 +2935,8 @@ No-op while that function has nothing to summarize (an empty group)."
             :state state
             :on-finished (lambda ()
                            (shell-maker-finish-output :config shell-maker--config
-                                                      :success t))))
+                                                      :success t)
+                           (agent-shell--process-pending-request))))
           (acp-logging-enabled
            (agent-shell--update-fragment
             :state state
@@ -4398,7 +4425,9 @@ with GROUP-EXPANDED as the group's initial fold state."
     (let* ((buffer-undo-list t)
            (window (get-buffer-window (current-buffer)))
            (auto-scroll (eobp))
-           (saved-point (point))
+           ;; Use a marker to ensure point restoration
+           ;; lands point after the inserted text.
+           (saved-point (copy-marker (point)))
            (saved-mark (mark t))
            (saved-mark-active mark-active)
            (saved-window-start (and window (window-start window)))
@@ -4450,10 +4479,15 @@ with GROUP-EXPANDED as the group's initial fold state."
            (let ((inhibit-read-only t))
              ;; comint relies on field property to
              ;; derive `comint-next-prompt'.
-             ;; Marking as field to avoid false positives in
+             ;; Marking as field output to avoid false positives in
              ;; `agent-shell-next-item' and `agent-shell-previous-item'.
              (add-text-properties (or padding-start block-start)
                                   (or padding-end block-end) '(field output))
+             ;; Same for group header (mark as field output).
+             (when (map-elt range :group-header)
+               (add-text-properties (map-nested-elt range '(:group-header :start))
+                                    (map-nested-elt range '(:group-header :end))
+                                    '(field output)))
              ;; Apply markdown to body.  `inhibit-read-only' must
              ;; wrap the render call too — chars in the body carry
              ;; `read-only t' from `agent-shell-ui--insert-fragment',
@@ -4497,7 +4531,8 @@ with GROUP-EXPANDED as the group's initial fold state."
           (set-marker (mark-marker) saved-mark))
         (setq mark-active saved-mark-active)
         (when window
-          (set-window-start window saved-window-start t))))))
+          (set-window-start window saved-window-start t)))
+      (set-marker saved-point nil))))
 
 (cl-defun agent-shell--update-text (&key state namespace-id block-id text append create-new)
   "Update plain text entry in the shell buffer.

@@ -124,12 +124,14 @@ Returns an agent configuration alist using `agent-shell-make-agent-config'."
    :shell-prompt "OpenCode> "
    :shell-prompt-regexp "OpenCode> "
    :welcome-function #'agent-shell-opencode--welcome-message
+   :icon-name "opencode.png"
    :client-maker (lambda (buffer)
                    (agent-shell-opencode-make-client :buffer buffer))
    :default-model-id (lambda () agent-shell-opencode-default-model-id)
    :default-session-mode-id (lambda () agent-shell-opencode-default-session-mode-id)
    :install-instructions "See https://opencode.ai/docs for installation."))
 
+;;;###autoload
 (defun agent-shell-opencode-start-agent ()
   "Start an interactive OpenCode agent shell."
   (interactive)

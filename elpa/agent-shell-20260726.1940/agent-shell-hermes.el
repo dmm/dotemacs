@@ -93,6 +93,7 @@ Returns an agent configuration alist using `agent-shell-make-agent-config'."
    "Defaults to running 'hermes acp' locally.
 Customize \\\\[customize-variable] `agent-shell-hermes-acp-command' for remote setups (e.g., via SSH)."))
 
+;;;###autoload
 (defun agent-shell-hermes-start-agent ()
   "Start an interactive Hermes agent shell."
   (interactive)

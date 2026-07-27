@@ -93,6 +93,7 @@ Returns an agent configuration alist using `agent-shell-make-agent-config'."
    :default-session-mode-id (lambda () agent-shell-cline-default-session-mode-id)
    :install-instructions "See https://cline.bot/cli for installation."))
 
+;;;###autoload
 (defun agent-shell-cline-start-agent ()
   "Start an interactive Cline agent shell."
   (interactive)

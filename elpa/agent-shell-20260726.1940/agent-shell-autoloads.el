@@ -150,16 +150,22 @@ Example:
 
 ;;; Generated autoloads from agent-shell-auggie.el
 
+(autoload 'agent-shell-auggie-start-agent "agent-shell-auggie" "\
+Start an interactive Auggie agent shell." t)
 (register-definition-prefixes "agent-shell-auggie" '("agent-shell-auggie-"))
 
 
 ;;; Generated autoloads from agent-shell-cline.el
 
+(autoload 'agent-shell-cline-start-agent "agent-shell-cline" "\
+Start an interactive Cline agent shell." t)
 (register-definition-prefixes "agent-shell-cline" '("agent-shell-cline-"))
 
 
 ;;; Generated autoloads from agent-shell-codebuddy.el
 
+(autoload 'agent-shell-codebuddy-start-agent "agent-shell-codebuddy" "\
+Start an interactive CodeBuddy agent shell." t)
 (register-definition-prefixes "agent-shell-codebuddy" '("agent-shell-codebuddy-"))
 
 
@@ -175,6 +181,8 @@ Example:
 
 ;;; Generated autoloads from agent-shell-cursor.el
 
+(autoload 'agent-shell-cursor-start-agent "agent-shell-cursor" "\
+Start an interactive Cursor agent shell." t)
 (register-definition-prefixes "agent-shell-cursor" '("agent-shell-cursor-"))
 
 
@@ -190,6 +198,8 @@ Example:
 
 ;;; Generated autoloads from agent-shell-droid.el
 
+(autoload 'agent-shell-droid-start-agent "agent-shell-droid" "\
+Start an interactive Factory Droid agent shell." t)
 (register-definition-prefixes "agent-shell-droid" '("agent-shell-droid-"))
 
 
@@ -210,21 +220,29 @@ Example:
 
 ;;; Generated autoloads from agent-shell-goose.el
 
+(autoload 'agent-shell-goose-start-agent "agent-shell-goose" "\
+Start an interactive Goose agent shell." t)
 (register-definition-prefixes "agent-shell-goose" '("agent-shell-goose-"))
 
 
 ;;; Generated autoloads from agent-shell-hermes.el
 
+(autoload 'agent-shell-hermes-start-agent "agent-shell-hermes" "\
+Start an interactive Hermes agent shell." t)
 (register-definition-prefixes "agent-shell-hermes" '("agent-shell-hermes-"))
 
 
 ;;; Generated autoloads from agent-shell-kimi.el
 
+(autoload 'agent-shell-kimi-start-agent "agent-shell-kimi" "\
+Start an interactive Kimi Code agent shell." t)
 (register-definition-prefixes "agent-shell-kimi" '("agent-shell-kimi-"))
 
 
 ;;; Generated autoloads from agent-shell-kiro.el
 
+(autoload 'agent-shell-kiro-start-agent "agent-shell-kiro" "\
+Start an interactive Kiro agent shell." t)
 (register-definition-prefixes "agent-shell-kiro" '("agent-shell-kiro-"))
 
 
@@ -260,11 +278,15 @@ Example:
 
 ;;; Generated autoloads from agent-shell-opencode.el
 
+(autoload 'agent-shell-opencode-start-agent "agent-shell-opencode" "\
+Start an interactive OpenCode agent shell." t)
 (register-definition-prefixes "agent-shell-opencode" '("agent-shell-opencode-"))
 
 
 ;;; Generated autoloads from agent-shell-pi.el
 
+(autoload 'agent-shell-pi-start-agent "agent-shell-pi" "\
+Start an interactive Pi coding agent shell." t)
 (register-definition-prefixes "agent-shell-pi" '("agent-shell-pi-"))
 
 

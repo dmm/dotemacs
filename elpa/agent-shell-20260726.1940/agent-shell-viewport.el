@@ -233,7 +233,13 @@ queued right away, regardless of `agent-shell-viewport-dismiss-on-send'."
         (agent-shell--insert-to-shell-buffer
          :text prompt
          :submit t)))
-    (kill-buffer viewport-buffer)
+    ;; Sending and killing viewport should not
+    ;; ask user if they want to kill the shell also.
+    ;; The intent is clear that they do not want that
+    ;; since they are sending a prompt.
+    (with-current-buffer viewport-buffer
+      (let ((agent-shell-viewport--clean-up nil))
+        (kill-buffer viewport-buffer)))
     (pop-to-buffer shell-buffer)))
 
 (defun agent-shell-viewport--compose-queue ()

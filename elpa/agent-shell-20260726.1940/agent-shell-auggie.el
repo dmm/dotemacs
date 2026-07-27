@@ -105,6 +105,7 @@ Returns an agent configuration alist using `agent-shell-make-agent-config'."
                    (agent-shell-auggie-make-client :buffer buffer))
    :install-instructions "See https://docs.augmentcode.com/cli/overview for installation."))
 
+;;;###autoload
 (defun agent-shell-auggie-start-agent ()
   "Start an interactive Auggie agent shell."
   (interactive)

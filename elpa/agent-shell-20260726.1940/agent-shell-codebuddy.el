@@ -69,6 +69,7 @@ Returns an agent configuration alist using `agent-shell-make-agent-config'."
                    (agent-shell-codebuddy-make-client :buffer buffer))
    :install-instructions "Install the CodeBuddy CLI and ensure it supports ACP mode (for example, `codebuddy --acp`). See https://www.codebuddy.ai/docs/zh/ide/Getting-Started/Installation for installation."))
 
+;;;###autoload
 (defun agent-shell-codebuddy-start-agent ()
   "Start an interactive CodeBuddy agent shell."
   (interactive)

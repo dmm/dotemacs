@@ -114,6 +114,7 @@ Returns an agent configuration alist using `agent-shell-make-agent-config'."
                    (agent-shell-goose-make-client :buffer buffer))
    :install-instructions "See https://block.github.io/goose/docs/getting-started/installation."))
 
+;;;###autoload
 (defun agent-shell-goose-start-agent ()
   "Start an interactive Goose agent shell."
   (interactive)

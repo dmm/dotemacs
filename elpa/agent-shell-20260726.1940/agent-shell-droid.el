@@ -142,6 +142,7 @@ Returns an agent configuration alist using `agent-shell-make-agent-config'."
    :default-session-mode-id (lambda () agent-shell-droid-default-session-mode-id)
    :install-instructions "See https://docs.factory.ai/cli/getting-started/quickstart for installation."))
 
+;;;###autoload
 (defun agent-shell-droid-start-agent ()
   "Start an interactive Factory Droid agent shell."
   (interactive)
