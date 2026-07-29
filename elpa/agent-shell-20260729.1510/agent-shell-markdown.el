@@ -160,6 +160,19 @@ window edge."
   "Face for the language label shown above a fenced source block."
   :group 'agent-shell-markdown)
 
+(defface agent-shell-markdown-list-marker
+  '((t :inherit default))
+  "Face for list bullets, task checkboxes, and ordered-list numbers
+rendered by `agent-shell-markdown-convert'.  Plain by default;
+restyle this face to colour or emphasise list markers."
+  :group 'agent-shell-markdown)
+
+(defface agent-shell-markdown-list-done
+  '((t :inherit shadow :strike-through t))
+  "Face for the text of a completed task-list item (`- [x]')
+rendered by `agent-shell-markdown-convert'."
+  :group 'agent-shell-markdown)
+
 (defvar agent-shell-markdown-image-max-width 0.4
   "Maximum width for inline images rendered from `![alt](url)'.
 An integer is taken as pixels.  A float between 0 and 1 is a
@@ -180,6 +193,24 @@ When nil, fall back to ASCII pipes and dashes.")
 
 (defvar agent-shell-markdown-table-zebra-stripe t
   "When non-nil, alternate row backgrounds in tables for readability.")
+
+(defvar agent-shell-markdown-list-bullets '("•" "◦")
+  "Bullet glyphs for unordered lists, cycled by nesting depth.
+The Nth entry renders at depth N, wrapping past the end, so the
+list length sets how many levels get a distinct bullet.")
+
+(defvar agent-shell-markdown-list-checkbox-unchecked "□"
+  "Glyph shown for an unchecked task-list item (`- [ ]').
+WHITE SQUARE (U+25A1) has no emoji form, so it renders as text.")
+
+(defvar agent-shell-markdown-list-checkbox-checked "✓"
+  "Glyph shown for a checked task-list item (`- [x]').
+CHECK MARK (U+2713) has no emoji form, so it renders as text.")
+
+(defvar agent-shell-markdown-list-line-prefix "    "
+  "Display-only `line-prefix' giving a rendered list its base indent.
+Not part of buffer text, so it never lands in copied / saved
+markdown.")
 
 (defvar agent-shell-markdown-language-mapping
   '(("elisp" . "emacs-lisp")
@@ -369,6 +400,7 @@ body un-fontified."
            :avoid-ranges avoid-ranges))
         (agent-shell-markdown--style-dividers :avoid-ranges avoid-ranges)
         (agent-shell-markdown--style-blockquotes :avoid-ranges avoid-ranges)
+        (agent-shell-markdown--style-lists :avoid-ranges avoid-ranges)
         (agent-shell-markdown--style-source-blocks
          :highlight-blocks highlight-blocks)
         ;; Tables run last so cell content has already been processed by
@@ -411,7 +443,7 @@ body un-fontified."
       ;; prose.  Runs outside the watermark narrow, since a block's lower
       ;; boundary sits behind the watermark by the time its successor
       ;; streams in.
-      (agent-shell-markdown--pad-source-blocks)
+      (agent-shell-markdown--pad-rendered-blocks)
       (agent-shell-markdown--update-watermark
        :source-blocks source-blocks
        :external-candidates (seq-keep (lambda (result) (map-elt result :watermark))
@@ -1255,101 +1287,6 @@ with `emacs-lisp-mode' face properties on the body and a
               ;; inner fences inside a wider outer fence).
               (goto-char (marker-position body-end)))))))))
 
-(defun agent-shell-markdown--blank-line-at-p (pos)
-  "Return non-nil when the line holding POS is blank.
-A line is blank when it holds only whitespace before its newline
-\(or the buffer end)."
-  (save-excursion
-    (goto-char pos)
-    (beginning-of-line)
-    (looking-at-p "[[:blank:]]*$")))
-
-(defun agent-shell-markdown--insert-source-block-padding ()
-  "Insert an untinted blank line at point to frame a rendered source block.
-
-The `\\n' carries `agent-shell-markdown-source' `\"\\n\"' so copy
-reconstructs a normal blank line, and `agent-shell-non-trimmable'
-so `agent-shell-trim' keeps it at a response's edge.  Caller
-properties at point (block ids, `read-only', `field') are carried
-over so the gap stays part of the caller's block range.
-
-A top gap is inserted on the block's tinted first line, so the box
-chrome that would tint the gap is stripped afterwards: the block
-tag, `line-prefix' / `wrap-prefix', and `font-lock-face' (which,
-unlike `face', survives `--carry-properties')."
-  (let ((start (point))
-        (carried (agent-shell-markdown--carry-properties (point))))
-    (insert (propertize "\n"
-                        'agent-shell-markdown-source "\n"
-                        'agent-shell-non-trimmable t
-                        'fontified t
-                        'rear-nonsticky '(agent-shell-non-trimmable)))
-    (when carried
-      (add-text-properties start (point) carried))
-    (remove-text-properties start (point)
-                            '(font-lock-face nil
-                              line-prefix nil
-                              wrap-prefix nil
-                              agent-shell-markdown-source-block-rendered nil))))
-
-(defun agent-shell-markdown--pad-source-blocks ()
-  "Frame each rendered source block with a blank line.
-
-A source block tagged `agent-shell-markdown-source-block-rendered'
-by `--style-source-blocks' whose immediately adjacent line (above
-or below) carries visible text sits flush against that text, which
-reads as cramped.  For each such side this inserts a single blank
-line between the block and its neighbour.
-
-A side that is already blank (the agent's own blank line, or one
-from a prior pass) is skipped, so the pass is idempotent and won't
-double the gap.  The bottom side waits until following text has
-streamed in, so a block whose successor hasn't arrived yet is left
-alone; the agent's own trailing blank line then counts as
-already-separated.
-
-For example, a block the agent emitted flush against the text on
-both sides:
-
-  intro
-  ```emacs-lisp
-  (message \"hello\")
-  ```
-  outro
-
-gains a blank line above and below it:
-
-  intro
-
-  ```emacs-lisp
-  (message \"hello\")
-  ```
-
-  outro"
-  (save-excursion
-    (goto-char (point-min))
-    (let ((match))
-      (while (setq match (text-property-search-forward
-                          'agent-shell-markdown-source-block-rendered t t))
-        (let ((block-start (copy-marker (prop-match-beginning match)))
-              (block-end (copy-marker (prop-match-end match))))
-          ;; Markers track both inserts, so either order works.
-          (when (and (< (marker-position block-end) (point-max))
-                     (not (agent-shell-markdown--blank-line-at-p
-                           (marker-position block-end))))
-            (goto-char (marker-position block-end))
-            (agent-shell-markdown--insert-source-block-padding))
-          (when (and (> (marker-position block-start) (point-min))
-                     (not (save-excursion
-                            (goto-char (marker-position block-start))
-                            (forward-line -1)
-                            (agent-shell-markdown--blank-line-at-p (point)))))
-            (goto-char (marker-position block-start))
-            (agent-shell-markdown--insert-source-block-padding))
-          (goto-char (marker-position block-end))
-          (set-marker block-start nil)
-          (set-marker block-end nil))))))
-
 (defconst agent-shell-markdown--table-line-regexp
   (rx line-start
       (zero-or-more (any " \t"))
@@ -1377,6 +1314,297 @@ hasn't grown its closing `|' yet.")
       (zero-or-more (any " \t"))
       line-end)
   "Regexp matching a table separator row (e.g. `|---|---|').")
+
+(defconst agent-shell-markdown--list-item-line-regexp
+  (rx bol
+      (group (zero-or-more (any " \t")))
+      (group (or (any "-*+")
+                 (seq (one-or-more digit) (any ".)"))))
+      (group (one-or-more (any " \t")))
+      (zero-or-more (not (any "\n")))
+      "\n")
+  "Regexp matching a complete markdown list-item line (trailing `\\n').
+Group 1 is the leading indent, group 2 the marker (`-'/`*'/`+' or
+`N.'/`N)'), group 3 the gap before the content.  The required gap
+after the marker keeps `---' (a divider) and `*emphasis*' from
+matching.")
+
+(defconst agent-shell-markdown--list-item-pending-regexp
+  (rx bol (zero-or-more (any " \t"))
+      (or (any "-*+") (seq (one-or-more digit) (any ".)")))
+      (one-or-more (any " \t")))
+  "Lenient regexp: a line that is or may still become a list item.
+Used to hold off a rendered list's bottom padding while another
+item could still stream in below it.")
+
+(defun agent-shell-markdown--list-bullet (depth)
+  "Return the bullet glyph for nesting DEPTH, cycling the glyph set."
+  (seq-elt agent-shell-markdown-list-bullets
+           (mod depth (length agent-shell-markdown-list-bullets))))
+
+(defun agent-shell-markdown--replace-list-marker (start end glyph)
+  "Replace buffer text [START, END) with GLYPH, faced as a list marker.
+The replaced text's application-level properties (agent-shell block
+ids and `agent-shell-ui-state', `read-only', `field') are carried
+onto GLYPH so it stays part of the surrounding output block; a bare
+insert would split that block and make navigation stop on the
+glyph."
+  (let ((carried (agent-shell-markdown--carry-properties start)))
+    (delete-region start end)
+    (goto-char start)
+    (insert (propertize glyph 'face 'agent-shell-markdown-list-marker))
+    (when carried
+      (add-text-properties start (point) carried))))
+
+(cl-defun agent-shell-markdown--render-list-line
+    (&key line-start line-end indent-width marker-start marker-end
+          content-start)
+  "Render one markdown list line in place.
+
+The marker is replaced with its glyph as real buffer text (so a
+plain copy yields the rendered bullet / checkbox, like the other
+renderers); the original markdown is stashed on
+`agent-shell-markdown-source' for `agent-shell-copy-as-markdown'.
+An ordered `N.' keeps its number.  A display-only `line-prefix'
+adds the base indent, and the line is tagged
+`agent-shell-markdown-list-rendered' so `--pad-rendered-blocks'
+frames it.  A checked task item's text gets
+`agent-shell-markdown-list-done'.
+
+Depth is measured in two-column units of INDENT-WIDTH, so ordinary
+two-space nesting steps one glyph per level.  For example the line
+`- [x] Done' renders as the buffer text `✓ Done' (struck through),
+reconstructing to `- [x] Done'."
+  (let* ((ordered (string-match-p
+                   "\\`[0-9]"
+                   (buffer-substring-no-properties marker-start marker-end)))
+         (checkbox (unless ordered
+                     (save-excursion
+                       (goto-char content-start)
+                       (when (looking-at "\\[\\([ xX]\\)\\]\\(?:[ \t]\\|$\\)")
+                         (match-string 1)))))
+         ;; The marker rewrite shifts everything after it; a marker keeps
+         ;; the line's end (and its trailing newline) locatable.
+         (end (copy-marker line-end))
+         ;; Stash the markdown before rewriting so copy-as-markdown can
+         ;; restore it.  Excludes the trailing newline (reconstructs it
+         ;; verbatim).
+         (source (unless (get-text-property line-start
+                                            'agent-shell-markdown-source)
+                   (agent-shell-markdown-reconstruct line-start (1- line-end)))))
+    (cond
+     (ordered
+      (add-face-text-property marker-start marker-end
+                              'agent-shell-markdown-list-marker))
+     (checkbox
+      (let ((glyph (if (equal checkbox " ")
+                       agent-shell-markdown-list-checkbox-unchecked
+                     agent-shell-markdown-list-checkbox-checked)))
+        ;; Replace the whole `- [ ]' run (marker, gap, box) with one glyph.
+        (agent-shell-markdown--replace-list-marker
+         marker-start (+ content-start 3) glyph)
+        (unless (equal checkbox " ")
+          (save-excursion
+            (goto-char (+ marker-start (length glyph)))
+            (skip-chars-forward " \t" (1- (marker-position end)))
+            (add-face-text-property (point) (1- (marker-position end))
+                                    'agent-shell-markdown-list-done)))))
+     (t
+      (agent-shell-markdown--replace-list-marker
+       marker-start marker-end
+       (agent-shell-markdown--list-bullet (/ indent-width 2)))))
+    (put-text-property line-start (marker-position end)
+                       'line-prefix agent-shell-markdown-list-line-prefix)
+    (when source
+      (put-text-property line-start (1- (marker-position end))
+                         'agent-shell-markdown-source source))
+    (add-text-properties
+     line-start (marker-position end)
+     '(agent-shell-markdown-frozen t
+       agent-shell-markdown-list-rendered t
+       rear-nonsticky (agent-shell-markdown-frozen
+                       agent-shell-markdown-list-rendered)))
+    (set-marker end nil)))
+
+(cl-defun agent-shell-markdown--style-lists (&key avoid-ranges)
+  "Render markdown list lines: bullets, task checkboxes, ordered numbers.
+
+Each `-'/`*'/`+' or `N.' item line (with an explicit trailing
+newline, so a still-streaming last line is left raw) has its
+marker replaced by a glyph and gets a base indent, via
+`agent-shell-markdown--render-list-line'.  The original markdown is
+stashed on `agent-shell-markdown-source' so
+`agent-shell-copy-as-markdown' round-trips it; a plain copy yields
+the rendered glyphs.  Lines inside AVOID-RANGES (e.g. fenced code
+blocks) are left untouched.
+
+For example, the buffer:
+
+  - Todo
+  - [x] Done
+
+renders as `• Todo' and a checkbox line struck through, each behind
+a two-column base indent."
+  (let ((case-fold-search nil))
+    (goto-char (point-min))
+    (while (re-search-forward
+            agent-shell-markdown--list-item-line-regexp nil t)
+      (let* ((line-start (match-beginning 0))
+             (line-end (match-end 0))
+             (avoid (agent-shell-markdown-in-avoid-range-p
+                     line-start line-end avoid-ranges)))
+        (if avoid
+            (goto-char (cdr avoid))
+          (agent-shell-markdown--render-list-line
+           :line-start line-start
+           :line-end line-end
+           :indent-width (- (match-end 1) (match-beginning 1))
+           :marker-start (match-beginning 2)
+           :marker-end (match-end 2)
+           :content-start (match-end 3)))))))
+
+(defun agent-shell-markdown--blank-line-at-p (pos)
+  "Return non-nil when the line holding POS is blank.
+A line is blank when it holds only whitespace before its newline
+\(or the buffer end)."
+  (save-excursion
+    (goto-char pos)
+    (beginning-of-line)
+    (looking-at-p "[[:blank:]]*$")))
+
+(defun agent-shell-markdown--insert-block-padding ()
+  "Insert an untinted blank line at point to frame a rendered block.
+
+The `\\n' carries `agent-shell-markdown-source' `\"\\n\"' so copy
+reconstructs a normal blank line, and `agent-shell-non-trimmable'
+so `agent-shell-trim' keeps it at a response's edge.  Caller
+properties at point (block ids, `read-only', `field') are carried
+over so the gap stays part of the caller's block range.
+
+A top gap is inserted on the block's first line, so any chrome that
+would corrupt the gap is stripped afterwards: the block tags, the
+`line-prefix' / `wrap-prefix' indent, `font-lock-face' (which,
+unlike `face', survives `--carry-properties'), and `display' (a
+list marker's bullet / checkbox glyph, which would otherwise render
+in place of the gap's newline)."
+  (let ((start (point))
+        (carried (agent-shell-markdown--carry-properties (point))))
+    (insert (propertize "\n"
+                        'agent-shell-markdown-source "\n"
+                        'agent-shell-non-trimmable t
+                        'fontified t
+                        'rear-nonsticky '(agent-shell-non-trimmable)))
+    (when carried
+      (add-text-properties start (point) carried))
+    (remove-text-properties start (point)
+                            '(display nil
+                              font-lock-face nil
+                              line-prefix nil
+                              wrap-prefix nil
+                              agent-shell-markdown-source-block-rendered nil
+                              agent-shell-markdown-list-rendered nil))))
+
+(defun agent-shell-markdown--frame-block (start end continues-p)
+  "Frame the rendered block spanning [START, END) with blank lines.
+
+Insert an untinted blank line above START and below END wherever
+the block butts directly against non-blank text.  A side that is
+already blank is left alone, so framing is idempotent.
+
+The bottom side is held back until following text exists (so a
+block whose successor hasn't streamed in yet is not padded).
+CONTINUES-P, when non-nil, is a predicate called with point at the
+following line's start; a non-nil return means that line could
+still fold into this block (a streaming table row or list item), so
+the bottom gap is deferred.  A blank line dropped there would split
+the block."
+  ;; Bottom first: it sits below START, so START stays valid for the
+  ;; top insert without tracking it across the edit.
+  (let ((following (save-excursion
+                     (goto-char (max (point-min) (1- end)))
+                     (forward-line 1)
+                     (point))))
+    (when (and (< following (point-max))
+               (not (agent-shell-markdown--blank-line-at-p following))
+               (not (and continues-p
+                         (save-excursion
+                           (goto-char following)
+                           (funcall continues-p)))))
+      (goto-char following)
+      (agent-shell-markdown--insert-block-padding)))
+  (when (and (> start (point-min))
+             (not (save-excursion
+                    (goto-char start)
+                    (forward-line -1)
+                    (agent-shell-markdown--blank-line-at-p (point)))))
+    (goto-char start)
+    (agent-shell-markdown--insert-block-padding)))
+
+(defun agent-shell-markdown--pad-regions (property continues-p)
+  "Frame every maximal run of non-nil PROPERTY with blank lines.
+CONTINUES-P is forwarded to `agent-shell-markdown--frame-block' to
+gate the bottom gap.  See `agent-shell-markdown--pad-rendered-blocks'."
+  (save-excursion
+    (goto-char (point-min))
+    (let ((pos (point-min)))
+      (while (< pos (point-max))
+        (if (get-text-property pos property)
+            (let* ((end (or (next-single-property-change
+                             pos property nil (point-max))
+                            (point-max)))
+                   ;; The top insert shifts END; a marker tracks it so the
+                   ;; scan resumes just past the framed block.
+                   (resume (copy-marker end)))
+              (agent-shell-markdown--frame-block pos end continues-p)
+              (setq pos (marker-position resume))
+              (set-marker resume nil))
+          (setq pos (or (next-single-property-change
+                         pos property nil (point-max))
+                        (point-max))))))))
+
+(defun agent-shell-markdown--pad-rendered-blocks ()
+  "Frame each rendered block with a blank line where it butts against prose.
+
+Rendered source blocks (tagged
+`agent-shell-markdown-source-block-rendered'), tables (tagged
+`agent-shell-markdown-table-source') and lists (tagged
+`agent-shell-markdown-list-rendered') that sit flush against
+surrounding text read as cramped; this inserts a single blank line
+on each such side.  Tables and lists pass a predicate so their
+bottom gap waits until no further row / item can fold in.  See
+`agent-shell-markdown--frame-block' for the per-side rules.
+
+For example, a block the agent emitted flush against the text on
+both sides:
+
+  intro
+  ```emacs-lisp
+  (message \"hello\")
+  ```
+  outro
+
+gains a blank line above and below it:
+
+  intro
+
+  ```emacs-lisp
+  (message \"hello\")
+  ```
+
+  outro"
+  ;; `inhibit-field-text-motion' so `beginning-of-line' / `forward-line'
+  ;; don't stop at agent-shell's `field' boundaries between output lines.
+  (let ((inhibit-field-text-motion t))
+    (agent-shell-markdown--pad-regions
+     'agent-shell-markdown-source-block-rendered nil)
+    (agent-shell-markdown--pad-regions
+     'agent-shell-markdown-table-source
+     (lambda () (looking-at-p
+                 agent-shell-markdown--table-pending-line-regexp)))
+    (agent-shell-markdown--pad-regions
+     'agent-shell-markdown-list-rendered
+     (lambda () (looking-at-p
+                 agent-shell-markdown--list-item-pending-regexp)))))
 
 (cl-defun agent-shell-markdown--find-tables (&key avoid-ranges)
   "Return tables to (re-)render in current buffer.

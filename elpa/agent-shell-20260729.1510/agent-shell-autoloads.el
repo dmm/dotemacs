@@ -119,10 +119,10 @@ Compose an `agent-shell' prompt in a dedicated buffer.
 
 If currently visiting an `agent-shell', transfer latest input." t)
 (autoload 'agent-shell-shell-buffer "agent-shell" "\
-Return an agent-shell buffer for the current context.
+Return an `agent-shell' buffer for the current context.
 
 A stable public API wrapping the internal resolver, intended for
-packages that integrate with agent-shell programmatically.
+packages that integrate with `agent-shell' programmatically.
 
 Resolution order: viewport → current buffer → project buffers → prompt user.
 
@@ -295,6 +295,11 @@ Start an interactive Pi coding agent shell." t)
 (register-definition-prefixes "agent-shell-project" '("agent-shell-"))
 
 
+;;; Generated autoloads from agent-shell-prompt-queue.el
+
+(register-definition-prefixes "agent-shell-prompt-queue" '("agent-shell-"))
+
+
 ;;; Generated autoloads from agent-shell-qwen.el
 
 (register-definition-prefixes "agent-shell-qwen" '("agent-shell-qwen-"))
@@ -323,8 +328,6 @@ evaluate the variable `agent-shell-ui-mode'.
 
 The mode's hook is called both when the mode is enabled and when it is
 disabled.
-
-\\{agent-shell-ui-mode-map}
 
 (fn &optional ARG)" t)
 (register-definition-prefixes "agent-shell-ui" '("agent-shell-ui-"))

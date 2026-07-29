@@ -43,6 +43,19 @@
 When run, the buffer is narrowed to the body region and
 `inhibit-read-only' is in effect.")
 
+(defvar agent-shell-ui-debug-enabled nil
+  "When non-nil, surface internal UI debugging aids.
+For example, fragment qualified-ids appear in the echo area on
+hover.  These are implementation details of no use to users, so
+they stay hidden by default.")
+
+(defun agent-shell-ui--fragment-help-echo (qualified-id)
+  "Return the `help-echo' value for a fragment tagged QUALIFIED-ID.
+Returns QUALIFIED-ID only when `agent-shell-ui-debug-enabled' is set,
+otherwise nil so the id stays hidden from users."
+  (when agent-shell-ui-debug-enabled
+    qualified-id))
+
 (cl-defun agent-shell-ui-make-fragment-model (&key (namespace-id "global") (block-id "1") label-left label-right body group-id group-label (group-expanded t))
   "Create a fragment model alist.
 NAMESPACE-ID, BLOCK-ID, LABEL-LEFT, LABEL-RIGHT, and BODY are the keys.
@@ -325,7 +338,7 @@ new chars might have inherited via rear-stickiness from preceding
 trailing-whitespace chars."
   (add-text-properties start end
                        `(agent-shell-ui-section body
-                                                help-echo ,qualified-id
+                                                help-echo ,(agent-shell-ui--fragment-help-echo qualified-id)
                                                 read-only t
                                                 front-sticky (read-only)))
   (when state
@@ -466,7 +479,7 @@ are preserved across label updates."
           (let ((insert-end (point)))
             (add-text-properties insert-start insert-end
                                  `(agent-shell-ui-section ,section
-                                                          help-echo ,qualified-id
+                                                          help-echo ,(agent-shell-ui--fragment-help-echo qualified-id)
                                                           read-only t
                                                           front-sticky (read-only)))
             (when state
@@ -762,7 +775,7 @@ indents a member's header line under its group header."
       (setq label-left-end (point))
       (add-text-properties label-left-start label-left-end
                            `(agent-shell-ui-section label-left
-                                                    help-echo ,qualified-id
+                                                    help-echo ,(agent-shell-ui--fragment-help-echo qualified-id)
                                                     read-only t
                                                     front-sticky (read-only)))
       (setq need-space t))
@@ -781,7 +794,7 @@ indents a member's header line under its group header."
       (setq label-right-end (point))
       (add-text-properties label-right-start label-right-end
                            `(agent-shell-ui-section label-right
-                                                    help-echo ,qualified-id
+                                                    help-echo ,(agent-shell-ui--fragment-help-echo qualified-id)
                                                     read-only t
                                                     front-sticky (read-only))))
 
@@ -801,7 +814,7 @@ indents a member's header line under its group header."
       (setq body-end (point))
       (add-text-properties body-start body-end
                            `(agent-shell-ui-section body
-                                                    help-echo ,qualified-id
+                                                    help-echo ,(agent-shell-ui--fragment-help-echo qualified-id)
                                                     read-only t
                                                     front-sticky (read-only))))
     ;; Indent a group member's header line under its group header.  The
