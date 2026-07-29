@@ -11,6 +11,14 @@
 (defvar-local my-ghostel-session-name nil
   "Stable user-assigned name for this Ghostel session.")
 
+(defun my-ghostel-buffer-name-with-session (_title)
+  "Return a Ghostel buffer name including the stable session name and cwd."
+  (when my-ghostel-session-name
+    (format "*ghostel:%s:%s*"
+            my-ghostel-session-name
+            (abbreviate-file-name
+             (directory-file-name default-directory)))))
+
 (defun my-ghostel-sessions ()
   "Return an alist of named Ghostel sessions.
 
@@ -34,7 +42,11 @@ Each element has the form (SESSION-NAME . BUFFER)."
         (ghostel-buffer-name-function nil))
     (let ((buffer (ghostel)))
       (with-current-buffer buffer
-        (setq-local my-ghostel-session-name name))
+        (setq-local my-ghostel-session-name name)
+        (setq-local ghostel-buffer-name-function
+                    #'my-ghostel-buffer-name-with-session)
+        (rename-buffer (funcall ghostel-buffer-name-function nil) t)
+        (setq ghostel--managed-buffer-name (buffer-name)))
       buffer)))
 
 (defun my-create-or-switch-ghostel (name)
