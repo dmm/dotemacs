@@ -14,4 +14,5 @@
         "https://www.themathdoctors.org/feed/"
         "https://cdn.jwz.org/blog/feed/"
         "https://waxbanks.wordpress.com/feed/"
+        "https://www.desktoponfire.com/feed/"
 ))
