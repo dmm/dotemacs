@@ -164,10 +164,10 @@
         exec-path-from-shell flycheck-inline flycheck-rust ghostel
         gptel hc-zenburn-theme indent-tools jinja2-mode jtsx lsp-java
         lsp-javacomp lsp-ui magit magit-lfs marginalia modus-themes
-        org ox-hugo ox-rss phoenix-dark-pink-theme poly-ansible
-        polymode prettier quelpa quelpa-use-package rg rust-mode
-        smart-shift switch-window tide vagrant-tramp vterm yaml-mode
-        yasnippet zenburn-theme))
+        orderless org ox-hugo ox-rss phoenix-dark-pink-theme
+        poly-ansible polymode prettier quelpa quelpa-use-package rg
+        rust-mode smart-shift switch-window tide vagrant-tramp vertico
+        vterm yaml-mode yasnippet zenburn-theme))
  '(package-vc-selected-packages
    '((aidermacs :url "https://github.com/MatthewZMD/aidermacs.git")))
  '(remember-annotation-functions '(org-remember-annotation))
