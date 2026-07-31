@@ -179,3 +179,8 @@
  ;; Your init file should contain only one such instance.
  ;; If there is more than one, they won't work right.
  )
+
+;; Load machine-local configuration last so it can override shared defaults.
+(let ((site-config (expand-file-name "site-config.el" user-emacs-directory)))
+  (when (file-readable-p site-config)
+    (load-file site-config)))
