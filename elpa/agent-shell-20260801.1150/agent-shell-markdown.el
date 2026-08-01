@@ -289,7 +289,9 @@ For example:
   => #(\"my text\" 0 2 (face italic) 3 7 (face bold))"
   (agent-shell-with-work-buffer
     (insert markdown)
-    (agent-shell-markdown-replace-markup)
+    ;; A complete string, not a stream: force a final render so trailing
+    ;; constructs (e.g. an image at end of buffer) aren't held back.
+    (agent-shell-markdown-replace-markup :force t)
     (buffer-string)))
 
 (cl-defun agent-shell-markdown-replace-markup (&key force
@@ -395,7 +397,8 @@ body un-fontified."
         (when render-images
           (agent-shell-markdown--replace-images
            :avoid-ranges avoid-ranges
-           :image-cache-directory image-cache-directory)
+           :image-cache-directory image-cache-directory
+           :complete force)
           (agent-shell-markdown--replace-image-file-paths
            :avoid-ranges avoid-ranges))
         (agent-shell-markdown--style-dividers :avoid-ranges avoid-ranges)
@@ -514,6 +517,38 @@ this returns `(((:watermark . 1200)))'."
                         nil))
     (nreverse results)))
 
+(cl-defun agent-shell-markdown--emphasize-span (&key markup-start markup-end
+                                                     content-start content-end face)
+  "Strip emphasis delimiters around CONTENT-START..CONTENT-END and face the text.
+
+MARKUP-START..MARKUP-END spans the whole construct including its
+delimiters (e.g. `**X**'); CONTENT-START..CONTENT-END is the content
+text (`X').  Only the delimiters are deleted; the content text is left
+in place rather than deleted and re-inserted, so any overlays, markers,
+or `agent-shell-markdown-frozen' regions an earlier pass or an
+external `agent-shell-markdown-render-functions' renderer anchored
+inside survive.
+
+FACE is layered on the remaining text with `add-face-text-property',
+so it composes with faces from earlier passes.  Unless the text
+already carries one, the original markdown is stashed on
+`agent-shell-markdown-source' for `agent-shell-copy-as-markdown'.
+Point is left at the end of the faced text."
+  (let ((source (unless (get-text-property markup-start
+                                           'agent-shell-markdown-source)
+                  (agent-shell-markdown-reconstruct markup-start markup-end))))
+    ;; Delete the trailing delimiter first so CONTENT-START/CONTENT-END stay
+    ;; valid, then the leading one.  Removing only the delimiters keeps the
+    ;; content text's characters (and anything anchored to them) intact.
+    (delete-region content-end markup-end)
+    (delete-region markup-start content-start)
+    (let ((end (+ markup-start (- content-end content-start))))
+      (add-face-text-property markup-start end face)
+      (when source
+        (put-text-property markup-start end
+                           'agent-shell-markdown-source source))
+      (goto-char end))))
+
 (cl-defun agent-shell-markdown--replace-bolds (&key avoid-ranges)
   "Replace `**X**' / `__X__' spans in current buffer with bold X.
 
@@ -540,22 +575,12 @@ world.\" with face `agent-shell-markdown-bold' on \"world\"."
                      markup-start markup-end avoid-ranges)))
         (if avoid
             (goto-char (cdr avoid))
-          (let ((text (buffer-substring
-                       (or (match-beginning 2) (match-beginning 3))
-                       (or (match-end 2) (match-end 3))))
-                (source (unless (get-text-property markup-start
-                                                   'agent-shell-markdown-source)
-                          (agent-shell-markdown-reconstruct
-                           markup-start markup-end))))
-            (delete-region markup-start markup-end)
-            (goto-char markup-start)
-            (insert text)
-            (let ((end (+ markup-start (length text))))
-              (add-face-text-property markup-start end 'agent-shell-markdown-bold)
-              (when source
-                (put-text-property markup-start end
-                                   'agent-shell-markdown-source source)))
-            (setq changed t)))))
+          (agent-shell-markdown--emphasize-span
+           :markup-start markup-start :markup-end markup-end
+           :content-start (or (match-beginning 2) (match-beginning 3))
+           :content-end (or (match-end 2) (match-end 3))
+           :face 'agent-shell-markdown-bold)
+          (setq changed t))))
     changed))
 
 (cl-defun agent-shell-markdown--replace-italics (&key avoid-ranges)
@@ -588,22 +613,12 @@ world.\" with face `agent-shell-markdown-italic' on \"world\"."
                      markup-start markup-end avoid-ranges)))
         (if avoid
             (goto-char (cdr avoid))
-          (let ((text (buffer-substring
-                       (or (match-beginning 2) (match-beginning 4))
-                       (or (match-end 2) (match-end 4))))
-                (source (unless (get-text-property markup-start
-                                                   'agent-shell-markdown-source)
-                          (agent-shell-markdown-reconstruct
-                           markup-start markup-end))))
-            (delete-region markup-start markup-end)
-            (goto-char markup-start)
-            (insert text)
-            (let ((end (+ markup-start (length text))))
-              (add-face-text-property markup-start end 'agent-shell-markdown-italic)
-              (when source
-                (put-text-property markup-start end
-                                   'agent-shell-markdown-source source)))
-            (setq changed t)))))
+          (agent-shell-markdown--emphasize-span
+           :markup-start markup-start :markup-end markup-end
+           :content-start (or (match-beginning 2) (match-beginning 4))
+           :content-end (or (match-end 2) (match-end 4))
+           :face 'agent-shell-markdown-italic)
+          (setq changed t))))
     changed))
 
 (cl-defun agent-shell-markdown--replace-strikethroughs (&key avoid-ranges)
@@ -628,21 +643,11 @@ For example, the buffer \"a ~~b~~ c\" becomes \"a b c\" with face
                      markup-start markup-end avoid-ranges)))
         (if avoid
             (goto-char (cdr avoid))
-          (let ((text (buffer-substring (match-beginning 1) (match-end 1)))
-                (source (unless (get-text-property markup-start
-                                                   'agent-shell-markdown-source)
-                          (agent-shell-markdown-reconstruct
-                           markup-start markup-end))))
-            (delete-region markup-start markup-end)
-            (goto-char markup-start)
-            (insert text)
-            (let ((end (+ markup-start (length text))))
-              (add-face-text-property markup-start end
-                                      'agent-shell-markdown-strikethrough)
-              (when source
-                (put-text-property markup-start end
-                                   'agent-shell-markdown-source source)))
-            (setq changed t)))))
+          (agent-shell-markdown--emphasize-span
+           :markup-start markup-start :markup-end markup-end
+           :content-start (match-beginning 1) :content-end (match-end 1)
+           :face 'agent-shell-markdown-strikethrough)
+          (setq changed t))))
     changed))
 
 (cl-defun agent-shell-markdown--replace-headers (&key avoid-ranges)
@@ -823,7 +828,24 @@ and a keymap that opens the URL."
                 (put-text-property markup-start end
                                    'agent-shell-markdown-source source))))))))))
 
-(cl-defun agent-shell-markdown--replace-images (&key avoid-ranges image-cache-directory)
+(defun agent-shell-markdown--image-attributes-pending-p (pos)
+  "Return non-nil when an image ending at POS may still gain `{...}' attributes.
+
+True at end of buffer (a trailing `{width= ...}' block may still
+stream in) or when such a block has opened with `{' but not closed
+before end of buffer.  Callers defer rendering the image until it
+settles, otherwise it renders and freezes before the attributes
+arrive and they leak as literal text.
+
+For example, with POS after the `)' of a just-streamed
+`![a](x.png)' at end of buffer, returns non-nil; once `{width=50%}'
+has fully streamed in after it, returns nil."
+  (or (= pos (point-max))
+      (save-excursion
+        (goto-char pos)
+        (looking-at-p "{[^}\n]*\\'"))))
+
+(cl-defun agent-shell-markdown--replace-images (&key avoid-ranges image-cache-directory complete)
   "Replace `![alt](url)' image markup with displayed images.
 
 If URL resolves to an existing local file that is image-supported
@@ -845,6 +867,12 @@ A bare `(url)' destination and the CommonMark angle-bracketed
 `(<url>)' form are both accepted; the latter allows spaces in the
 URL (see `agent-shell-markdown--link-markup-regexp').
 
+While streaming (COMPLETE nil, the default) an image that could
+still gain a trailing `{width= ...}' attribute block is left raw
+until it settles (see `agent-shell-markdown--image-attributes-pending-p').
+COMPLETE non-nil marks a final, non-streaming render, so such
+images render immediately.
+
 For example, the buffer \"see ![logo](logo.png)\" becomes
 \"see logo\" with the image shown in place of \"logo\"."
   (let ((case-fold-search nil)
@@ -857,6 +885,15 @@ For example, the buffer \"see ![logo](logo.png)\" becomes
                      markup-start markup-end avoid-ranges)))
         (cond
          (avoid (goto-char (cdr avoid)))
+         ;; Mid-stream, the image may still gain a trailing `{width= ...}'
+         ;; attribute block that hasn't fully arrived.  Rendering now would
+         ;; freeze the image and orphan those attributes as literal text on
+         ;; the next chunk, so leave the markup raw until it settles.  When
+         ;; COMPLETE (a final, non-streaming render) there is no more to
+         ;; come, so render regardless.
+         ((and (not complete)
+               (agent-shell-markdown--image-attributes-pending-p markup-end))
+          nil)
          (t
           (let* ((alt (buffer-substring-no-properties
                        (match-beginning 1) (match-end 1)))
@@ -877,6 +914,17 @@ For example, the buffer \"see ![logo](logo.png)\" becomes
                                 (buffer-substring (match-beginning 1)
                                                   (match-end 1))))
                  (url (agent-shell-markdown--link-markup-url))
+                 ;; Optional Pandoc-style `{width= height=}' block directly
+                 ;; after the markup; consumed with it so it doesn't leak as
+                 ;; literal text, and folded into the stashed source.
+                 (attribute-match (save-excursion
+                                    (goto-char markup-end)
+                                    (when (looking-at "{\\([^}\n]*\\)}")
+                                      (cons (match-string 1) (match-end 0)))))
+                 (attributes (when attribute-match
+                               (agent-shell-markdown--parse-image-attributes
+                                (car attribute-match))))
+                 (content-end (if attribute-match (cdr attribute-match) markup-end))
                  ;; Stash the original `![alt](url)' markup so
                  ;; `agent-shell-copy-as-markdown' round-trips the image back to
                  ;; source rather than yielding the bare alt placeholder (mirrors
@@ -884,7 +932,7 @@ For example, the buffer \"see ![logo](logo.png)\" becomes
                  ;; an already-captured source.
                  (source (unless (get-text-property markup-start
                                                     'agent-shell-markdown-source)
-                           (agent-shell-markdown-reconstruct markup-start markup-end)))
+                           (agent-shell-markdown-reconstruct markup-start content-end)))
                  (path (agent-shell-markdown--resolve-image-url
                         url image-cache-directory)))
             (cond
@@ -893,9 +941,11 @@ For example, the buffer \"see ![logo](logo.png)\" becomes
                    (display-graphic-p))
               (let ((image (create-image
                             path nil nil
-                            :max-width (agent-shell-markdown--image-max-width))))
+                            :max-width (or (map-elt attributes :max-width)
+                                           (agent-shell-markdown--image-max-width))
+                            :max-height (map-elt attributes :max-height))))
                 (image-flush image)
-                (delete-region markup-start markup-end)
+                (delete-region markup-start content-end)
                 (goto-char markup-start)
                 (insert placeholder)
                 (let ((end (+ markup-start (length placeholder))))
@@ -916,7 +966,7 @@ For example, the buffer \"see ![logo](logo.png)\" becomes
                                (apply #'propertize url
                                       (text-properties-at markup-start))
                              placeholder)))
-                (delete-region markup-start markup-end)
+                (delete-region markup-start content-end)
                 (goto-char markup-start)
                 (insert label)
                 (let ((end (+ markup-start (length label))))
@@ -1061,11 +1111,16 @@ left untouched."
                                '(agent-shell-markdown-frozen t
                                                              rear-nonsticky (agent-shell-markdown-frozen))))))))
 
-(defun agent-shell-markdown--display-width ()
-  "Return a usable display width for divider rendering.
-Tries the selected window's body width and falls back to 80
-characters when no usable window is available (e.g. batch)."
-  (or (ignore-errors (window-body-width))
+(defun agent-shell-markdown--display-width (&optional window)
+  "Return a usable display width (in columns) for rendering.
+Measures WINDOW's body width when given, otherwise the selected
+window's, and falls back to 80 columns when no usable window is
+available (e.g. batch).  Passing the destination WINDOW matters
+when rendering happens with a different window selected (e.g. a
+table re-laid out from an idle timer after a resize): measuring
+the selected window instead would size the layout for the wrong
+window and overflow the one actually showing the content."
+  (or (ignore-errors (window-body-width window))
       80))
 
 (cl-defun agent-shell-markdown--style-source-blocks (&key (highlight-blocks t))
@@ -1329,6 +1384,20 @@ Group 1 is the leading indent, group 2 the marker (`-'/`*'/`+' or
 after the marker keeps `---' (a divider) and `*emphasis*' from
 matching.")
 
+(defconst agent-shell-markdown--list-item-last-line-regexp
+  (rx bol
+      (group (zero-or-more (any " \t")))
+      (group (or (any "-*+")
+                 (seq (one-or-more digit) (any ".)"))))
+      (group (one-or-more (any " \t")))
+      (zero-or-more (not (any "\n")))
+      eos)
+  "Regexp matching a list-item line anchored at the accessible buffer end.
+Like `agent-shell-markdown--list-item-line-regexp' but ending at `eos'
+instead of a trailing `\\n', with the same groups.  Used for a list item
+on the last line of a narrowed body, whose terminating newline sits just
+outside the narrow.")
+
 (defconst agent-shell-markdown--list-item-pending-regexp
   (rx bol (zero-or-more (any " \t"))
       (or (any "-*+") (seq (one-or-more digit) (any ".)")))
@@ -1386,12 +1455,20 @@ reconstructing to `- [x] Done'."
          ;; The marker rewrite shifts everything after it; a marker keeps
          ;; the line's end (and its trailing newline) locatable.
          (end (copy-marker line-end))
+         ;; End of the line's content: LINE-END drops its trailing newline
+         ;; when present, but a list item on the last line of a narrowed
+         ;; body (see `--style-lists') runs to the narrow with its newline
+         ;; just outside, so there is nothing to drop there.
+         (content-end (copy-marker (if (eq (char-before line-end) ?\n)
+                                       (1- line-end)
+                                     line-end)))
          ;; Stash the markdown before rewriting so copy-as-markdown can
          ;; restore it.  Excludes the trailing newline (reconstructs it
          ;; verbatim).
          (source (unless (get-text-property line-start
                                             'agent-shell-markdown-source)
-                   (agent-shell-markdown-reconstruct line-start (1- line-end)))))
+                   (agent-shell-markdown-reconstruct
+                    line-start (marker-position content-end)))))
     (cond
      (ordered
       (add-face-text-property marker-start marker-end
@@ -1406,8 +1483,8 @@ reconstructing to `- [x] Done'."
         (unless (equal checkbox " ")
           (save-excursion
             (goto-char (+ marker-start (length glyph)))
-            (skip-chars-forward " \t" (1- (marker-position end)))
-            (add-face-text-property (point) (1- (marker-position end))
+            (skip-chars-forward " \t" (marker-position content-end))
+            (add-face-text-property (point) (marker-position content-end)
                                     'agent-shell-markdown-list-done)))))
      (t
       (agent-shell-markdown--replace-list-marker
@@ -1416,7 +1493,7 @@ reconstructing to `- [x] Done'."
     (put-text-property line-start (marker-position end)
                        'line-prefix agent-shell-markdown-list-line-prefix)
     (when source
-      (put-text-property line-start (1- (marker-position end))
+      (put-text-property line-start (marker-position content-end)
                          'agent-shell-markdown-source source))
     (add-text-properties
      line-start (marker-position end)
@@ -1424,7 +1501,8 @@ reconstructing to `- [x] Done'."
        agent-shell-markdown-list-rendered t
        rear-nonsticky (agent-shell-markdown-frozen
                        agent-shell-markdown-list-rendered)))
-    (set-marker end nil)))
+    (set-marker end nil)
+    (set-marker content-end nil)))
 
 (cl-defun agent-shell-markdown--style-lists (&key avoid-ranges)
   "Render markdown list lines: bullets, task checkboxes, ordered numbers.
@@ -1461,7 +1539,30 @@ a two-column base indent."
            :indent-width (- (match-end 1) (match-beginning 1))
            :marker-start (match-beginning 2)
            :marker-end (match-end 2)
-           :content-start (match-end 3)))))))
+           :content-start (match-end 3)))))
+    ;; A fragment body is rendered under a narrow to its content, so a
+    ;; list item on the last line has its terminating newline just past
+    ;; the narrow (or none yet).  The loop above is newline-anchored, so
+    ;; that last item is never rendered.  Handle it here, but only when a
+    ;; newline actually exists immediately past the narrow: that proves
+    ;; the line is complete rather than a still-streaming frontier (whose
+    ;; marker must stay raw until it is known to be a list item).
+    (when-let* ((narrow-end (point-max))
+                ((save-restriction (widen) (eq (char-after narrow-end) ?\n))))
+      (goto-char narrow-end)
+      (beginning-of-line)
+      (when (and (not (get-text-property (point)
+                                         'agent-shell-markdown-list-rendered))
+                 (looking-at agent-shell-markdown--list-item-last-line-regexp)
+                 (not (agent-shell-markdown-in-avoid-range-p
+                       (match-beginning 0) (match-end 0) avoid-ranges)))
+        (agent-shell-markdown--render-list-line
+         :line-start (match-beginning 0)
+         :line-end (match-end 0)
+         :indent-width (- (match-end 1) (match-beginning 1))
+         :marker-start (match-beginning 2)
+         :marker-end (match-end 2)
+         :content-start (match-end 3))))))
 
 (defun agent-shell-markdown--blank-line-at-p (pos)
   "Return non-nil when the line holding POS is blank.
@@ -1978,20 +2079,30 @@ Accounts for borders and padding (`| X | Y |' = 2 padding +
   (+ 1 (seq-reduce (lambda (acc w) (+ acc w 3)) widths 0)))
 
 (defun agent-shell-markdown--table-allocate-widths (natural-widths min-widths target)
-  "Shrink NATURAL-WIDTHS proportionally to fit TARGET, respecting MIN-WIDTHS."
+  "Shrink NATURAL-WIDTHS proportionally to fit TARGET, respecting MIN-WIDTHS.
+
+MIN-WIDTHS holds each column's longest unbreakable word, the width
+below which word-wrapping alone keeps content intact.  When even
+those minimums cannot fit TARGET (a window narrower than the longest
+words), columns shrink below them down to a single column and the
+cell wrapper hard-breaks those long words across lines, so the table
+still fits rather than overflowing and line-wrapping as a whole."
   (let* ((total (agent-shell-markdown--table-total-width natural-widths))
-         (excess (- total target)))
+         (excess (- total target))
+         (floors (if (> (agent-shell-markdown--table-total-width min-widths) target)
+                     (make-list (length min-widths) 1)
+                   min-widths)))
     (if (<= excess 0)
         natural-widths
       (let* ((shrinkable (seq-mapn (lambda (w m) (max 0 (- w m)))
-                                   natural-widths min-widths))
+                                   natural-widths floors))
              (total-shrinkable (seq-reduce #'+ shrinkable 0)))
         (if (<= total-shrinkable 0)
-            min-widths
+            floors
           (let ((ratio (min 1.0 (/ (float excess) total-shrinkable))))
             (seq-mapn (lambda (w m s)
                         (max m (floor (- w (* s ratio)))))
-                      natural-widths min-widths shrinkable)))))))
+                      natural-widths floors shrinkable)))))))
 
 (defun agent-shell-markdown--text-has-face-p (text)
   "Return non-nil if TEXT carries any `face' text property.
@@ -2372,12 +2483,12 @@ rendered region from inheriting either of our two properties."
   (let* ((source (map-elt table :source))
          (table-start (map-elt table :start))
          (table-end (map-elt table :end))
-         ;; Capture the destination window for pixel-accurate
-         ;; measurement of non-ASCII cells.  This is the window into
-         ;; which we're rendering; the render-table-source helper
-         ;; forwards it through to width / padding measurement.
-         (window (or (get-buffer-window (current-buffer))
-                     (selected-window)))
+         (window (get-buffer-window (current-buffer) t))
+         ;; The window pixel width column widths were measured against
+         ;; (nil when off-screen / string-width).  Stashed so
+         ;; `agent-shell-markdown-rerender-tables' can re-lay out only the
+         ;; tables whose width no longer matches the display.
+         (width (and window (window-body-width window t)))
          (rendered (agent-shell-markdown--render-table-source
                     :source source :window window))
          (carried (agent-shell-markdown--carry-properties table-start)))
@@ -2391,28 +2502,91 @@ rendered region from inheriting either of our two properties."
        table-start end
        `(agent-shell-markdown-frozen t
                                      agent-shell-markdown-table-source ,source
+                                     agent-shell-markdown-table-width ,width
                                      ;; Mirror the source under the generic property that
                                      ;; `agent-shell-copy-as-markdown' reads, so tables reconstruct
                                      ;; the same way every other block does.
                                      agent-shell-markdown-source ,source
                                      rear-nonsticky (agent-shell-markdown-frozen
                                                      agent-shell-markdown-table-source
-                                                     agent-shell-markdown-source))))))
+                                                     agent-shell-markdown-table-width
+                                                     agent-shell-markdown-source)))
+      ;; Mirror the per-cell `face' onto `font-lock-face' and mark the
+      ;; region fontified, so the rendered table survives font-lock
+      ;; re-fontification on its own.  `agent-shell-markdown-replace-markup'
+      ;; does this globally after streaming, but a standalone re-render
+      ;; (`agent-shell-markdown-rerender-tables' on resize) has no such
+      ;; follow-up pass and would otherwise render mostly greyed out.
+      (agent-shell-markdown--mirror-face-to-font-lock-face table-start end)
+      (put-text-property table-start end 'fontified t))))
+
+(defun agent-shell-markdown-rerender-tables ()
+  "Re-lay out tables whose stored width no longer matches the display.
+
+Each rendered table carries its markdown on
+`agent-shell-markdown-table-source' and the window pixel width its
+columns were measured against on `agent-shell-markdown-table-width'
+\(see `agent-shell-markdown--render-table').  This re-renders from
+the stashed source, at the current window width, only the tables
+whose stored width differs.  A table first laid out off-screen
+\(string-width) or at another width is realigned once shown, while
+tables already correct for the current width are left untouched.
+
+A no-op when the buffer isn't displayed (nothing to measure
+against) or when every table is already at the current width, so it
+is safe to call on display and on resize."
+  (when-let* ((window (get-buffer-window (current-buffer) t))
+              (width (window-body-width window t)))
+    (let ((regions nil))
+      ;; Collect the stale tables' bounds (as markers, so re-rendering
+      ;; one doesn't invalidate the others) and stashed source.
+      (save-excursion
+        (goto-char (point-min))
+        (let (match)
+          (while (setq match (text-property-search-forward
+                              'agent-shell-markdown-table-source))
+            (let ((beg (prop-match-beginning match)))
+              (unless (eql width (get-text-property
+                                  beg 'agent-shell-markdown-table-width))
+                (push (list (copy-marker beg)
+                            (copy-marker (prop-match-end match))
+                            (get-text-property
+                             beg 'agent-shell-markdown-table-source))
+                      regions))))))
+      ;; A re-layout, not a content change: keep it off the undo list and
+      ;; don't flip the buffer's modified flag.
+      (when regions
+        (let ((inhibit-read-only t)
+              (buffer-undo-list t)
+              (modified (buffer-modified-p)))
+          (dolist (region (nreverse regions))
+            (agent-shell-markdown--render-table
+             (list (cons :source (nth 2 region))
+                   (cons :start (marker-position (nth 0 region)))
+                   (cons :end (marker-position (nth 1 region)))))
+            (set-marker (nth 0 region) nil)
+            (set-marker (nth 1 region) nil))
+          (restore-buffer-modified-p modified))))))
 
 (defun agent-shell-markdown--carry-properties (pos)
   "Return a plist of properties at POS to carry across our delete+insert.
 
 Filters out properties our rendering itself sets (`face',
-`agent-shell-markdown-frozen', `agent-shell-markdown-table-source',
-`agent-shell-markdown-source', `rear-nonsticky') so callers'
-application-level properties (read-only, agent-shell block ids,
-etc.) survive on the rendered output."
+`font-lock-face', `agent-shell-markdown-frozen',
+`agent-shell-markdown-table-source', `agent-shell-markdown-source',
+`rear-nonsticky') so callers' application-level properties such as
+`read-only' or agent-shell block ids survive on the rendered
+output.  `font-lock-face' in particular must not be carried: the
+first char's value (e.g. a table border) would otherwise be
+spread uniformly across the re-rendered region, greying out the
+per-cell styling on re-render."
   (let ((props (text-properties-at pos))
         (carried nil))
     (while props
       (let ((key (car props))
             (val (cadr props)))
         (unless (memq key '(face
+                            font-lock-face
                             agent-shell-markdown-frozen
                             agent-shell-markdown-table-source
                             agent-shell-markdown-source
@@ -2521,7 +2695,7 @@ prone to a few-pixel drift on emoji-heavy tables."
            (natural-widths (map-elt preprocessed :natural-widths))
            (processed-rows (map-elt preprocessed :processed-rows))
            (target-width (when agent-shell-markdown-table-wrap-columns
-                           (floor (* (agent-shell-markdown--display-width)
+                           (floor (* (agent-shell-markdown--display-width window)
                                      agent-shell-markdown-table-max-width-fraction))))
            (needs-allocation (and target-width
                                   (> (agent-shell-markdown--table-total-width
@@ -2959,11 +3133,55 @@ starting with `~/', `./', or `../'."
 Resolves `agent-shell-markdown-image-max-width' which may be an integer
 (pixels) or a float between 0 and 1 (ratio of window body width)."
   (if (floatp agent-shell-markdown-image-max-width)
-      (let ((window (or (get-buffer-window (current-buffer))
+      ;; Prefer a window actually showing this buffer (any frame); only
+      ;; guess with `frame-first-window' when none does.
+      (let ((window (or (get-buffer-window (current-buffer) t)
                         (frame-first-window))))
         (round (* agent-shell-markdown-image-max-width
                   (window-body-width window t))))
     agent-shell-markdown-image-max-width))
+
+(defun agent-shell-markdown--image-attribute-pixels (value dimension)
+  "Resolve a Pandoc image-attribute VALUE to a pixel count for DIMENSION.
+VALUE is a string such as `300', `300px', or `50%'.  DIMENSION is
+`width' or `height'; a percentage resolves against the window body's
+pixel size in that dimension.  Returns an integer, or nil when VALUE
+is not a recognised size.
+
+For example, (agent-shell-markdown--image-attribute-pixels \"300\" \\='width)
+returns 300."
+  (when-let* (((string-match "\\`\\([0-9]+\\)\\(%\\|px\\)?\\'" value))
+              (number (string-to-number (match-string 1 value)))
+              ;; Prefer a window actually showing this buffer (any frame);
+              ;; only guess with `frame-first-window' when none does.
+              (window (or (get-buffer-window (current-buffer) t)
+                          (frame-first-window))))
+    (if (equal (match-string 2 value) "%")
+        (round (* (/ number 100.0)
+                  (if (eq dimension 'width)
+                      (window-body-width window t)
+                    (window-body-height window t))))
+      number)))
+
+(defun agent-shell-markdown--parse-image-attributes (string)
+  "Parse Pandoc-style image attributes from STRING (a `{...}' body).
+Returns an alist with `:max-width' and/or `:max-height' pixel values
+for any `width='/`height=' entries found, resolved via
+`agent-shell-markdown--image-attribute-pixels'.  Other attributes
+\(classes, ids) are ignored.
+
+For example, (agent-shell-markdown--parse-image-attributes \"width=300\")
+returns \\='((:max-width . 300))."
+  (let (attributes)
+    (dolist (dimension '(width height))
+      (when-let* (((string-match (format "\\_<%s[ \t]*=[ \t]*\\([^ \t}]+\\)"
+                                         dimension)
+                                 string))
+                  (pixels (agent-shell-markdown--image-attribute-pixels
+                           (match-string 1 string) dimension)))
+        (push (cons (intern (format ":max-%s" dimension)) pixels)
+              attributes)))
+    (nreverse attributes)))
 
 (defun agent-shell-markdown--watermark-start ()
   "Return the position the next scan should start from.
@@ -3258,6 +3476,11 @@ AVOID-RANGES are ignored.  A line with an odd number of backticks
 has its trailing unmatched backtick treated as still-streaming:
 the range extends from that backtick to end-of-line.
 
+Exception: on a table row (a line beginning with `|') an unmatched
+backtick only extends to the next `|', since a code span cannot
+cross a cell boundary.  Without this a stray backtick in one cell
+would swallow the rest of the row (e.g. a link in a later cell).
+
 For example, given the buffer \"a `code` b\" returns a list with
 one range covering the body \"code\"."
   (let ((ranges '())
@@ -3265,7 +3488,8 @@ one range covering the body \"code\"."
     (save-excursion
       (goto-char (point-min))
       (while (not (eobp))
-        (let ((line-end (line-end-position))
+        (let ((line-beg (line-beginning-position))
+              (line-end (line-end-position))
               (open nil))
           (while (re-search-forward "`" line-end t)
             (let ((pos (match-beginning 0)))
@@ -3276,7 +3500,18 @@ one range covering the body \"code\"."
                       (setq open nil))
                   (setq open pos)))))
           (when open
-            (push (cons (1+ open) line-end) ranges)))
+            (push (cons (1+ open)
+                        (if (save-excursion
+                              (goto-char line-beg)
+                              (looking-at-p
+                               agent-shell-markdown--table-pending-line-regexp))
+                            (save-excursion
+                              (goto-char (1+ open))
+                              (if (search-forward "|" line-end t)
+                                  (1- (point))
+                                line-end))
+                          line-end))
+                  ranges)))
         (forward-line 1)))
     (nreverse ranges)))
 

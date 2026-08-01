@@ -4,8 +4,8 @@
 
 ;; Author: Alvaro Ramirez https://xenodium.com
 ;; URL: https://github.com/xenodium/agent-shell
-;; Package-Version: 20260729.1510
-;; Package-Revision: 47a980276d35
+;; Package-Version: 20260801.1150
+;; Package-Revision: 44e87a2c8c75
 ;; Package-Requires: ((emacs "29.1") (shell-maker "0.94.1") (acp "0.13.1"))
 
 (defconst agent-shell--version "0.66.1")
@@ -1578,7 +1578,8 @@ Includes shells accessed via viewport buffers, preserving visited order."
                             buffer)
                            ((or (derived-mode-p 'agent-shell-viewport-view-mode)
                                 (derived-mode-p 'agent-shell-viewport-edit-mode))
-                            (agent-shell-viewport--shell-buffer buffer)))))
+                            (agent-shell-viewport--shell-buffer buffer))))
+                    ((buffer-local-value 'shell-maker--config shell-buffer)))
           (unless (memq shell-buffer seen)
             (push shell-buffer seen)
             (push shell-buffer shell-buffers)))))
@@ -1690,9 +1691,11 @@ buffers are available or nothing was selected."
                                                     '(:agent-config :buffer-name))))
                              (cons :status (symbol-name (agent-shell-status)))
                              (cons :title (let ((title (string-trim
-                                                        (or (map-nested-elt agent-shell--state
-                                                                            '(:session :title))
-                                                            ""))))
+                                                        (car (split-string
+                                                              (or (map-nested-elt agent-shell--state
+                                                                                  '(:session :title))
+                                                                  "")
+                                                              "\n")))))
                                             (if (> (length title) 50)
                                                 (concat (substring title 0 47) "...")
                                               title))))))
@@ -2610,6 +2613,9 @@ No-op while that function has nothing to summarize (an empty group)."
              (agent-shell--append-transcript
               :text (agent-shell--indent-markdown-headers content)
               :file-path agent-shell--transcript-file)
+             (agent-shell--emit-event
+              :event 'agent-message-chunk
+              :data (list (cons :text-chunk (map-nested-elt acp-notification '(params update content text)))))
              (agent-shell--update-fragment
               :state state
               ;; Out of turn, key under a dedicated namespace so the
@@ -4214,7 +4220,7 @@ variable (see makunbound)"))
         (kill-buffer shell-buffer)
         (error "No way to create a new client"))
       (let ((command (map-elt (funcall (map-elt config :client-maker) (current-buffer)) :command)))
-        (unless (executable-find command)
+        (unless (executable-find command t)
           (kill-buffer shell-buffer)
           (error "%s" (agent-shell--make-missing-executable-error
                        :executable command
@@ -5509,13 +5515,18 @@ Session events:
     :data contains :request-id, :tool-call-id, :tool-call
   `permission-response'   - Permission response sent
     :data contains :request-id, :tool-call-id, :option-id, :cancelled
+  `agent-message-chunk'   - Agent streamed a chunk of message text
+    :data contains :text-chunk (the raw text the agent emitted, nil for a
+    non-text block such as an image).  Emitted once per streamed chunk, so
+    it may fire many times per turn; agent-shell neither renders nor
+    accumulates the text.
   `turn-complete'         - Agent turn finished and prompt ready for input
     :data contains :stop-reason and :usage
   `session-title-changed' - Session title updated
     :data contains :title
   `input-submitted'       - User submitted input to the agent
-  `idle'                  - Agent idle for variable `agent-shell-idle-timeout' seconds
-    :data contains :idle-event and :buffer
+  `idle'                  - Agent idle for variable `agent-shell-idle-timeout'
+    seconds :data contains :idle-event and :buffer
 
 General events:
   `error'               - ACP request failed
@@ -6597,7 +6608,12 @@ pending-restore state once replay completes."
                    (agent-shell--replay-turn state (car (last prompt-turns)))))
                 ('full
                  (dolist (turn prompt-turns)
-                   (agent-shell--replay-turn state turn))))))
+                   (agent-shell--replay-turn state turn)
+                   ;; Repaint between turns so restored history streams in
+                   ;; visibly rather than appearing all at once when the
+                   ;; blocking replay finally returns.
+                   ;; TODO: Consider rendering on idle.
+                   (redisplay t))))))
         (map-put! state :active-requests saved-active-requests))
       ;; Point followed the narrowed history insertions up above the live
       ;; prompt.  Return it to the input area so the cursor lands where the
@@ -9800,6 +9816,60 @@ For example:
                       (1- end) 'agent-shell-non-trimmable text)))
       (setq end (1- end)))
     (substring text start end)))
+
+(defvar-local agent-shell--table-realign-timer nil
+  "Pending idle timer that re-aligns this buffer's markdown tables.")
+
+(defun agent-shell--realign-tables (buffer)
+  "Re-render BUFFER's markdown tables from their stashed source.
+Deferred worker for `agent-shell--realign-tables-on-change'."
+  (when (buffer-live-p buffer)
+    (with-current-buffer buffer
+      (setq agent-shell--table-realign-timer nil)
+      (agent-shell-markdown-rerender-tables))))
+
+(defun agent-shell--realign-tables-on-change (window)
+  "Re-align the current buffer's markdown tables shown in WINDOW.
+
+Installed buffer-locally on `window-size-change-functions' and
+`window-buffer-change-functions' (whose buffer-local values are
+called with the window, the buffer current), so it runs only for
+agent-shell windows.  Table column widths are pixel-measured
+against the display, so a resize or first display can change their
+layout; schedule a re-render on any such change.  Which tables
+actually need re-laying out is decided per-table by
+`agent-shell-markdown-rerender-tables' (via the stored
+`agent-shell-markdown-table-width'), so this can fire freely: it
+also catches tables streamed in while the buffer was off-screen
+\(rendered without a window, hence not pixel-perfect) and then
+brought back into a same-width window.  Deferred to an idle timer,
+which also debounces a drag-resize into a single re-render, because
+modifying a buffer from within these redisplay hooks is unsafe."
+  (when (window-live-p window)
+    (when (timerp agent-shell--table-realign-timer)
+      (cancel-timer agent-shell--table-realign-timer))
+    (setq agent-shell--table-realign-timer
+          (run-with-idle-timer 0.15 nil #'agent-shell--realign-tables
+                               (current-buffer)))))
+
+(defun agent-shell--enable-table-realign ()
+  "Keep the current buffer's markdown tables aligned to its window.
+
+Installs buffer-local window-change handlers (see
+`agent-shell--realign-tables-on-change').  Being buffer-local they
+run only for this buffer's windows and are removed automatically
+when the buffer is killed.  Added to `agent-shell-mode-hook' and
+`agent-shell-viewport-view-mode-hook' so both the shell and its
+viewport realign; a same-size window switch also fires the
+buffer-change hook, so first display is covered too."
+  (add-hook 'window-size-change-functions
+            #'agent-shell--realign-tables-on-change nil t)
+  (add-hook 'window-buffer-change-functions
+            #'agent-shell--realign-tables-on-change nil t))
+
+(add-hook 'agent-shell-mode-hook #'agent-shell--enable-table-realign)
+(add-hook 'agent-shell-viewport-view-mode-hook
+          #'agent-shell--enable-table-realign)
 
 (provide 'agent-shell)
 

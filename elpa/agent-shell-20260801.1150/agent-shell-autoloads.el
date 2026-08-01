@@ -329,6 +329,8 @@ evaluate the variable `agent-shell-ui-mode'.
 The mode's hook is called both when the mode is enabled and when it is
 disabled.
 
+\\{agent-shell-ui-mode-map}
+
 (fn &optional ARG)" t)
 (register-definition-prefixes "agent-shell-ui" '("agent-shell-ui-"))
 
