@@ -155,6 +155,42 @@ Start an interactive Auggie agent shell." t)
 (register-definition-prefixes "agent-shell-auggie" '("agent-shell-auggie-"))
 
 
+;;; Generated autoloads from agent-shell-chat-mode.el
+
+(defvar agent-shell-chat-mode nil "\
+Non-nil if Agent-Shell-Chat mode is enabled.
+See the `agent-shell-chat-mode' command
+for a description of this minor mode.
+Setting this variable directly does not take effect;
+either customize it (see the info node `Easy Customization')
+or call the function `agent-shell-chat-mode'.")
+(custom-autoload 'agent-shell-chat-mode "agent-shell-chat-mode" nil)
+(autoload 'agent-shell-chat-mode "agent-shell-chat-mode" "\
+Toggle chat-style `Me'/agent labels in every `agent-shell' buffer.
+
+Each submitted turn is boxed `Me' and each response the agent's name.
+The live prompt shows `Me' so you can type into the shell; when
+`agent-shell-prompt-bar-mode' is on it is hidden, since input flows
+through the bar instead.
+
+This is a global minor mode.  If called interactively, toggle the
+`Agent-Shell-Chat mode' mode.  If the prefix argument is positive,
+enable the mode, and if it is zero or negative, disable the mode.
+
+If called from Lisp, toggle the mode if ARG is `toggle'.  Enable the
+mode if ARG is nil, omitted, or is a positive number.  Disable the mode
+if ARG is a negative number.
+
+To check whether the minor mode is enabled in the current buffer,
+evaluate `(default-value \\='agent-shell-chat-mode)'.
+
+The mode's hook is called both when the mode is enabled and when it is
+disabled.
+
+(fn &optional ARG)" t)
+(register-definition-prefixes "agent-shell-chat-mode" '("agent-shell-chat--"))
+
+
 ;;; Generated autoloads from agent-shell-cline.el
 
 (autoload 'agent-shell-cline-start-agent "agent-shell-cline" "\

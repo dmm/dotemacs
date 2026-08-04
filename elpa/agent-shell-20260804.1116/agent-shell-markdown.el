@@ -384,6 +384,11 @@ body un-fontified."
                                (agent-shell-markdown--frozen-ranges)))
         (setq avoid-ranges (agent-shell-markdown-sort-ranges
                             source-ranges rendered-ranges inline-ranges))
+        ;; Swap backslash-escaped punctuation for placeholders before the
+        ;; styling passes, so an escaped delimiter (e.g. `\\*') is treated
+        ;; as ordinary content; `--decode-escapes' restores the bare chars
+        ;; after every pass.  Skips code, where a backslash is literal.
+        (agent-shell-markdown--encode-escapes :avoid-ranges avoid-ranges)
         (while (let ((italic-changed (agent-shell-markdown--replace-italics
                                       :avoid-ranges avoid-ranges))
                      (bold-changed (agent-shell-markdown--replace-bolds
@@ -420,6 +425,9 @@ body un-fontified."
         ;; always sees the existing `agent-shell-markdown-table-source'
         ;; needed to fold new rows in.
         (agent-shell-markdown--style-tables :avoid-ranges source-ranges)
+        ;; Restore backslash-escaped chars from their placeholders now that
+        ;; every styling pass has run, before faces are mirrored below.
+        (agent-shell-markdown--decode-escapes)
         ;; Mirror every `face' we composed onto `font-lock-face' so our
         ;; styling survives `font-lock-mode' re-fontification — comint
         ;; / shell-maker / agent-shell buffers fontify on every output
@@ -548,6 +556,90 @@ Point is left at the end of the faced text."
         (put-text-property markup-start end
                            'agent-shell-markdown-source source))
       (goto-char end))))
+
+(defconst agent-shell-markdown--escape-regexp
+  (rx "\\" (group (any "!-/" ":-@" "[-`" "{-~")))
+  "Matches a backslash-escaped ASCII-punctuation char, group 1 the char.
+This is the CommonMark escapable set: a backslash before any ASCII
+punctuation makes that punctuation literal and drops the backslash.
+For example `\\*' matches with group 1 `*'.")
+
+(defconst agent-shell-markdown--escape-placeholder ?\uE000
+  "Private-use char standing in for an escaped char mid-render.
+`agent-shell-markdown--encode-escapes' swaps each `\\X' for this char
+so the styling passes treat the escaped delimiter as ordinary text;
+`agent-shell-markdown--decode-escapes' swaps it back to X afterwards.")
+
+(cl-defun agent-shell-markdown--encode-escapes (&key avoid-ranges)
+  "Swap each backslash-escaped punctuation char for a placeholder char.
+Deletes the backslash and replaces the escaped char with
+`agent-shell-markdown--escape-placeholder', tagged with the literal
+char on `agent-shell-markdown-escaped' and the original `\\X' markdown
+on `agent-shell-markdown-source'.  The placeholder is not a markup
+character, so the styling passes treat an escaped delimiter (like the
+`*' in `**let\\***') as ordinary content rather than markup, and
+`agent-shell-markdown--decode-escapes' restores the bare char after
+they run.  Caller-owned properties on the escaped character are carried
+onto the placeholder.  Escapes inside AVOID-RANGES (fenced or inline
+code, where a backslash is literal) are left untouched.  Returns
+non-nil on a change.
+
+For example the buffer `**let vs let\\***' becomes `**let vs letP**'
+\(P the placeholder tagged `*'), so the bold pass matches and the span
+still round-trips to `**let vs let\\***' on copy."
+  (let ((changed nil))
+    (goto-char (point-min))
+    (while (re-search-forward agent-shell-markdown--escape-regexp nil t)
+      (let ((start (match-beginning 0))
+            (end (match-end 0))
+            (avoid (agent-shell-markdown-in-avoid-range-p
+                    (match-beginning 0) (match-end 0) avoid-ranges)))
+        (if avoid
+            (goto-char (cdr avoid))
+          (let ((ch (char-after (match-beginning 1)))
+                (source (agent-shell-markdown-reconstruct start end))
+                (carried (agent-shell-markdown--carry-properties
+                          (match-beginning 1))))
+            (delete-region start end)
+            (insert (propertize
+                     (char-to-string agent-shell-markdown--escape-placeholder)
+                     'agent-shell-markdown-escaped ch
+                     'agent-shell-markdown-source source
+                     'agent-shell-markdown-frozen t
+                     'rear-nonsticky '(agent-shell-markdown-escaped
+                                       agent-shell-markdown-frozen
+                                       agent-shell-markdown-source)))
+            (when carried
+              (add-text-properties start (point) carried))
+            (setq changed t)))))
+    changed))
+
+(defun agent-shell-markdown--decode-escapes ()
+  "Restore placeholder chars from `agent-shell-markdown--encode-escapes'.
+Each placeholder is swapped back to the literal char it stood for (read
+off `agent-shell-markdown-escaped'), keeping the face and
+`agent-shell-markdown-source' the passes left on it, so the visible
+text is the bare char while copy-as-markdown still yields `\\X'.  Runs
+after every styling pass.
+
+For example a bold `let vs letP' (P the placeholder tagged `*') becomes
+bold `let vs let*', still stashing `**let vs let\\***' for copy."
+  (goto-char (point-min))
+  (while (< (point) (point-max))
+    (if-let* ((ch (get-text-property (point) 'agent-shell-markdown-escaped)))
+        (let ((start (point))
+              (props (text-properties-at (point))))
+          ;; Replace the placeholder with the literal char, carrying the
+          ;; face / source the passes left on it (delete+insert rather
+          ;; than `subst-char-in-region', whose chars must share a byte
+          ;; length the placeholder and its char do not).
+          (delete-region start (1+ start))
+          (insert (apply #'propertize (char-to-string ch) props))
+          (remove-text-properties start (point)
+                                  '(agent-shell-markdown-escaped nil)))
+      (goto-char (or (next-single-property-change
+                      (point) 'agent-shell-markdown-escaped nil (point-max))
+                     (point-max))))))
 
 (cl-defun agent-shell-markdown--replace-bolds (&key avoid-ranges)
   "Replace `**X**' / `__X__' spans in current buffer with bold X.
@@ -1406,6 +1498,20 @@ outside the narrow.")
 Used to hold off a rendered list's bottom padding while another
 item could still stream in below it.")
 
+(defconst agent-shell-markdown--list-item-frontier-regexp
+  (rx bol (zero-or-more (any " \t"))
+      (or (any "-*+") (seq (one-or-more digit) (opt (any ".)"))))
+      (zero-or-more (any " \t"))
+      eos)
+  "Regexp: a partial list marker at the streaming frontier (buffer end).
+Matches a bare or half-typed marker whose trailing space has not
+streamed in yet (`-', `*', `1', `1.' at buffer end), unlike
+`agent-shell-markdown--list-item-pending-regexp' which requires the
+space.  Anchored at `eos', so it matches only the still-incomplete
+last line, not a mid-buffer `-foo' or a `---' divider.  Used to hold
+off a list's bottom padding so a marker mid-stream does not get a
+framing blank stranded above the item it becomes.")
+
 (defun agent-shell-markdown--list-bullet (depth)
   "Return the bullet glyph for nesting DEPTH, cycling the glyph set."
   (seq-elt agent-shell-markdown-list-bullets
@@ -1704,8 +1810,9 @@ gains a blank line above and below it:
                  agent-shell-markdown--table-pending-line-regexp)))
     (agent-shell-markdown--pad-regions
      'agent-shell-markdown-list-rendered
-     (lambda () (looking-at-p
-                 agent-shell-markdown--list-item-pending-regexp)))))
+     (lambda ()
+       (or (looking-at-p agent-shell-markdown--list-item-pending-regexp)
+           (looking-at-p agent-shell-markdown--list-item-frontier-regexp))))))
 
 (cl-defun agent-shell-markdown--find-tables (&key avoid-ranges)
   "Return tables to (re-)render in current buffer.

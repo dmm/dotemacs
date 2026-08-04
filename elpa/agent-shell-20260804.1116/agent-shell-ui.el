@@ -394,8 +394,19 @@ state, because label-less fragments don't follow `state :collapsed'
       ;; apply once the chunk lands — clear and re-derive.  Only when
       ;; the body is visible; for a hidden body the existing invisible
       ;; spans the whole body and must stay.
+      ;;
+      ;; `invisible' can only sit on the trailing-whitespace tail of a
+      ;; visible body (`agent-shell-markdown' never sets it mid-body), so
+      ;; clearing just the tail is equivalent to clearing the whole body
+      ;; without walking every property interval on each chunk (the whole
+      ;; body grows, so a full clear is O(body) per chunk).
       (unless body-invisible
-        (remove-text-properties body-start body-end '(invisible nil)))
+        (when (and (< body-start body-end)
+                   (eq (get-text-property (1- body-end) 'invisible) t))
+          (let ((tail-start (or (previous-single-property-change
+                                 body-end 'invisible nil body-start)
+                                body-start)))
+            (remove-text-properties tail-start body-end '(invisible nil)))))
       (goto-char body-end)
       (let ((insert-start (point)))
         (insert (agent-shell-ui--indent-text
@@ -462,7 +473,19 @@ are preserved across label updates."
                                    'agent-shell-ui-section section t t)))
                      (when (<= (prop-match-end m) (prop-match-end block-match))
                        (cons (prop-match-beginning m)
-                             (prop-match-end m)))))))
+                             (prop-match-end m))))))
+                ;; Skip the rewrite when the label already renders
+                ;; identically: tool-call updates re-send unchanged
+                ;; status/title labels on every chunk, and the rewrite
+                ;; (delete + insert + re-propertize) is pure waste.  A
+                ;; guard clause returning nil makes the whole `when-let*'
+                ;; short-circuit so the rewrite body never runs.  The
+                ;; comparison is text-only; labels are deterministic
+                ;; renderings of caller state, so unchanged text implies
+                ;; unchanged properties (no current caller changes only
+                ;; properties while keeping the text identical).
+                ((not (string= (substring-no-properties new-text)
+                               (buffer-substring-no-properties (car region) (cdr region))))))
       (let* ((region-start (car region))
              (region-end (cdr region))
              (state (get-text-property region-start 'agent-shell-ui-state)))
@@ -583,6 +606,17 @@ equal to GROUP-QUALIFIED-ID; the run stops at the first non-member."
               (unless (and state (equal (map-elt state :group-id) group-qualified-id))
                 (throw 'done nil))
               (let ((block (agent-shell-ui--block-range :position (point))))
+                ;; POS advances only to the member's end, with nothing requiring
+                ;; that end to move forward.  A range ending at or behind POS
+                ;; re-examines the same member forever (consing on every pass),
+                ;; and a nil BLOCK reaches `goto-char' as nil.  Stop instead,
+                ;; and log it: the remaining members go unenumerated, which
+                ;; surfaces later as a member left out of a fold or a new member
+                ;; inserted above its siblings.
+                (unless (> (map-elt block :end 0) pos)
+                  (message "agent-shell: stopped enumerating group %s: member %s at %d resolved to %S, not past %d"
+                           group-qualified-id (map-elt state :qualified-id) (point) block pos)
+                  (throw 'done nil))
                 (push (list (cons :qualified-id (map-elt state :qualified-id))
                             (cons :start (map-elt block :start))
                             (cons :end (map-elt block :end)))
@@ -1013,6 +1047,31 @@ state-property range first.  User-facing toggling goes through
                (equal (map-elt state :qualified-id) qualified-id))
              t)
         (agent-shell-ui--toggle-fragment-at-point)))))
+
+(cl-defun agent-shell-ui-set-group-collapsed-by-id (&key namespace-id block-id collapsed no-undo)
+  "Fold or unfold the group header NAMESPACE-ID/BLOCK-ID to match COLLAPSED.
+
+Unlike `agent-shell-ui-collapse-fragment-by-id', this sets the fold state
+rather than toggling it, so repeat calls with the same COLLAPSED are a
+no-op.  Does nothing when NAMESPACE-ID/BLOCK-ID names no rendered group
+header, or when it already matches COLLAPSED.  When NO-UNDO is non-nil,
+disable undo recording for this operation.
+
+  ;; Group \"ns-grp\" is expanded.
+  (agent-shell-ui-set-group-collapsed-by-id
+   :namespace-id \"ns\" :block-id \"grp\" :collapsed t)
+  ;; Its members are now hidden and its indicator reads `▶'."
+  (save-mark-and-excursion
+    (let ((inhibit-read-only t)
+          (buffer-undo-list (if no-undo t buffer-undo-list))
+          (qualified-id (format "%s-%s" namespace-id block-id)))
+      (when-let* ((header (agent-shell-ui--group-header-range qualified-id))
+                  (state (get-text-property (map-elt header :start)
+                                            'agent-shell-ui-state))
+                  ((eq (map-elt state :kind) 'group))
+                  ((not (eq (and (map-elt state :collapsed) t)
+                            (and collapsed t)))))
+        (agent-shell-ui--set-group-collapsed qualified-id (and collapsed t))))))
 
 (defvar-local agent-shell-ui--fold-toggle-state nil
   "Current global fold state for the buffer.

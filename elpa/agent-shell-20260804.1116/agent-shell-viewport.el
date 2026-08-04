@@ -372,9 +372,15 @@ Optionally set its PROMPT and RESPONSE."
            ;; No need to append trailing "\n\n" to split
            ;; prompt from response as the raw prompt already
            ;; carries its own trailing newline.
+           ;; Give the echoed prompt the same base `line-prefix' /
+           ;; `wrap-prefix' indent the response body carries (see
+           ;; `agent-shell-ui--indent-text'), so the prompt lines up with
+           ;; the response instead of sitting flush at column 0.
            (propertize prompt
                        'rear-nonsticky t
                        'agent-shell-viewport-prompt t
+                       'line-prefix "  "
+                       'wrap-prefix "  "
                        'face 'agent-shell-viewport-prompt)
          prompt)))
     (when response
@@ -1495,6 +1501,13 @@ For example, offer to kill associated shell session."
 \\{agent-shell-viewport-edit-mode-map}"
   (cursor-intangible-mode +1)
   (setq buffer-read-only nil)
+  ;; Indent composed text to match the response body's base `line-prefix'
+  ;; (see `agent-shell-ui--indent-text') and the echoed prompt in view
+  ;; mode, so submitting doesn't jump the content sideways.  The buffer
+  ;; variables apply to every typed line and are cleared on the next
+  ;; major-mode change, so view mode keeps its own text-property prefixes.
+  (setq-local line-prefix "  ")
+  (setq-local wrap-prefix "  ")
   (when agent-shell-file-completion-enabled
     (agent-shell-completion-mode +1))
   (agent-shell-list-edit-mode +1)

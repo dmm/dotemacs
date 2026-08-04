@@ -4,11 +4,11 @@
 
 ;; Author: Alvaro Ramirez https://xenodium.com
 ;; URL: https://github.com/xenodium/agent-shell
-;; Package-Version: 20260801.1150
-;; Package-Revision: 44e87a2c8c75
+;; Package-Version: 20260804.1116
+;; Package-Revision: 8396bd00ece5
 ;; Package-Requires: ((emacs "29.1") (shell-maker "0.94.1") (acp "0.13.1"))
 
-(defconst agent-shell--version "0.66.1")
+(defconst agent-shell--version "0.68.1")
 
 ;; This package is free software; you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
@@ -141,16 +141,31 @@ When non-nil, tool use sections are expanded."
   :group 'agent-shell)
 
 (defcustom agent-shell-activity-group-expand-by-default nil
-  "Whether an activity group header is expanded by default.
+  "When activity group sections should be expanded.
 
 An activity group is a run of consecutive agent actions (tool calls,
-and eventually thoughts) rendered under one collapsible header.  When
-non-nil (the default), the group shows its members.  When nil, it starts
-collapsed, showing only the header with its aggregated status and
-completed/total count.  Individual members still follow
-`agent-shell-tool-use-expand-by-default'."
-  :type 'boolean
+and eventually thoughts) rendered under one collapsible header.
+
+  nil      Groups start collapsed, showing only the header with its
+           aggregated status and completed/total count.
+  t        Groups show their members.
+  `latest' The group the agent is currently working in shows its
+           members, and collapses once the agent moves on to a new
+           group or the turn ends.  Keeps the session tidy while
+           still making the agent's current activity followable.
+
+Individual members still follow `agent-shell-tool-use-expand-by-default'."
+  :type '(choice (const :tag "Never (collapsed)" nil)
+                 (const :tag "Always (expanded)" t)
+                 (const :tag "While the agent is working in it" latest))
   :group 'agent-shell)
+
+(defun agent-shell--activity-group-initial-expanded-p ()
+  "Return non-nil when a newly created activity group starts expanded.
+
+Both t and `latest' start expanded; `latest' collapses the group again
+once the agent moves on (see `agent-shell--sync-activity-group-fold')."
+  (and agent-shell-activity-group-expand-by-default t))
 
 (defvar agent-shell-mode-hook nil
   "Hook run after an `agent-shell-mode' buffer is fully initialized.
@@ -315,7 +330,8 @@ image-cache-directory &allow-other-keys'."
   :group 'agent-shell)
 
 (cl-defun agent-shell--render-markdown
-    (&key (render-images t) (highlight-blocks agent-shell-highlight-blocks))
+    (&key (render-images t) (highlight-blocks agent-shell-highlight-blocks)
+          (external-renderers t))
   "Render markdown in the current narrowed buffer.
 
 Dispatches to `agent-shell-markdown-render-function', forwarding
@@ -324,12 +340,24 @@ the current value of `agent-shell-highlight-blocks' so most call
 sites can omit it; RENDER-IMAGES defaults to t, override with nil
 on label spans where images shouldn't appear.
 
+EXTERNAL-RENDERERS defaults to t.  Pass nil on single-line label
+spans to suppress `agent-shell-markdown-render-functions'.  Those
+renderers (e.g. a LaTeX-math package) draw images, which labels
+already opt out of via RENDER-IMAGES, and the render-function
+contract gives them no way to tell UI chrome from agent prose.
+The hook is bound to nil rather than emptied selectively: nil also
+drops the t marker a buffer-local hook value uses to run global
+members, so neither local nor global renderers run.
+
 Passes agent-shell's own cache directory as the renderer's remote-image
 cache so downloaded images share `agent-shell-cache-dir'."
-  (funcall agent-shell-markdown-render-function
-           :render-images render-images
-           :highlight-blocks highlight-blocks
-           :image-cache-directory (agent-shell-cache-dir "content")))
+  (let ((agent-shell-markdown-render-functions
+         (when external-renderers
+           agent-shell-markdown-render-functions)))
+    (funcall agent-shell-markdown-render-function
+             :render-images render-images
+             :highlight-blocks highlight-blocks
+             :image-cache-directory (agent-shell-cache-dir "content"))))
 
 (defcustom agent-shell-confirm-interrupt t
   "Whether to prompt for confirmation before interrupting.
@@ -626,13 +654,17 @@ Returns an alist with all specified values."
     (:icon-name . ,icon-name)
     (:install-instructions . ,install-instructions)))
 
-(defun agent-shell--default-agent-config-makers ()
+(defun agent-shell-default-agent-config-makers ()
   "Return the list of default agent config maker functions.
 
 Each element is a function that returns a configuration alist when
 called.  Keeping makers (rather than pre-built configurations) means
 configurations are rebuilt on access and stay current across code
-reloads.  See `agent-shell-agent-configs'."
+reloads.
+
+This is the default value of `agent-shell-agent-configs'.  It is exposed
+so a function value for that variable can build on the defaults, for
+example filtering them.  See `agent-shell-agent-configs'."
   (list #'agent-shell-auggie-make-agent-config
         #'agent-shell-anthropic-make-claude-code-config
         #'agent-shell-codebuddy-make-agent-config
@@ -654,31 +686,54 @@ reloads.  See `agent-shell-agent-configs'."
         #'agent-shell-xai-make-grok-config))
 
 (defcustom agent-shell-agent-configs
-  (agent-shell--default-agent-config-makers)
-  "The list of known agent configurations.
+  (agent-shell-default-agent-config-makers)
+  "The known agent configurations.
 
-Each entry is either a function that returns a configuration alist, or a
-configuration alist itself.  Functions are preferred and used by
+Either a list of entries, or a function of no arguments returning such a
+list.  A function is called on every access, so it can compute the known
+agents dynamically, for example keeping only the agents from
+`agent-shell-default-agent-config-makers' whose executable is installed:
+
+  (setq agent-shell-agent-configs
+        (lambda ()
+          (seq-filter
+           (lambda (maker)
+             (when-let* ((config (funcall maker))
+                         (client-maker (map-elt config :client-maker))
+                         (client (ignore-errors
+                                   (funcall client-maker (current-buffer))))
+                         (command (map-elt client :command)))
+               (executable-find command)))
+           (agent-shell-default-agent-config-makers))))
+
+Each list entry is either a function that returns a configuration alist,
+or a configuration alist itself.  Functions are preferred and used by
 default: they are called on every access, so agent definitions stay
 current across code reloads.  Concrete alists are accepted for
 backwards compatibility.
 
 See `agent-shell-*-make-*-config' for details."
-  :type '(repeat (choice function
-                         (alist :key-type symbol :value-type sexp)))
+  :type '(choice (function :tag "Function returning configs")
+                 (repeat :tag "List of configs"
+                         (choice function
+                                 (alist :key-type symbol :value-type sexp))))
   :group 'agent-shell)
 
 (defun agent-shell--resolved-agent-configs ()
   "Return `agent-shell-agent-configs' with maker entries realized.
 
-Each entry is either a configuration alist or a function (a symbol or
-lambda) that returns one.  Functions are called on every access, so
-edits to the underlying makers take effect without rebuilding the list."
+`agent-shell-agent-configs' is a list of entries, or a function
+returning such a list, in which case it is called first.  Each entry is
+a configuration alist or a function (a symbol or lambda) returning one.
+Functions are called on every access, so edits to the underlying makers
+take effect without rebuilding the list."
   (mapcar (lambda (entry)
             (if (functionp entry)
                 (funcall entry)
               entry))
-          agent-shell-agent-configs))
+          (if (functionp agent-shell-agent-configs)
+              (funcall agent-shell-agent-configs)
+            agent-shell-agent-configs)))
 
 (defcustom agent-shell-preferred-agent-config nil
   "Default agent to use for all new shells.
@@ -1042,6 +1097,7 @@ OUTGOING-REQUEST-DECORATOR (passed through to `acp-make-client')."
         (cons :chunked-group-count 0)
         (cons :activity-group-count 0)
         (cons :activity-thoughts nil)
+        (cons :expanded-activity-group nil)
         (cons :request-count 0)
         (cons :last-activity-time nil)
         (cons :tool-calls nil)
@@ -2239,6 +2295,17 @@ same group."
                   agent-shell--activity-group-run-entry-types)
     (map-put! state :activity-group-count
               (1+ (or (map-elt state :activity-group-count) 0))))
+  (agent-shell--activity-group-latest-id state))
+
+(defun agent-shell--activity-group-latest-id (state)
+  "Return the id of the most recently started activity group in STATE.
+
+Unlike `agent-shell--activity-group-current-id', never advances the run
+counter, so callers can tell whether the group they are rendering into is
+the agent's current run or an earlier one taking a late update.
+
+  (agent-shell--activity-group-latest-id \\='((:activity-group-count . 2)))
+  ;; => \"activity-2\""
   (format "activity-%s" (map-elt state :activity-group-count)))
 
 (defun agent-shell--activity-group-id (state tool-call-id)
@@ -2563,6 +2630,39 @@ No-op while that function has nothing to summarize (an empty group)."
      :label-left label
      :above-last-prompt (not (agent-shell--active-requests-p state)))))
 
+(cl-defun agent-shell--sync-activity-group-fold (&key state group-id namespace-id)
+  "Leave GROUP-ID the only expanded activity group in STATE.
+
+No-op unless `agent-shell-activity-group-expand-by-default' is
+`latest', where the group the agent is working in stays expanded and
+earlier ones fold away.  GROUP-ID is ignored unless it is STATE's latest
+run, so a late update to an earlier group neither re-expands that group
+nor collapses the one the agent is currently in.
+
+NAMESPACE-ID is the fragment namespace GROUP-ID's header was rendered
+under (nil for STATE's request count), recorded alongside the group so it
+can still be found once the turn ends."
+  (when-let* (((eq agent-shell-activity-group-expand-by-default 'latest))
+              ((equal group-id (agent-shell--activity-group-latest-id state)))
+              ((not (equal group-id (map-nested-elt state '(:expanded-activity-group :group-id))))))
+    (agent-shell--collapse-expanded-activity-group state)
+    (map-put! state :expanded-activity-group
+              (list (cons :namespace-id (or namespace-id (map-elt state :request-count)))
+                    (cons :group-id group-id)))))
+
+(defun agent-shell--collapse-expanded-activity-group (state)
+  "Collapse the activity group STATE last left expanded, if any.
+
+Called both when the agent moves on to a new group and when the turn ends,
+so a `latest' session is left with every activity group folded.
+Clears STATE's `:expanded-activity-group'."
+  (when-let* ((group (map-elt state :expanded-activity-group)))
+    (agent-shell--collapse-fragment-group
+     :state state
+     :namespace-id (map-elt group :namespace-id)
+     :block-id (map-elt group :group-id))
+    (map-put! state :expanded-activity-group nil)))
+
 (cl-defun agent-shell--on-notification (&key state acp-notification)
   "Handle incoming ACP-NOTIFICATION using STATE."
   (map-put! state :last-activity-time (current-time))
@@ -2588,6 +2688,11 @@ No-op while that function has nothing to summarize (an empty group)."
           ((map-elt state :pending-restore)
            (agent-shell--append-restore-notification state acp-notification))
           ((equal (map-nested-elt acp-notification '(params update sessionUpdate)) "agent_message_chunk")
+           ;; The agent has stopped acting and started answering, which
+           ;; breaks the activity run.  Fold the group `latest' left
+           ;; expanded now, rather than leaving it open behind a response
+           ;; that may stream for a while before the next group starts.
+           (agent-shell--collapse-expanded-activity-group state)
            ;; Decide message boundaries by ACP's `messageId' when present:
            ;; distinct messages must never coalesce, even if an interleaved
            ;; entry (e.g. a tool call) failed to advance `:last-entry-type'
@@ -2674,10 +2779,11 @@ No-op while that function has nothing to summarize (an empty group)."
               :label-right (map-elt tool-call-labels :title)
               :group-id group-id
               :group-label agent-shell--activity-group-label
-              :group-expanded agent-shell-activity-group-expand-by-default
+              :group-expanded (agent-shell--activity-group-initial-expanded-p)
               :expanded agent-shell-tool-use-expand-by-default
               :above-last-prompt (not (agent-shell--active-requests-p state)))
              (agent-shell--refresh-activity-group-header state group-id)
+             (agent-shell--sync-activity-group-fold :state state :group-id group-id)
              ;; Display plan as markdown block if present
              (when (map-nested-elt acp-notification '(params update rawInput plan))
                (agent-shell--update-fragment
@@ -2730,16 +2836,23 @@ No-op while that function has nothing to summarize (an empty group)."
               :expanded agent-shell-thought-process-expand-by-default
               :group-id group-id
               :group-label agent-shell--activity-group-label
-              :group-expanded agent-shell-activity-group-expand-by-default
+              :group-expanded (agent-shell--activity-group-initial-expanded-p)
               :render-body-images t
               :above-last-prompt (not (agent-shell--active-requests-p state)))
-             ;; Count this thought (once per thought run, not per streamed
-             ;; chunk) and relabel the header so a thought-only group reads
-             ;; "Thinking"/"Thought" instead of the neutral placeholder, and
-             ;; a mixed group can mention it.
+             ;; Count this thought and relabel the header so a thought-only
+             ;; group reads "Thinking"/"Thought" instead of the neutral
+             ;; placeholder, and a mixed group can mention it.  Both run once
+             ;; per thought run, not per streamed chunk: the header label
+             ;; depends only on the thought count (advanced here on
+             ;; `new-thought-p') and the group's tool statuses (unchanged
+             ;; while a pure thought run streams), so relabeling on every
+             ;; chunk repeats an identical update and its buffer scan.
              (when new-thought-p
-               (agent-shell--count-group-thought state group-id))
-             (agent-shell--refresh-activity-group-header state group-id))
+               (agent-shell--count-group-thought state group-id)
+               (agent-shell--refresh-activity-group-header state group-id)
+               (agent-shell--sync-activity-group-fold
+                :state state :group-id group-id
+                :namespace-id (unless (agent-shell--active-requests-p state) "out-of-turn"))))
            (map-put! state :last-entry-type "agent_thought_chunk"))
           ((equal (map-nested-elt acp-notification '(params update sessionUpdate)) "user_message_chunk")
            ;; A user_message_chunk replays a user submission.  Render it
@@ -2936,7 +3049,7 @@ No-op while that function has nothing to summarize (an empty group)."
                 :label-right (map-elt tool-call-labels :title)
                 :group-id group-id
                 :group-label agent-shell--activity-group-label
-                :group-expanded agent-shell-activity-group-expand-by-default
+                :group-expanded (agent-shell--activity-group-initial-expanded-p)
                 :body (cond
                        (command-block
                         (concat command-block "\n\n" (string-trim body-text)))
@@ -2946,7 +3059,8 @@ No-op while that function has nothing to summarize (an empty group)."
                         (string-trim body-text)))
                 :expanded agent-shell-tool-use-expand-by-default
                 :above-last-prompt (not (agent-shell--active-requests-p state)))
-               (agent-shell--refresh-activity-group-header state group-id))
+               (agent-shell--refresh-activity-group-header state group-id)
+               (agent-shell--sync-activity-group-fold :state state :group-id group-id))
              ;; Only advance the run boundary when this update introduced a new
              ;; tool call (appended at the end).  An in-place update of an
              ;; earlier tool must not erase an intervening entry's boundary.
@@ -4410,6 +4524,29 @@ variable (see makunbound)"))
       (error "Editing the wrong buffer: %s" (current-buffer)))
     (agent-shell-ui-delete-fragment :namespace-id (map-elt state :request-count) :block-id block-id :no-undo t)))
 
+(cl-defun agent-shell--collapse-fragment-group (&key state namespace-id block-id)
+  "Collapse group header BLOCK-ID under NAMESPACE-ID in STATE's buffers.
+
+Mirrors `agent-shell--delete-fragment', applying to both the shell buffer
+and, when it is displaying the conversation, its viewport buffer.  Does
+nothing when BLOCK-ID names no rendered group header."
+  (when-let* (((map-elt state :buffer))
+              (viewport-buffer (agent-shell-viewport--buffer
+                                :shell-buffer (map-elt state :buffer)
+                                :existing-only t))
+              ;; Folding only makes sense when viewport is displaying
+              ;; conversation, never while it's an active compose buffer.
+              ((with-current-buffer viewport-buffer
+                 (derived-mode-p 'agent-shell-viewport-view-mode))))
+    (with-current-buffer viewport-buffer
+      (agent-shell-ui-set-group-collapsed-by-id
+       :namespace-id namespace-id :block-id block-id :collapsed t :no-undo t)))
+  (when-let* ((shell-buffer (map-elt state :buffer))
+              ((buffer-live-p shell-buffer)))
+    (with-current-buffer shell-buffer
+      (agent-shell-ui-set-group-collapsed-by-id
+       :namespace-id namespace-id :block-id block-id :collapsed t :no-undo t))))
+
 (defun agent-shell--live-input-prompt-p (prompt)
   "Non-nil when PROMPT is a live input prompt at the end of the buffer.
 PROMPT is a `comint-last-prompt' cons of (start . end) markers.  It's
@@ -4535,7 +4672,8 @@ with GROUP-EXPANDED as the group's initial fold state."
               (when-let* ((label-right-start (map-nested-elt range '(:label-right :start)))
                           (label-right-end (map-nested-elt range '(:label-right :end))))
                 (narrow-to-region label-right-start label-right-end)
-                (agent-shell--render-markdown :render-images nil))))
+                (agent-shell--render-markdown :render-images nil
+                                              :external-renderers nil))))
           (when auto-scroll
             (goto-char (point-max)))))))
   (with-current-buffer (map-elt state :buffer)
@@ -4632,7 +4770,8 @@ with GROUP-EXPANDED as the group's initial fold state."
              (when-let* ((label-right-start (map-nested-elt range '(:label-right :start)))
                          (label-right-end (map-nested-elt range '(:label-right :end))))
                (narrow-to-region label-right-start label-right-end)
-               (agent-shell--render-markdown :render-images nil)
+               (agent-shell--render-markdown :render-images nil
+                                             :external-renderers nil)
                (widen))))
          (run-hook-with-args 'agent-shell-section-functions range))))
        (when late-prompt-start
@@ -5329,6 +5468,23 @@ Copies so the cached MODEL is left untouched."
     (map-put! copy :busy-indicator-frame (agent-shell--busy-indicator-frame))
     copy))
 
+(defun agent-shell--image-extension-from-content-type ()
+  "Return an image file extension for the response `Content-Type', or nil.
+
+Point should be within the HTTP response headers of the current buffer.
+Used to name a cached icon whose URL carries no file extension (e.g. a
+GitHub avatar), so `image-supported-file-p' can recognize it later."
+  (save-excursion
+    (goto-char (point-min))
+    (when (re-search-forward "^Content-Type:[ \t]*\\([^ \t\r\n;]+\\)" nil t)
+      (pcase (downcase (match-string 1))
+        ("image/png" "png")
+        ("image/jpeg" "jpg")
+        ("image/gif" "gif")
+        ("image/svg+xml" "svg")
+        ("image/webp" "webp")
+        ((or "image/x-icon" "image/vnd.microsoft.icon") "ico")))))
+
 (defun agent-shell--fetch-agent-icon (icon-name)
   "Download icon with ICON-NAME from GitHub, only if it exists, and save as binary.
 
@@ -5352,20 +5508,39 @@ Icon names starting with https:// are downloaded directly from that location."
                            url))
                        ;; For lobe-icons names, use the original filename
                        (file-name-nondirectory url)))
-           (cache-path (expand-file-name filename (agent-shell-cache-dir mode))))
-      (unless (file-exists-p cache-path)
+           (cache-dir (agent-shell-cache-dir mode))
+           ;; A URL without a recognizable image extension (e.g. a GitHub
+           ;; avatar) is cached under a Content-Type-derived extension so
+           ;; that `image-supported-file-p' can recognize it. Reuse such a
+           ;; copy across calls by globbing for the extension we appended.
+           (has-extension (seq-contains-p image-file-name-extensions
+                                          (downcase (or (file-name-extension filename) ""))))
+           (cache-path (if has-extension
+                           (expand-file-name filename cache-dir)
+                         (car (file-expand-wildcards
+                               (expand-file-name (concat filename ".*")
+                                                 cache-dir))))))
+      (unless (and cache-path (file-exists-p cache-path))
         (let ((buffer (url-retrieve-synchronously url t t 5.0)))
           (when buffer
             (with-current-buffer buffer
               (goto-char (point-min))
               (if (re-search-forward "^HTTP/[0-9.]+ 200" nil t)
                   (progn
+                    (setq cache-path
+                          (expand-file-name
+                           (if has-extension
+                               filename
+                             (concat filename
+                                     (when-let* ((ext (agent-shell--image-extension-from-content-type)))
+                                       (concat "." ext))))
+                           cache-dir))
                     (re-search-forward "\r?\n\r?\n")
                     (let ((coding-system-for-write 'no-conversion))
                       (write-region (point) (point-max) cache-path)))
                 (message "Icon fetch failed: %s" url)))
             (kill-buffer buffer))))
-      (when (file-exists-p cache-path)
+      (when (and cache-path (file-exists-p cache-path))
         cache-path))))
 
 (defun agent-shell--make-agent-fallback-icon (icon-name width)
@@ -5518,12 +5693,13 @@ Session events:
   `agent-message-chunk'   - Agent streamed a chunk of message text
     :data contains :text-chunk (the raw text the agent emitted, nil for a
     non-text block such as an image).  Emitted once per streamed chunk, so
-    it may fire many times per turn; agent-shell neither renders nor
+    it may fire many times per turn; the shell neither renders nor
     accumulates the text.
   `turn-complete'         - Agent turn finished and prompt ready for input
     :data contains :stop-reason and :usage
   `session-title-changed' - Session title updated
     :data contains :title
+  `session-restored'      - Reloaded session fully replayed and settled
   `input-submitted'       - User submitted input to the agent
   `idle'                  - Agent idle for variable `agent-shell-idle-timeout'
     seconds :data contains :idle-event and :buffer
@@ -5593,18 +5769,28 @@ SUBSCRIPTION is a token returned by `agent-shell-subscribe-to'."
                           (equal (map-elt sub :token) subscription))
                         (map-elt (agent-shell--state) :event-subscriptions))))
 
+(defvar agent-shell--system-sleep-load-attempted nil
+  "Non-nil after attempting to load the optional `system-sleep' library.")
+
+(defun agent-shell--system-sleep-available-p ()
+  "Return non-nil when the optional `system-sleep' API is available.
+Attempt to load the library at most once when its API is not already defined."
+  (or (fboundp 'system-sleep-block-sleep)
+      (unless agent-shell--system-sleep-load-attempted
+        (setq agent-shell--system-sleep-load-attempted t)
+        (require 'system-sleep nil t)
+        (fboundp 'system-sleep-block-sleep))))
+
 (defun agent-shell--inhibit-sleep (state)
   "Block system idle sleep for STATE's shell if so configured.
 
 No-op unless `agent-shell-inhibit-system-sleep' is non-nil and the
 `system-sleep' library (Emacs 31.1+) is available.  The block is
 recorded in STATE and released by `agent-shell--uninhibit-sleep'."
-  (unless (fboundp 'system-sleep-block-sleep)
-    (require 'system-sleep nil t))
   ;; Block system idle sleep but allow the display to blank.
   (when-let* ((agent-shell-inhibit-system-sleep)
               ((not (map-elt state :sleep-token)))
-              ((fboundp 'system-sleep-block-sleep)))
+              ((agent-shell--system-sleep-available-p)))
     ;; `system-sleep-block-sleep' talks to logind over D-Bus, which can fail
     ;; (e.g. "Permission denied" under WSL where no logind session exists).
     ;; Degrade gracefully instead of letting the error break event dispatch.
@@ -6608,17 +6794,49 @@ pending-restore state once replay completes."
                    (agent-shell--replay-turn state (car (last prompt-turns)))))
                 ('full
                  (dolist (turn prompt-turns)
-                   (agent-shell--replay-turn state turn)
-                   ;; Repaint between turns so restored history streams in
-                   ;; visibly rather than appearing all at once when the
-                   ;; blocking replay finally returns.
-                   ;; TODO: Consider rendering on idle.
-                   (redisplay t))))))
+                   (agent-shell--replay-turn state turn))))
+              ;; Close a replay that ended on a user prompt.
+              ;; `agent-shell--on-notification' terminates a replayed
+              ;; `user_message_chunk' only when the next notification
+              ;; arrives, emitting shell-maker's end-of-prompt marker so
+              ;; `shell-maker--extract-history' can pair the command with
+              ;; its response.  A session whose last turn is a user
+              ;; message (an interrupted request, whose final entry is the
+              ;; interruption notice) has no next notification, leaving
+              ;; the turn open: the live prompt renders on the same line
+              ;; as the restored user text, and the next unrelated
+              ;; notification (say `available_commands_update') emits the
+              ;; marker unnarrowed, landing it after the live prompt.
+              (when (equal (map-elt state :last-entry-type) "user_message_chunk")
+                (shell-maker-insert-end-of-prompt-marker)
+                (let ((inhibit-read-only t))
+                  (goto-char (point-max))
+                  (insert (propertize "\n\n"
+                                      'field 'output
+                                      'read-only t
+                                      'front-sticky '(read-only)
+                                      'rear-nonsticky '(field read-only))))
+                (map-put! state :last-entry-type nil))))
         (map-put! state :active-requests saved-active-requests))
+      ;; Replay renders history as a live turn would, so the last replayed
+      ;; group is left expanded under `latest'.  Nothing is actually
+      ;; running, so fold it like a completed turn.
+      (agent-shell--collapse-expanded-activity-group state)
       ;; Point followed the narrowed history insertions up above the live
       ;; prompt.  Return it to the input area so the cursor lands where the
       ;; user types (matching pre-early-prompt restore behavior).
-      (goto-char (point-max)))))
+      (goto-char (point-max))
+      ;; Re-sync the process mark to the input area.  Replay inserts the
+      ;; restored history above the early prompt with plain `insert' (not
+      ;; through the output filter), so the process mark can be left at the
+      ;; start of the live prompt.  Left there, the first submit captures the
+      ;; `PROMPT> ' text as part of the input, corrupting the message sent to
+      ;; the agent and conflating the prompt/input faces.
+      (when-let* ((process (get-buffer-process (current-buffer))))
+        (set-marker (process-mark process) (point-max)))
+      ;; The replayed conversation, including the live prompt, is now
+      ;; fully laid down; notify observers that the shell has settled.
+      (agent-shell--emit-event :event 'session-restored))))
 
 (cl-defun agent-shell--initiate-session-resume-by-id (&key session-id session-title shell-buffer on-session-init)
   "Resume or load session SESSION-ID with SHELL-BUFFER and ON-SESSION-INIT.
@@ -7354,6 +7572,9 @@ Each marked span is replaced by its `agent-shell-region-text' value."
                    ;; a session prompt request is finished.
                    ;; Avoid accumulating them unnecessarily.
                    (map-put! (agent-shell--state) :tool-calls nil)
+                   ;; The turn is over, so nothing is active any more: fold
+                   ;; the last activity group `latest' left expanded.
+                   (agent-shell--collapse-expanded-activity-group (agent-shell--state))
                    ;; Extract usage information from response
                    (when (map-elt acp-response 'usage)
                      (agent-shell--save-usage :state (agent-shell--state) :acp-usage (map-elt acp-response 'usage)))
@@ -7405,6 +7626,8 @@ Each marked span is replaced by its `agent-shell-region-text' value."
                    (agent-shell--separate-transcript-after-agent-message
                     :last-entry-type (map-elt agent-shell--state :last-entry-type)
                     :file-path agent-shell--transcript-file)
+                   ;; An interrupted turn leaves no group active either.
+                   (agent-shell--collapse-expanded-activity-group agent-shell--state)
                    ;; Display pending requests on failure.
                    (agent-shell--prompt-queue-display)
                    (funcall (agent-shell--make-error-handler :state agent-shell--state :shell-buffer shell-buffer)
@@ -7901,6 +8124,10 @@ For example:
                                    (map-elt raw-input 'fileName)
                                    (map-elt raw-input 'path)
                                    (map-elt raw-input 'file_path))))
+         ;; Fetch tools (eg. OpenCode's webfetch) put the target URL
+         ;; under `url'.  Surface it in full below, since the basename
+         ;; alone isn't enough to decide whether to allow the request.
+         (url (seq-find #'stringp (list (map-elt raw-input 'url))))
          (content-texts
           (delq nil
                 (mapcar (lambda (item)
@@ -7938,6 +8165,17 @@ For example:
       (setq text (if text
                      (concat (string-trim-right text) " (" filename ")")
                    filename)))
+    ;; Append the URL to the title when available and not already
+    ;; included, so the user can see which URL the permission applies
+    ;; to.  Unlike filepaths, keep the full URL (not just its basename).
+    ;; See https://github.com/xenodium/agent-shell/issues/745
+    (when-let* ((url)
+                ((not (string-empty-p url)))
+                ((or (not text)
+                     (not (string-match-p (regexp-quote url) text)))))
+      (setq text (if text
+                     (concat (string-trim-right text) " (" url ")")
+                   url)))
     ;; Fence execute commands so the markdown renderer
     ;; renders them verbatim, not as markdown.
     (when (and text
@@ -8305,14 +8543,31 @@ CHAR and OPTION are used for cursor sensor messages."
                            button)))
     button))
 
+(defconst agent-shell--permission-kind-order
+  '("allow_once" "reject_once" "allow_always" "reject_always")
+  "Display order for permission options, by ACP kind.
+
+Agents send options in whichever order they like (some list rejection
+first), but the dialog always offers allowing before rejecting.")
+
+(defun agent-shell--permission-action-rank (action)
+  "Return the sort rank of ACTION, derived from its ACP kind.
+
+Unknown kinds sort last.  See `agent-shell--permission-kind-order'."
+  (or (seq-position agent-shell--permission-kind-order (map-elt action :kind))
+      (length agent-shell--permission-kind-order)))
+
 (defun agent-shell--make-permission-actions (acp-options)
   "Make actions from ACP-OPTIONS for shell rendering.
+
+Actions are sorted by `agent-shell--permission-kind-order', ignoring the
+order the agent sent them in.
 
 See `agent-shell--make-permission-action' for ACP-OPTION and return schema."
   (let (acp-seen-kinds)
     (seq-sort (lambda (a b)
-                (< (length (map-elt a :label))
-                   (length (map-elt b :label))))
+                (< (agent-shell--permission-action-rank a)
+                   (agent-shell--permission-action-rank b)))
               (delq nil (mapcar (lambda (acp-option)
                                   (let ((action (agent-shell--make-permission-action
                                                  :acp-option acp-option
@@ -9834,7 +10089,7 @@ Deferred worker for `agent-shell--realign-tables-on-change'."
 Installed buffer-locally on `window-size-change-functions' and
 `window-buffer-change-functions' (whose buffer-local values are
 called with the window, the buffer current), so it runs only for
-agent-shell windows.  Table column widths are pixel-measured
+shell windows.  Table column widths are pixel-measured
 against the display, so a resize or first display can change their
 layout; schedule a re-render on any such change.  Which tables
 actually need re-laying out is decided per-table by
