@@ -128,17 +128,16 @@
       . "You are a large language model and a conversation partner. Respond concisely and for maths as latex.")))
  '(gptel-log-level 'debug)
  '(package-selected-packages
-   '(## add-node-modules-path agent-shell aidermacs ansible
-        anti-zenburn-theme buttercup cargo-mode claude-code
-        command-log-mode company-lsp consult dash dracula-theme eat
-        ef-themes eglot elfeed embark embark-consult
-        exec-path-from-shell flycheck-inline flycheck-rust ghostel
-        gptel hc-zenburn-theme indent-tools jinja2-mode jtsx lsp-java
-        lsp-javacomp lsp-ui magit magit-lfs marginalia modus-themes
-        orderless org ox-hugo ox-rss phoenix-dark-pink-theme
-        poly-ansible polymode prettier quelpa quelpa-use-package rg
-        rust-mode smart-shift switch-window tide vagrant-tramp vertico
-        vterm yaml-mode yasnippet zenburn-theme))
+   '(## add-node-modules-path agent-shell ansible anti-zenburn-theme
+        buttercup cargo-mode claude-code command-log-mode company-lsp
+        consult dash dracula-theme eat ef-themes eglot elfeed embark
+        embark-consult exec-path-from-shell flycheck-inline
+        flycheck-rust ghostel gptel hc-zenburn-theme indent-tools
+        jinja2-mode jtsx lsp-java lsp-javacomp lsp-ui magit magit-lfs
+        marginalia modus-themes orderless org ox-hugo ox-rss
+        phoenix-dark-pink-theme poly-ansible polymode prettier quelpa
+        quelpa-use-package rg rust-mode smart-shift switch-window tide
+        vagrant-tramp vertico vterm yaml-mode yasnippet zenburn-theme))
  '(tool-bar-mode nil))
 (custom-set-faces
  ;; custom-set-faces was added by Custom.
