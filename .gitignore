@@ -19,3 +19,5 @@ workspace/
 elpa/ghostel*/*.so
 elpa/ghostel*/*.version
 elfeed/
+bookmarks
+mobile-drain-state.eld

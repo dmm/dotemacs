@@ -127,36 +127,6 @@
      (chat
       . "You are a large language model and a conversation partner. Respond concisely and for maths as latex.")))
  '(gptel-log-level 'debug)
- '(org-agenda-custom-commands
-   '(("d" todo "DELEGATED" nil) ("c" todo "DONE|DEFERRED|CANCELLED" nil)
-     ("w" todo "WAITING" nil) ("W" agenda "" ((org-agenda-ndays 21)))
-     ("A" agenda ""
-      ((org-agenda-skip-function
-        (lambda nil
-          (org-agenda-skip-entry-if 'notregexp "\\=.*\\[#A\\]")))
-       (org-agenda-ndays 1)
-       (org-agenda-overriding-header "Today's Priority #A tasks: ")))
-     ("u" alltodo ""
-      ((org-agenda-skip-function
-        (lambda nil
-          (org-agenda-skip-entry-if 'scheduled 'deadline 'regexp
-                                    "<[^>\12]+>")))
-       (org-agenda-overriding-header "Unscheduled TODO entries: ")))))
- '(org-agenda-files '("~/todo.org"))
- '(org-agenda-include-diary t)
- '(org-agenda-ndays 7)
- '(org-agenda-show-all-dates t)
- '(org-agenda-skip-deadline-if-done t)
- '(org-agenda-skip-scheduled-if-done t)
- '(org-agenda-start-on-weekday nil)
- '(org-deadline-warning-days 14)
- '(org-default-notes-file "~/notes.org")
- '(org-fast-tag-selection-single-key 'expert)
- '(org-remember-store-without-prompt t)
- '(org-remember-templates
-   '((116 "* TODO %?\12  %u" "~/todo.org" "Tasks")
-     (110 "* %u %?" "~/notes.org" "Notes")))
- '(org-reverse-note-order t)
  '(package-selected-packages
    '(## add-node-modules-path agent-shell aidermacs ansible
         anti-zenburn-theme buttercup cargo-mode claude-code
@@ -169,10 +139,6 @@
         poly-ansible polymode prettier quelpa quelpa-use-package rg
         rust-mode smart-shift switch-window tide vagrant-tramp vertico
         vterm yaml-mode yasnippet zenburn-theme))
- '(package-vc-selected-packages
-   '((aidermacs :url "https://github.com/MatthewZMD/aidermacs.git")))
- '(remember-annotation-functions '(org-remember-annotation))
- '(remember-handler-functions '(org-remember-handler))
  '(tool-bar-mode nil))
 (custom-set-faces
  ;; custom-set-faces was added by Custom.
