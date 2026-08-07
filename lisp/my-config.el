@@ -101,3 +101,6 @@
       '(("\\`/.*/\\([^/]+\\)\\'" "~/.emacs.d/lock-files/\\1" t)))
 
 (setq undo-limit (* 1024 1024 10))
+
+;; mostly for images in eww
+(pixel-scroll-precision-mode 1)
