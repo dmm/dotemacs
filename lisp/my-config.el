@@ -6,7 +6,7 @@
 (require 'fill-column-indicator)
 
 ;Make the y or n suffice for a yes or no question
-(fset 'yes-or-no-p 'y-or-n-p)
+(setq use-short-answers t)
 
 ; Show clock
 (setq display-time-24hr-format t)
@@ -104,3 +104,7 @@
 
 ;; mostly for images in eww
 (pixel-scroll-precision-mode 1)
+
+;; Don't overwrite the system clipboard with kills. Instead save it to
+;; the killring first.
+(setq save-interprogram-paste-before-kill t)
