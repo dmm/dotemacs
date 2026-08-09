@@ -36,6 +36,12 @@
 (setq org-agenda-files (list dp-todo-file dp-notes-file)
       org-default-notes-file dp-notes-file
 
+      ;; Modern equivalent of Wiegley's `org-todo-state-map'.  Everything
+      ;; after `|' is a terminal state and is reviewed before archiving.
+      org-todo-keywords
+      '((sequence "TODO(t)" "DOING(s)" "WAIT(w)" "TASK(l)"
+                  "|" "DONE(d)" "DEFER(f)" "CANCELLED(x)"))
+
       org-agenda-span 7                    ; was org-agenda-ndays
       org-agenda-start-on-weekday nil      ; always start today
       org-deadline-warning-days 14
@@ -53,9 +59,8 @@
       org-refile-use-outline-path 'file
       org-outline-path-complete-in-steps nil)
 
-;; His `org-todo-state-map' is obsolete: the (t)/(s)/(w)/(d)/(x) fast-access
-;; letters in the file's #+TODO: line give you `C-c C-t s' directly, and plain
-;; `t' followed by the letter in the agenda.  Likewise `org-agenda-keymap' no
+;; The fast-access letters above give you `C-c C-t s' directly, and plain `t'
+;; followed by the letter in the agenda.  Likewise `org-agenda-keymap' no
 ;; longer exists, so his C-n/C-p rebinds only need org-agenda-mode-map.
 (with-eval-after-load 'org-agenda
   (keymap-set org-agenda-mode-map "C-n" #'next-line)
@@ -88,7 +93,7 @@
                    ((org-agenda-overriding-header "Unfiled / unscheduled")
                     (org-agenda-skip-function
                      '(org-agenda-skip-entry-if 'scheduled 'deadline 'timestamp))))
-          (todo "DONE|CANCELLED"
+          (todo "DONE|DEFER|CANCELLED"
                 ((org-agenda-overriding-header "Ready to archive")))
           (todo "WAIT"
                 ((org-agenda-overriding-header "Waiting on something")))
@@ -215,7 +220,10 @@ Does not modify the mobile inbox."
                count (if (= count 1) "y" "ies")))))
 
 (defun dp-review ()
-  "Drain the mobile inbox, then open the nightly review."
+  "Drain the mobile inbox, then open the nightly review.
+In the agenda, schedule unfiled tasks with `org-agenda-schedule' and then
+categorize them with `org-agenda-refile'.  Mark tasks that will not be pursued
+as DEFER and archive them with the other terminal states."
   (interactive)
   (dp-drain-mobile-inbox)
   (org-agenda nil "r"))
@@ -229,79 +237,14 @@ Does not modify the mobile inbox."
   "Reject the inbox heading as a refile target."
   (not (equal (org-get-heading t t t t) dp-inbox-heading)))
 
-(defvar dp-someday-file (expand-file-name "someday.org" dp-org-directory)
-  "Holding file for items you will not schedule.  Not in `org-agenda-files'.")
-
-;;;; The filing pass
-
-(defvar dp--last-refile-target nil
-  "Last location used by `dp-process-inbox', for filing runs of related items.")
-
-(defun dp--goto-first-inbox-child ()
-  "Move point to the first child of the inbox heading.
-Return non-nil if there is one."
-  (goto-char (point-min))
-  (when (re-search-forward
-         (format org-complex-heading-regexp-format
-                 (regexp-quote dp-inbox-heading))
-         nil t)
-    (let ((end (save-excursion (org-end-of-subtree t t) (point))))
-      (forward-line 1)
-      (when (re-search-forward "^\\*\\* " end t)
-        (beginning-of-line)
-        t))))
-
-(defun dp--refile (&optional reuse)
-  "Refile the entry at point.  With REUSE, file to the previous target."
-  (let ((loc (if (and reuse dp--last-refile-target)
-                 dp--last-refile-target
-               (org-refile-get-location "File under"))))
-    (setq dp--last-refile-target loc)
-    (org-refile nil nil loc)))
-
-(defun dp-process-inbox ()
-  "Schedule and file each entry in the inbox, one at a time.
-Self-terminating: filing an entry removes it, so the loop drains the inbox.
-Quit at any point with q or C-g; unprocessed entries simply remain."
-  (interactive)
-  (pop-to-buffer (find-file-noselect dp-todo-file))
-  (widen)
-  (catch 'done
-    (while t
-      (unless (dp--goto-first-inbox-child)
-        (message "Inbox empty.")
-        (throw 'done nil))
-      (org-fold-show-subtree)
-      (recenter 0)
-      (pcase (read-char-choice
-              (concat "[s]chedule+file  "
-                      (if dp--last-refile-target "[.] same tree  " "")
-                      "[l]ater  [c]ancel  [q]uit: ")
-              '(?s ?. ?l ?c ?q))
-        ;; Every task gets a date, then a home.  Schedule first: refiling
-        ;; moves the entry out from under point.
-        (?s (call-interactively #'org-schedule)
-            (dp--refile))
-        (?. (call-interactively #'org-schedule)
-            (dp--refile 'reuse))
-        ;; No date, but not dead.  Goes somewhere the agenda cannot see it.
-        (?l (org-refile nil nil
-                        (list "Someday" dp-someday-file nil nil)))
-        (?c (let ((org-inhibit-logging nil))
-              (org-todo "CANCELLED"))
-            (org-archive-subtree))
-        (?q (throw 'done nil)))))
-  (save-buffer))
-
-
-;;;; Step 7, folded into the same session
+;;;; Completed task archiving
 ;;
-;; Deliberately a separate command rather than part of the loop: he reviews
-;; completed tasks before letting them disappear.  Run it after eyeballing the
-;; "Ready to archive" block in the review agenda.
+;; Deliberately a separate command: Wiegley reviews terminal tasks before
+;; letting them disappear.  Run it after eyeballing the "Ready to archive"
+;; block in the review agenda.
 
 (defun dp-archive-completed ()
-  "Archive every DONE or CANCELLED entry across the agenda files."
+  "Archive every DONE, DEFER, or CANCELLED entry across the agenda files."
   (interactive)
   (let ((count 0))
     (org-map-entries
@@ -310,7 +253,7 @@ Quit at any point with q or C-g; unprocessed entries simply remain."
        (setq count (1+ count)
              ;; The subtree is gone; resume from where it stood.
              org-map-continue-from (point)))
-     "/DONE|CANCELLED" 'agenda)
+     "/DONE|DEFER|CANCELLED" 'agenda)
     (message "Archived %d entr%s." count (if (= count 1) "y" "ies"))))
 
 
@@ -320,7 +263,6 @@ Quit at any point with q or C-g; unprocessed entries simply remain."
 (keymap-global-set "C-c a" #'org-agenda)
 (keymap-global-set "C-c c" #'org-capture)
 (keymap-global-set "C-c R" #'dp-review)
-(keymap-global-set "C-c i" #'dp-process-inbox)
 (keymap-global-set "C-c A" #'dp-archive-completed)
 
 (provide 'day-planner)
