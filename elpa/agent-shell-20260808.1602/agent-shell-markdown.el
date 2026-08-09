@@ -450,6 +450,11 @@ body un-fontified."
         ;; selection to empty, silently breaking mouse copy of rendered
         ;; text (keyboard selection is unaffected).
         (put-text-property (point-min) (point-max) 'fontified t))
+      ;; Normalize list spacing before framing: join items the source
+      ;; separated with blank lines so a list always renders as one tidy
+      ;; group.  Widened, like the framing below, so it sees the whole
+      ;; list across the watermark.
+      (agent-shell-markdown--collapse-list-blank-lines)
       ;; Frame rendered blocks with a blank line where they butt against
       ;; prose.  Runs outside the watermark narrow, since a block's lower
       ;; boundary sits behind the watermark by the time its successor
@@ -1016,6 +1021,17 @@ For example, the buffer \"see ![logo](logo.png)\" becomes
                  (attributes (when attribute-match
                                (agent-shell-markdown--parse-image-attributes
                                 (car attribute-match))))
+                 ;; How this image's max-width tracks the window, stored so
+                 ;; `agent-shell-markdown-rerender-images' can re-size it: an
+                 ;; explicit `{width=N%}' fraction (intrinsic to the markup),
+                 ;; or the symbol `default' when it comes from
+                 ;; `agent-shell-markdown-image-max-width' being a ratio
+                 ;; (re-read live on resize, so a changed setting applies).
+                 ;; Nil for a fixed pixel size.
+                 (width-ratio (cond ((map-elt attributes :max-width-ratio))
+                                    ((map-elt attributes :max-width) nil)
+                                    ((floatp agent-shell-markdown-image-max-width)
+                                     'default)))
                  (content-end (if attribute-match (cdr attribute-match) markup-end))
                  ;; Stash the original `![alt](url)' markup so
                  ;; `agent-shell-copy-as-markdown' round-trips the image back to
@@ -1046,10 +1062,20 @@ For example, the buffer \"see ![logo](logo.png)\" becomes
                                      (agent-shell-markdown--make-ret-binding-map
                                       (lambda () (interactive)
                                         (find-file path))))
-                  (put-text-property markup-start end 'mouse-face 'highlight)
+                  ;; A hand pointer signals the image is clickable; unlike
+                  ;; `mouse-face', it adds no background that would paint a
+                  ;; highlighted box across the image on hover.
+                  (put-text-property markup-start end 'pointer 'hand)
                   (when source
                     (put-text-property markup-start end
-                                       'agent-shell-markdown-source source)))))
+                                       'agent-shell-markdown-source source))
+                  (when width-ratio
+                    (put-text-property markup-start end
+                                       'agent-shell-markdown-image-width-ratio
+                                       width-ratio)
+                    (put-text-property
+                     markup-start end 'agent-shell-markdown-image-window-width
+                     (agent-shell-markdown--displayed-window-width))))))
              ;; Remote image we couldn't show inline (no cache configured, the
              ;; download failed, or a non-graphical display): render a link
              ;; that opens the url, rather than leaving raw `![alt](url)' text.
@@ -1115,7 +1141,21 @@ renders the image in place of that text."
                                    (agent-shell-markdown--make-ret-binding-map
                                     (lambda () (interactive)
                                       (find-file resolved))))
-                (put-text-property path-start path-end 'mouse-face 'highlight)
+                ;; A hand pointer signals the image is clickable without the
+                ;; background a `mouse-face' would paint across it on hover.
+                (put-text-property path-start path-end 'pointer 'hand)
+                ;; A bare-path image is sized by the default
+                ;; `agent-shell-markdown-image-max-width'; when that is a
+                ;; ratio it tracks the window, so mark it `default' for
+                ;; `agent-shell-markdown-rerender-images' to re-read live (a
+                ;; fixed pixel default is left untracked).
+                (when (floatp agent-shell-markdown-image-max-width)
+                  (put-text-property path-start path-end
+                                     'agent-shell-markdown-image-width-ratio
+                                     'default)
+                  (put-text-property
+                   path-start path-end 'agent-shell-markdown-image-window-width
+                   (agent-shell-markdown--displayed-window-width)))
                 (add-text-properties path-start path-end
                                      '(agent-shell-markdown-frozen t
                                                                    rear-nonsticky (agent-shell-markdown-frozen))))))))))))
@@ -1679,6 +1719,58 @@ A line is blank when it holds only whitespace before its newline
     (beginning-of-line)
     (looking-at-p "[[:blank:]]*$")))
 
+(defun agent-shell-markdown--list-line-at-p (pos)
+  "Return non-nil when the line holding POS begins a rendered list item.
+Tests the line's first char, which is where the bullet / number
+glyph and its `agent-shell-markdown-list-rendered' tag sit, so this
+holds even for an item rendered before the rest of its line streamed
+in."
+  (get-text-property (save-excursion (goto-char pos)
+                                     (line-beginning-position))
+                     'agent-shell-markdown-list-rendered))
+
+(defun agent-shell-markdown--collapse-list-blank-lines ()
+  "Delete blank lines between two rendered list items so a list is tight.
+
+A list renders as one group no matter how the source spaced its
+items: any blank run sitting directly between two
+`agent-shell-markdown-list-rendered' lines is removed.  A blank
+bordering non-list text (framing the list off from surrounding
+prose) has a list item on only one side and is left in place, so
+only the inter-item gaps go.  Runs before
+`agent-shell-markdown--pad-rendered-blocks' so the joined items form
+one block and get framed as a whole.
+
+For example, the buffer:
+
+  • One
+
+  • Two
+
+becomes:
+
+  • One
+  • Two"
+  (let ((inhibit-field-text-motion t))
+    (save-excursion
+      (goto-char (point-min))
+      (while (not (eobp))
+        (if (agent-shell-markdown--blank-line-at-p (point))
+            ;; At a blank run: find its extent, then delete it only when a
+            ;; rendered list line sits on both sides.  After a delete point
+            ;; sits on the following list line; either way point has moved
+            ;; past the run, so the scan makes progress.
+            (let ((blank-start (line-beginning-position)))
+              (while (and (not (eobp))
+                          (agent-shell-markdown--blank-line-at-p (point)))
+                (forward-line 1))
+              (when (and (> blank-start (point-min))
+                         (agent-shell-markdown--list-line-at-p (1- blank-start))
+                         (not (eobp))
+                         (agent-shell-markdown--list-line-at-p (point)))
+                (delete-region blank-start (point))))
+          (forward-line 1))))))
+
 (defun agent-shell-markdown--insert-block-padding ()
   "Insert an untinted blank line at point to frame a rendered block.
 
@@ -1747,18 +1839,51 @@ the block."
     (goto-char start)
     (agent-shell-markdown--insert-block-padding)))
 
+(defun agent-shell-markdown--block-end (start property)
+  "Return where PROPERTY stops for the block of lines beginning at START.
+A block is the run of consecutive lines that each carry PROPERTY,
+joined across their line terminators.  A line may carry PROPERTY only
+partway (a list item rendered before the rest of its line streamed in
+leaves the tail untagged); its whole line still counts, so the next
+line is still folded in rather than framed apart.  The result is where
+PROPERTY next stops, so a caller can resume scanning there.
+
+For example, with the current buffer holding two PROPERTY-tagged list
+lines (the first tagged only up to `(', the rest streamed in later):
+
+  • one (rest)
+  • two
+
+called at `• one', this returns the position past `• two', not the
+one partway through the first line."
+  (let ((end (or (next-single-property-change start property nil (point-max))
+                 (point-max))))
+    (while (let ((line-end (if (and (< end (point-max))
+                                    (not (eq (char-after end) ?\n)))
+                               (save-excursion (goto-char end)
+                                               (line-end-position))
+                             end)))
+             (and (< line-end (point-max))
+                  (eq (char-after line-end) ?\n)
+                  (get-text-property (1+ line-end) property)
+                  (setq end (or (next-single-property-change
+                                 (1+ line-end) property nil (point-max))
+                                (point-max))))))
+    end))
+
 (defun agent-shell-markdown--pad-regions (property continues-p)
-  "Frame every maximal run of non-nil PROPERTY with blank lines.
+  "Frame every block of PROPERTY-tagged lines with blank lines.
 CONTINUES-P is forwarded to `agent-shell-markdown--frame-block' to
-gate the bottom gap.  See `agent-shell-markdown--pad-rendered-blocks'."
+gate the bottom gap.  A block spans consecutive PROPERTY lines (see
+`agent-shell-markdown--block-end'), so a multi-line construct is
+framed as a whole rather than split with a blank stranded inside.
+See `agent-shell-markdown--pad-rendered-blocks'."
   (save-excursion
     (goto-char (point-min))
     (let ((pos (point-min)))
       (while (< pos (point-max))
         (if (get-text-property pos property)
-            (let* ((end (or (next-single-property-change
-                             pos property nil (point-max))
-                            (point-max)))
+            (let* ((end (agent-shell-markdown--block-end pos property))
                    ;; The top insert shifts END; a marker tracks it so the
                    ;; scan resumes just past the framed block.
                    (resume (copy-marker end)))
@@ -2666,14 +2791,87 @@ is safe to call on display and on resize."
         (let ((inhibit-read-only t)
               (buffer-undo-list t)
               (modified (buffer-modified-p)))
-          (dolist (region (nreverse regions))
-            (agent-shell-markdown--render-table
-             (list (cons :source (nth 2 region))
-                   (cons :start (marker-position (nth 0 region)))
-                   (cons :end (marker-position (nth 1 region)))))
-            (set-marker (nth 0 region) nil)
-            (set-marker (nth 1 region) nil))
+          ;; Preserve point (`agent-shell-markdown--render-table' moves point
+          ;; and can be triggered at arbitrary times).
+          (save-excursion
+            (dolist (region (nreverse regions))
+              (agent-shell-markdown--render-table
+               (list (cons :source (nth 2 region))
+                     (cons :start (marker-position (nth 0 region)))
+                     (cons :end (marker-position (nth 1 region)))))
+              (set-marker (nth 0 region) nil)
+              (set-marker (nth 1 region) nil)))
           (restore-buffer-modified-p modified))))))
+
+(defun agent-shell-markdown--displayed-window-width ()
+  "Return the body pixel width of a window showing the current buffer, or nil.
+Nil when the buffer is displayed in no window, so a caller can treat
+that as \"size unknown\" and re-measure once it is shown."
+  (when-let* ((window (get-buffer-window (current-buffer) t)))
+    (window-body-width window t)))
+
+(defun agent-shell-markdown--resize-image (start end max-width window-width)
+  "Re-size the image on [START, END) to MAX-WIDTH pixels.
+Creates a fresh image from the current one's file with the new
+`:max-width' (keeping its `:max-height'), swaps it onto the `display'
+property, and records WINDOW-WIDTH as the width it is now sized
+against.  A no-op unless the region actually holds a file image."
+  (when-let* ((image (get-text-property start 'display))
+              ((eq (car-safe image) 'image))
+              (file (image-property image :file))
+              (resized (create-image
+                        file nil nil
+                        :max-width max-width
+                        :max-height (image-property image :max-height))))
+    (image-flush resized)
+    (put-text-property start end 'display resized)
+    (put-text-property start end
+                       'agent-shell-markdown-image-window-width window-width)))
+
+(defun agent-shell-markdown-rerender-images ()
+  "Re-size window-relative images whose stored window width no longer matches.
+
+Each image sized against the window carries, on
+`agent-shell-markdown-image-width-ratio', how its width tracks the
+window: an explicit `{width=N%}' fraction, or the symbol `default'
+when it comes from `agent-shell-markdown-image-max-width'.  It also
+carries the window pixel width it was sized against on
+`agent-shell-markdown-image-window-width' (see
+`agent-shell-markdown--replace-images').  For only those images whose
+stored width differs from the display, this recomputes `:max-width' at
+the current width -- from the stored fraction, or, for `default', by
+re-reading `agent-shell-markdown-image-max-width' live so a changed
+setting applies.
+Fixed-size (pixel) images carry no ratio and are left untouched; an
+image first sized off-screen or at another width is re-sized once
+shown at a different width.
+
+A no-op when the buffer isn't displayed or every image already matches
+the current width, so it is safe to call on display and on resize."
+  (when-let* ((window (get-buffer-window (current-buffer) t))
+              (width (window-body-width window t)))
+    ;; A re-size, not a content change: keep it off the undo list and
+    ;; don't flip the buffer's modified flag.
+    (let ((inhibit-read-only t)
+          (buffer-undo-list t)
+          (modified (buffer-modified-p)))
+      (save-excursion
+        (goto-char (point-min))
+        (let (match)
+          (while (setq match (text-property-search-forward
+                              'agent-shell-markdown-image-width-ratio))
+            (let* ((beg (prop-match-beginning match))
+                   (ratio (get-text-property
+                           beg 'agent-shell-markdown-image-width-ratio)))
+              (unless (eql width (get-text-property
+                                  beg 'agent-shell-markdown-image-window-width))
+                (agent-shell-markdown--resize-image
+                 beg (prop-match-end match)
+                 (if (numberp ratio)
+                     (round (* ratio width))
+                   (agent-shell-markdown--image-max-width))
+                 width))))))
+      (restore-buffer-modified-p modified))))
 
 (defun agent-shell-markdown--carry-properties (pos)
   "Return a plist of properties at POS to carry across our delete+insert.
@@ -3270,24 +3468,44 @@ returns 300."
                     (window-body-height window t))))
       number)))
 
+(defun agent-shell-markdown--image-attribute-ratio (value)
+  "Return VALUE's window fraction when it is a percentage, else nil.
+VALUE is a Pandoc size string such as `50%', `300', or `300px'.  A
+percentage yields its fraction of the window (0.5 for `50%'); a
+pixel or bare-number value yields nil, since it is a fixed size that
+does not track the window.
+
+For example, (agent-shell-markdown--image-attribute-ratio \"50%\")
+returns 0.5 and (agent-shell-markdown--image-attribute-ratio \"300\")
+returns nil."
+  (when (string-match "\\`\\([0-9]+\\)%\\'" value)
+    (/ (string-to-number (match-string 1 value)) 100.0)))
+
 (defun agent-shell-markdown--parse-image-attributes (string)
   "Parse Pandoc-style image attributes from STRING (a `{...}' body).
-Returns an alist with `:max-width' and/or `:max-height' pixel values
-for any `width='/`height=' entries found, resolved via
-`agent-shell-markdown--image-attribute-pixels'.  Other attributes
-\(classes, ids) are ignored.
+Returns an alist.  For any `width='/`height=' entry it holds
+`:max-width'/`:max-height' pixel values (resolved via
+`agent-shell-markdown--image-attribute-pixels') and, when the entry
+was a percentage, `:max-width-ratio'/`:max-height-ratio' with its
+window fraction so the image can be re-sized when the window changes.
+Other attributes (classes, ids) are ignored.
 
-For example, (agent-shell-markdown--parse-image-attributes \"width=300\")
-returns \\='((:max-width . 300))."
+For example, (agent-shell-markdown--parse-image-attributes \"width=50%\")
+returns \\='((:max-width . PIXELS) (:max-width-ratio . 0.5)), and
+\"width=300\" returns \\='((:max-width . 300))."
   (let (attributes)
     (dolist (dimension '(width height))
       (when-let* (((string-match (format "\\_<%s[ \t]*=[ \t]*\\([^ \t}]+\\)"
                                          dimension)
                                  string))
-                  (pixels (agent-shell-markdown--image-attribute-pixels
-                           (match-string 1 string) dimension)))
-        (push (cons (intern (format ":max-%s" dimension)) pixels)
-              attributes)))
+                  (value (match-string 1 string)))
+        (when-let* ((pixels (agent-shell-markdown--image-attribute-pixels
+                             value dimension)))
+          (push (cons (intern (format ":max-%s" dimension)) pixels)
+                attributes))
+        (when-let* ((ratio (agent-shell-markdown--image-attribute-ratio value)))
+          (push (cons (intern (format ":max-%s-ratio" dimension)) ratio)
+                attributes))))
     (nreverse attributes)))
 
 (defun agent-shell-markdown--watermark-start ()

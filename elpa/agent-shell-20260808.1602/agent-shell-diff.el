@@ -30,6 +30,7 @@
   (require 'cl-lib))
 (require 'diff)
 (require 'diff-mode)
+(require 'agent-shell-faces)
 
 (defvar-local agent-shell-diff--on-exit nil
   "Function to call when the diff buffer is killed.
@@ -147,23 +148,49 @@ Arguments:
                     (overlay-put overlay 'category 'diff-header)
                     (overlay-put overlay 'display "")
                     (overlay-put overlay 'evaporate t)))
-                ;; Replace @@ lines with "Changes"
+                ;; Replace @@ lines with a single-line "changes" label.
+                ;; Intended display is (blank lines above and below each
+                ;; label give hunks breathing room):
+                ;;
+                ;;   + prior hunk's last line...
+                ;;
+                ;;   [changes]
+                ;;
+                ;;    def greet(name):
+                ;;   -    print("hi " + name)
+                ;;   +    print("hello " + name)
+                ;;
+                ;; The overlay covers only the @@ text (not its trailing
+                ;; newline) and its `display' string contains no newlines.
+                ;; Overlay `display'/`before-string' strings that embed
+                ;; newlines make `move_it_vertically_backward' pathological,
+                ;; hanging redisplay while scrolling (see #719).  The blank
+                ;; lines are real newlines (not overlay strings); the one
+                ;; below the label is tagged with `agent-shell-diff-spacer'
+                ;; so the hunk parsers skip it when locating the body.
                 (goto-char (point-min))
-                (while (re-search-forward "^@@.*@@.*\n" nil t)
-                  (let ((overlay (make-overlay (match-beginning 0) (match-end 0)))
-                        (face 'diff-hunk-header))  ; or any face you prefer
-                    (overlay-put overlay 'category 'diff-header)
-                    ;; Intended display is:
-                    ;; ╭─────────╮
-                    ;; │ changes │
-                    ;; ╰─────────╯
-                    ;; Using before-string so diff-hunk-next
-                    ;; lands on "│" instead of "╭".
-                    (overlay-put overlay 'before-string
-                                 (propertize "\n╭─────────╮\n" 'face face))
-                    (overlay-put overlay 'display
-                                 (propertize "│ changes │\n╰─────────╯\n\n" 'face face))
-                    (overlay-put overlay 'evaporate t)))))
+                (while (re-search-forward "^@@.*@@.*$" nil t)
+                  (let ((beg (match-beginning 0))
+                        (end (match-end 0)))
+                    ;; Blank line above the label, except the first one
+                    ;; (already at the top of the buffer).
+                    (unless (= beg (point-min))
+                      (save-excursion
+                        (goto-char beg)
+                        (insert "\n"))
+                      (setq beg (1+ beg)
+                            end (1+ end)))
+                    ;; Blank line below the label.  Tagged so the hunk
+                    ;; parsers can skip it: the body no longer sits
+                    ;; immediately below the @@ header.
+                    (save-excursion
+                      (goto-char (min (point-max) (1+ end)))
+                      (insert (propertize "\n" 'agent-shell-diff-spacer t)))
+                    (let ((overlay (make-overlay beg end)))
+                      (overlay-put overlay 'category 'diff-header)
+                      (overlay-put overlay 'display
+                                   (propertize " changes " 'face 'agent-shell-diff-changes-label))
+                      (overlay-put overlay 'evaporate t))))))
             (goto-char (point-min))
             (ignore-errors (diff-hunk-next))
             (setq agent-shell-diff--file first-file
@@ -324,6 +351,10 @@ hunk header, stopping (with nil) at any non-diff line."
         (cond
          ((looking-at "^@@")
           (throw 'result (point)))
+         ;; Skip the blank spacer inserted below the "changes" label.
+         ((get-text-property (point) 'agent-shell-diff-spacer)
+          (unless (zerop (forward-line -1))
+            (throw 'result nil)))
          ((memq (char-after) '(?\s ?- ?+ ?\\))
           (unless (zerop (forward-line -1))
             (throw 'result nil)))
@@ -346,6 +377,9 @@ line index to move to within a matched block."
   (save-excursion
     (goto-char header-pos)
     (forward-line 1)
+    ;; Skip the blank spacer inserted below the "changes" label.
+    (when (get-text-property (point) 'agent-shell-diff-spacer)
+      (forward-line 1))
     (let ((old-lines nil) (new-lines nil) (seen 0) (offset nil) (first-change nil))
       (while (and (not (eobp))
                   (memq (char-after) '(?\s ?- ?+ ?\\)))

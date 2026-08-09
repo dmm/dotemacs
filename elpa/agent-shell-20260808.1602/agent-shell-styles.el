@@ -38,7 +38,7 @@
   "Return a short label for tool call KIND string."
   (pcase kind
     ("search" "find")
-    ("execute" "run")
+    ("execute" "command")
     (_ kind)))
 
 (defun agent-shell--status-config (status)
@@ -47,8 +47,8 @@
   (agent-shell--status-config \"completed\")
   ;; => ((:label . \"done\") (:icon . \"✓\") (:face . agent-shell-success))"
   (pcase status
-    ("pending" '((:label . "wait") (:icon . "…") (:face . agent-shell-pending)))
-    ("in_progress" '((:label . "busy") (:icon . "…") (:face . agent-shell-warning)))
+    ("pending" '((:label . "wait") (:icon . "◔") (:face . agent-shell-pending)))
+    ("in_progress" '((:label . "busy") (:icon . "◔") (:face . agent-shell-warning)))
     ("completed" '((:label . "done") (:icon . "✓") (:face . agent-shell-success)))
     ("failed" '((:label . "error") (:icon . "✗") (:face . agent-shell-error)))
     (_ '((:label . "unknown") (:icon . "?") (:face . agent-shell-warning)))))
@@ -139,6 +139,39 @@ Returns a propertized string or nil."
     (when kind
       (setq kind-text (propertize (agent-shell--short-kind-label kind)
                                   'font-lock-face 'font-lock-type-face)))
+    (if (and status-text kind-text)
+        (concat status-text " " kind-text)
+      (or status-text kind-text))))
+
+(defun agent-shell--icon-and-kind-status-kind-label (status kind)
+  "Render STATUS as a colored icon followed by KIND as a heading.
+
+KIND is capitalized and shares `agent-shell-section-heading' with the
+\"Thinking\" label and the activity group header, so every entry in a
+group reads at the same weight, with the title beside it plain.  Nothing
+is padded: fragments sit a blank line apart, so a fixed kind column buys
+no scanning and only opens a gap.  Entries carrying no KIND, like plan
+steps, render the icon alone.
+
+  (agent-shell--icon-and-kind-status-kind-label \"completed\" \"execute\")
+  ;; => \"✓ Command\"
+
+  (agent-shell--icon-and-kind-status-kind-label \"pending\" nil)
+  ;; => \"◔\"
+
+STATUS is a string like \"completed\" or nil.
+KIND is a string like \"read\" or nil.
+Returns a propertized string or nil."
+  (let* ((status-config (agent-shell--status-config status))
+         (status-text (when status
+                        (propertize (map-elt status-config :icon)
+                                    'font-lock-face (map-elt status-config :face))))
+         (kind-text (when kind
+                      (propertize (capitalize
+                                   (string-replace
+                                    "_" " "
+                                    (agent-shell--short-kind-label kind)))
+                                  'font-lock-face 'agent-shell-section-heading))))
     (if (and status-text kind-text)
         (concat status-text " " kind-text)
       (or status-text kind-text))))

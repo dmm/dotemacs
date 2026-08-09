@@ -4,11 +4,11 @@
 
 ;; Author: Alvaro Ramirez https://xenodium.com
 ;; URL: https://github.com/xenodium/agent-shell
-;; Package-Version: 20260804.1116
-;; Package-Revision: 8396bd00ece5
-;; Package-Requires: ((emacs "29.1") (shell-maker "0.94.1") (acp "0.13.1"))
+;; Package-Version: 20260808.1602
+;; Package-Revision: 8cb20f20265f
+;; Package-Requires: ((emacs "29.1") (shell-maker "0.96.1") (acp "0.13.1"))
 
-(defconst agent-shell--version "0.68.1")
+(defconst agent-shell--version "0.70.2")
 
 ;; This package is free software; you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
@@ -117,12 +117,32 @@ You may use \"􀇾\" as an SF Symbol on macOS."
   :type 'string
   :group 'agent-shell)
 
-(defcustom agent-shell-thought-process-icon "💡"
+(defcustom agent-shell-thought-process-icon "✶"
   "Icon displayed during the AI's thought process.
 
-You may use \"􁷘\" as an SF Symbol on macOS."
+Displays a diamond instead on displays that cannot draw it.
+
+Favour single width icons as they line \"Thinking\" up with the status
+icons beside tool calls; wider ones, including most emoji and the SF
+Symbols shift it right by the difference."
   :type 'string
   :group 'agent-shell)
+
+(defun agent-shell--thought-process-icon ()
+  "Return the thought process icon this display can draw, else nil.
+
+Resolved per call rather than at load time: whether a character is
+drawable depends on the frame, which may not exist yet when this file
+loads (a daemon starting before its first graphical frame).  Falls back
+to a diamond, drawn by most monospace fonts.
+
+  (agent-shell--thought-process-icon)
+  ;; => \"⚹\" where its font is available, \"◇\" otherwise"
+  (when-let* ((icon agent-shell-thought-process-icon)
+              ((not (string-empty-p icon))))
+    (if (seq-every-p #'char-displayable-p (string-to-list icon))
+        icon
+      "◇")))
 
 (defcustom agent-shell-thought-process-expand-by-default nil
   "Whether thought process sections should be expanded by default.
@@ -2826,11 +2846,14 @@ Clears STATE's `:expanded-activity-group'."
               :block-id (format "%s-agent_thought_chunk"
                                 (map-elt state :chunked-group-count))
               :label-left  (concat
-                            (when (and agent-shell-thought-process-icon
-                                       (not (string-empty-p agent-shell-thought-process-icon)))
-                              (concat agent-shell-thought-process-icon " "))
+                            (when-let* ((icon (agent-shell--thought-process-icon)))
+                              (concat icon " "))
                             (propertize "Thinking" 'font-lock-face 'agent-shell-section-heading))
-              :body content
+              ;; Base face for the body.  The markdown styling rendered on
+              ;; top layers its own faces ahead of it, so bold, links and
+              ;; code spans in a thought keep their faces.
+              :body (agent-shell--add-text-properties
+                     content 'face 'agent-shell-thought-body)
               :append (equal (map-elt state :last-entry-type)
                              "agent_thought_chunk")
               :expanded agent-shell-thought-process-expand-by-default
@@ -4075,7 +4098,7 @@ for details."
         file-path))))))
 
 (defcustom agent-shell-status-kind-label-function
-  #'agent-shell--inverse-icon-status-kind-label
+  #'agent-shell--icon-and-kind-status-kind-label
   "Function to render status and kind labels.
 
 Called with two arguments: STATUS (string or nil) and KIND (string or nil).
@@ -4143,13 +4166,13 @@ Returns propertized labels in :status and :title propertized."
                               (not (equal (string-remove-prefix "`" (string-remove-suffix "`" (string-trim title)))
                                           (string-remove-prefix "`" (string-remove-suffix "`" (string-trim description))))))
                          (concat
-                          (propertize title 'font-lock-face 'agent-shell-section-heading)
+                          (propertize title 'font-lock-face 'default)
                           " "
                           (propertize description 'font-lock-face 'agent-shell-section-annotation)))
                         (title
-                         (propertize title 'font-lock-face 'agent-shell-section-heading))
+                         (propertize title 'font-lock-face 'default))
                         (description
-                         (propertize description 'font-lock-face 'agent-shell-section-heading)))))
+                         (propertize description 'font-lock-face 'default)))))
       `((:status . ,(agent-shell--make-status-kind-label
                      :status (map-elt tool-call :status)
                      :kind (map-elt tool-call :kind)))
@@ -10072,59 +10095,59 @@ For example:
       (setq end (1- end)))
     (substring text start end)))
 
-(defvar-local agent-shell--table-realign-timer nil
-  "Pending idle timer that re-aligns this buffer's markdown tables.")
+(defvar-local agent-shell--realign-timer nil
+  "Pending idle timer that re-aligns this buffer's rendered markdown.")
 
-(defun agent-shell--realign-tables (buffer)
-  "Re-render BUFFER's markdown tables from their stashed source.
-Deferred worker for `agent-shell--realign-tables-on-change'."
+(defun agent-shell--realign-rendered (buffer)
+  "Re-align BUFFER's window-relative markdown: tables and images.
+Deferred worker for `agent-shell--realign-on-change'."
   (when (buffer-live-p buffer)
     (with-current-buffer buffer
-      (setq agent-shell--table-realign-timer nil)
-      (agent-shell-markdown-rerender-tables))))
+      (setq agent-shell--realign-timer nil)
+      (agent-shell-markdown-rerender-tables)
+      (agent-shell-markdown-rerender-images))))
 
-(defun agent-shell--realign-tables-on-change (window)
-  "Re-align the current buffer's markdown tables shown in WINDOW.
+(defun agent-shell--realign-on-change (window)
+  "Re-align the current buffer's window-relative markdown shown in WINDOW.
 
 Installed buffer-locally on `window-size-change-functions' and
 `window-buffer-change-functions' (whose buffer-local values are
 called with the window, the buffer current), so it runs only for
-shell windows.  Table column widths are pixel-measured
-against the display, so a resize or first display can change their
-layout; schedule a re-render on any such change.  Which tables
-actually need re-laying out is decided per-table by
-`agent-shell-markdown-rerender-tables' (via the stored
-`agent-shell-markdown-table-width'), so this can fire freely: it
-also catches tables streamed in while the buffer was off-screen
-\(rendered without a window, hence not pixel-perfect) and then
-brought back into a same-width window.  Deferred to an idle timer,
-which also debounces a drag-resize into a single re-render, because
-modifying a buffer from within these redisplay hooks is unsafe."
+shell windows.  Table column widths and percentage image sizes are
+measured against the display, so a resize or first display can change
+them; schedule a re-render on any such change.  What actually needs
+re-doing is decided per-item by `agent-shell-markdown-rerender-tables'
+and `agent-shell-markdown-rerender-images' (via their stored widths),
+so this can fire freely: it also catches content rendered while the
+buffer was off-screen and then brought back into a same-width window.
+Deferred to an idle timer, which also debounces a drag-resize into a
+single re-render, because modifying a buffer from within these
+redisplay hooks is unsafe."
   (when (window-live-p window)
-    (when (timerp agent-shell--table-realign-timer)
-      (cancel-timer agent-shell--table-realign-timer))
-    (setq agent-shell--table-realign-timer
-          (run-with-idle-timer 0.15 nil #'agent-shell--realign-tables
+    (when (timerp agent-shell--realign-timer)
+      (cancel-timer agent-shell--realign-timer))
+    (setq agent-shell--realign-timer
+          (run-with-idle-timer 0.15 nil #'agent-shell--realign-rendered
                                (current-buffer)))))
 
-(defun agent-shell--enable-table-realign ()
-  "Keep the current buffer's markdown tables aligned to its window.
+(defun agent-shell--enable-realign ()
+  "Keep the current buffer's rendered markdown aligned to its window.
 
 Installs buffer-local window-change handlers (see
-`agent-shell--realign-tables-on-change').  Being buffer-local they
-run only for this buffer's windows and are removed automatically
-when the buffer is killed.  Added to `agent-shell-mode-hook' and
+`agent-shell--realign-on-change').  Being buffer-local they run only
+for this buffer's windows and are removed automatically when the
+buffer is killed.  Added to `agent-shell-mode-hook' and
 `agent-shell-viewport-view-mode-hook' so both the shell and its
 viewport realign; a same-size window switch also fires the
 buffer-change hook, so first display is covered too."
   (add-hook 'window-size-change-functions
-            #'agent-shell--realign-tables-on-change nil t)
+            #'agent-shell--realign-on-change nil t)
   (add-hook 'window-buffer-change-functions
-            #'agent-shell--realign-tables-on-change nil t))
+            #'agent-shell--realign-on-change nil t))
 
-(add-hook 'agent-shell-mode-hook #'agent-shell--enable-table-realign)
+(add-hook 'agent-shell-mode-hook #'agent-shell--enable-realign)
 (add-hook 'agent-shell-viewport-view-mode-hook
-          #'agent-shell--enable-table-realign)
+          #'agent-shell--enable-realign)
 
 (provide 'agent-shell)
 

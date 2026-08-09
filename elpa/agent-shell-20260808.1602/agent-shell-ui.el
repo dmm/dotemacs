@@ -450,6 +450,37 @@ matches the body's current visibility, not caller-supplied state."
             (agent-shell-ui--apply-trailing-whitespace-invisible
              insert-start insert-end)))))))
 
+(defun agent-shell-ui--label-rendered-p (text section start end)
+  "Return non-nil when the region START to END already renders TEXT.
+
+SECTION is one of `label-left' or `label-right'.  Left labels compare
+`font-lock-face' alongside the text, since a status label can recolor
+without changing a character (e.g. a style whose box color alone
+separates pending from completed).  Right labels compare text only:
+markdown is rendered over them in place, so their faces no longer match
+the ones TEXT carries.
+
+Faces are compared in place, a run at a time, so the labels streaming
+re-sends unchanged cost no allocation.  Each step lands on the nearer
+of the two sides' next face change, since the stretch before it is
+uniform on both."
+  (and (string= (substring-no-properties text)
+                (buffer-substring-no-properties start end))
+       (or (not (eq section 'label-left))
+           (let ((position start))
+             (while (and (< position end)
+                         (equal (get-text-property position 'font-lock-face)
+                                (get-text-property (- position start)
+                                                   'font-lock-face text)))
+               (setq position
+                     (min (or (next-single-property-change
+                               position 'font-lock-face nil end)
+                              end)
+                          (+ start (or (next-single-property-change
+                                        (- position start) 'font-lock-face text)
+                                       (length text))))))
+             (>= position end)))))
+
 (defun agent-shell-ui--replace-label (qualified-id section new-text)
   "Replace the SECTION region of fragment QUALIFIED-ID with NEW-TEXT.
 
@@ -479,13 +510,9 @@ are preserved across label updates."
                 ;; status/title labels on every chunk, and the rewrite
                 ;; (delete + insert + re-propertize) is pure waste.  A
                 ;; guard clause returning nil makes the whole `when-let*'
-                ;; short-circuit so the rewrite body never runs.  The
-                ;; comparison is text-only; labels are deterministic
-                ;; renderings of caller state, so unchanged text implies
-                ;; unchanged properties (no current caller changes only
-                ;; properties while keeping the text identical).
-                ((not (string= (substring-no-properties new-text)
-                               (buffer-substring-no-properties (car region) (cdr region))))))
+                ;; short-circuit so the rewrite body never runs.
+                ((not (agent-shell-ui--label-rendered-p
+                       new-text section (car region) (cdr region)))))
       (let* ((region-start (car region))
              (region-end (cdr region))
              (state (get-text-property region-start 'agent-shell-ui-state)))

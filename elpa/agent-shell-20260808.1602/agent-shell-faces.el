@@ -90,12 +90,21 @@
 
 (defface agent-shell-section-heading
   '((t :inherit font-lock-doc-markup-face))
-  "Face for a section's heading (e.g. \"Plan\", \"Thinking\", a tool call's title)."
+  "Face for a section's heading (e.g. \"Plan\", \"Thinking\", a tool call's kind)."
   :group 'agent-shell-faces)
 
 (defface agent-shell-section-annotation
   '((t :inherit font-lock-doc-face))
   "Face for a section's inline annotation (e.g. a tool call's description)."
+  :group 'agent-shell-faces)
+
+(defface agent-shell-thought-body
+  '((t))
+  "Face for the body of a thought process section.
+Unstyled by default; customize it (for example to inherit `italic') to
+set thoughts apart from the agent's final output.  Applied as a base
+face, under the markdown styling the body carries, so bold, links and
+code spans in a thought keep their own faces on top."
   :group 'agent-shell-faces)
 
 (defface agent-shell-secondary
@@ -191,6 +200,18 @@ Used for command, capability, config option, model and mode names."
 (defface agent-shell-viewport-status-view
   '((t :inherit default))
   "Face for the viewport view status indicator."
+  :group 'agent-shell-faces)
+
+
+;;; Diff
+
+(defface agent-shell-diff-changes-label
+  '((((type graphic)) :inherit diff-hunk-header :box t)
+    (t :inherit diff-hunk-header :inverse-video t))
+  "Face for the \"changes\" label shown for each hunk in diff buffers.
+On graphical frames the label is drawn with a box; on terminals,
+where boxes are not rendered, it falls back to inverse video so the
+label stays visible."
   :group 'agent-shell-faces)
 
 (provide 'agent-shell-faces)

@@ -4,8 +4,8 @@
 
 ;; Author: Alvaro Ramirez https://xenodium.com
 ;; URL: https://github.com/xenodium/acp.el
-;; Package-Version: 20260719.342
-;; Package-Revision: a29cb161ac95
+;; Package-Version: 20260803.2034
+;; Package-Revision: 7d5c16ebcf2a
 ;; Package-Requires: ((emacs "28.1"))
 
 (defconst acp-package-version "0.13.1")
@@ -343,6 +343,10 @@ Note: These are agent process errors.
            (buffer-live-p (acp-logs-buffer :client client))
            (buffer-live-p (acp-traffic-buffer :client client)))
       (progn
+        (map-put! client :error-handlers nil)
+        (map-put! client :notification-handlers nil)
+        (map-put! client :request-handlers nil)
+        (map-put! client :pending-requests nil)
         (when (process-live-p (map-elt client :process))
           (delete-process (map-elt client :process)))
         (kill-buffer (acp-logs-buffer :client client))
