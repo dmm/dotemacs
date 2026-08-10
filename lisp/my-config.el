@@ -85,10 +85,6 @@
 (setq sentence-end-double-space nil)
 (setq enable-recursive-minibuffers nil)
 
-;; Make right-click do something sensible
-(when (display-graphic-p)
-  (context-menu-mode))
-
 (global-font-lock-mode 1)
 
 (setq font-lock-maximum-decoration t)
