@@ -79,6 +79,8 @@
 (declare-function agent-shell-completion-mode "agent-shell-completion")
 (declare-function agent-shell-yank-dwim "agent-shell")
 
+(defvar-local agent-shell-viewport--clean-up t)
+
 (defvar agent-shell-header-style)
 (defvar agent-shell-prefer-viewport-interaction)
 (defvar agent-shell-viewport-dismiss-on-send)
@@ -609,94 +611,138 @@ Optionally set its PROMPT and RESPONSE."
     (goto-char (point-min))
     current))
 
-(defun agent-shell-viewport-next-item ()
+(defun agent-shell-viewport-next-item (&optional leave-table)
   "Go to next item.
 
-When point is inside a rendered markdown table, navigate to the
-next table cell instead.  If at point-max, attempt to switch to
-next interaction."
+Could be a prompt, an expandable item, a displayed image, a rendered
+link, a source block, or a rendered markdown table.  A table is entered
+at its first cell, then walked one cell (and one link inside a cell) at
+a time, moving on to the item after it once past its last one.  If at
+point-max, attempt to switch to next interaction.
+
+With prefix LEAVE-TABLE, carry on from the end of the table point is
+in, landing on the item after it rather than on its next cell."
   (declare (modes agent-shell-viewport-view-mode))
-  (interactive)
+  (interactive "P")
   (unless (derived-mode-p 'agent-shell-viewport-view-mode)
     (error "Not in a viewport buffer"))
-  (if (get-text-property (point) 'agent-shell-markdown-table-source)
-      (agent-shell-markdown-table-next-cell)
-    (let* ((current-pos (point))
-           (prompt-start (agent-shell-viewport--prompt-start))
-           (response-start (agent-shell-viewport--response-start))
-           (block-pos (save-mark-and-excursion
-                        (agent-shell-ui-forward-block)))
-           (button-pos (save-mark-and-excursion
-                         (agent-shell-next-permission-button)))
-           ;; Filter positions to only those after current position
-           (candidates (delq nil (list
-                                  (when (and prompt-start (> prompt-start current-pos))
-                                    prompt-start)
-                                  (when (and response-start (> response-start current-pos))
-                                    response-start)
-                                  block-pos
-                                  button-pos)))
-           (next-pos (if candidates
-                         (apply #'min candidates)
-                       ;; No more items, try point-max if not already there
-                       (when (< current-pos (point-max))
-                         (point-max)))))
-      (if next-pos
-          (progn
-            (deactivate-mark)
-            (goto-char next-pos))
-        ;; At point-max with no more items, try next interaction
-        (condition-case nil
-            (agent-shell-viewport-next-page)
-          (error
-           ;; At the end of all interactions, stay at point-max
-           nil))))))
+  ;; Leaving the table point is in — navigate on from its end, where its
+  ;; own cells and their links are behind the search.
+  (when-let* ((leave-table)
+              (table (agent-shell-markdown-table--region-at-point)))
+    (goto-char (cdr table)))
+  (let* ((current-pos (point))
+         (prompt-start (agent-shell-viewport--prompt-start))
+         (response-start (agent-shell-viewport--response-start))
+         (block-pos (save-mark-and-excursion
+                      (agent-shell-ui-forward-block)))
+         (button-pos (save-mark-and-excursion
+                       (agent-shell-next-permission-button)))
+         (image-pos (save-mark-and-excursion
+                      (agent-shell-markdown--next-visible-image)))
+         (link-pos (save-mark-and-excursion
+                     (agent-shell-markdown--next-visible-link)))
+         (source-block-pos (save-mark-and-excursion
+                             (agent-shell-markdown--next-visible-source-block)))
+         (table-pos (save-mark-and-excursion
+                      (agent-shell-markdown--search-visible
+                       :property 'agent-shell-markdown-table-cell-start)))
+         ;; Filter positions to only those after current position
+         (candidates (seq-filter (lambda (position)
+                                   (> position current-pos))
+                                 (seq-map (lambda (position)
+                                            (agent-shell-markdown-table--entry-position
+                                             :position position :from current-pos))
+                                          (delq nil (list prompt-start
+                                                          response-start
+                                                          block-pos
+                                                          button-pos
+                                                          image-pos
+                                                          link-pos
+                                                          source-block-pos
+                                                          table-pos)))))
+         (next-pos (if candidates
+                       (seq-min candidates)
+                     ;; No more items, try point-max if not already there
+                     (when (< current-pos (point-max))
+                       (point-max)))))
+    (if next-pos
+        (progn
+          (deactivate-mark)
+          (goto-char next-pos))
+      ;; At point-max with no more items, try next interaction
+      (condition-case nil
+          (agent-shell-viewport-next-page)
+        (error
+         ;; At the end of all interactions, stay at point-max
+         nil)))))
 
-(defun agent-shell-viewport-previous-item ()
+(defun agent-shell-viewport-previous-item (&optional leave-table)
   "Go to previous item.
 
-When point is inside a rendered markdown table, navigate to the
-previous table cell instead.  If at the first item, attempt to
-switch to previous interaction."
+Could be a prompt, an expandable item, a displayed image, a rendered
+link, a source block, or a rendered markdown table.  A table above is
+entered at its first cell, so navigating again from there leaves it for
+the item above it.  If at the first item, attempt to switch to previous
+interaction.
+
+With prefix LEAVE-TABLE, carry on from the start of the table point is
+in, as `agent-shell-viewport-next-item' does from its end."
   (declare (modes agent-shell-viewport-view-mode))
-  (interactive)
+  (interactive "P")
   (unless (derived-mode-p 'agent-shell-viewport-view-mode)
     (error "Not in a viewport buffer"))
-  (if (get-text-property (point) 'agent-shell-markdown-table-source)
-      (agent-shell-markdown-table-previous-cell)
-    (let* ((current-pos (point))
-           (prompt-start (agent-shell-viewport--prompt-start))
-           (response-start (agent-shell-viewport--response-start))
-           (block-pos (save-mark-and-excursion
-                        (let ((pos (agent-shell-ui-backward-block)))
-                          (when (and pos (< pos current-pos))
-                            pos))))
-           (button-pos (save-mark-and-excursion
-                         (let ((pos (agent-shell-previous-permission-button)))
-                           (when (and pos (< pos current-pos))
-                             pos))))
-           ;; Filter positions to only those before current position
-           (candidates (delq nil (list
-                                  (when (and prompt-start (< prompt-start current-pos))
-                                    prompt-start)
-                                  (when (and response-start (< response-start current-pos))
-                                    response-start)
-                                  block-pos
-                                  button-pos)))
-           (next-pos (when candidates
-                       (apply #'max candidates))))
-      (if next-pos
-          (progn
-            (deactivate-mark)
-            (goto-char next-pos))
-        ;; No more items before current position, try previous interaction
-        (condition-case nil
-            ;; Switch to previous page and stop at point-max (call next-interaction directly)
-            (agent-shell-viewport-next-page :backwards t)
-          (error
-           ;; At the beginning of all interactions, stay at first item
-           (when prompt-start
-             (goto-char prompt-start))))))))
+  ;; Leaving the table point is in — navigate on from its start, where
+  ;; its own cells and their links are behind the search.
+  (when-let* ((leave-table)
+              (table (agent-shell-markdown-table--region-at-point)))
+    (goto-char (car table)))
+  (let* ((current-pos (point))
+         (prompt-start (agent-shell-viewport--prompt-start))
+         (response-start (agent-shell-viewport--response-start))
+         (block-pos (save-mark-and-excursion
+                      (agent-shell-ui-backward-block)))
+         (button-pos (save-mark-and-excursion
+                       (agent-shell-previous-permission-button)))
+         (image-pos (save-mark-and-excursion
+                      (agent-shell-markdown--previous-visible-image)))
+         (link-pos (save-mark-and-excursion
+                     (agent-shell-markdown--previous-visible-link)))
+         (source-block-pos
+          (save-mark-and-excursion
+            (agent-shell-markdown--previous-visible-source-block)))
+         (table-pos (save-mark-and-excursion
+                      (agent-shell-markdown--search-visible
+                       :property 'agent-shell-markdown-table-cell-start
+                       :backwards t)))
+         ;; Filter positions to only those before current position
+         (candidates (seq-filter (lambda (position)
+                                   (< position current-pos))
+                                 (seq-map (lambda (position)
+                                            (agent-shell-markdown-table--entry-position
+                                             :position position :from current-pos))
+                                          (delq nil (list prompt-start
+                                                          response-start
+                                                          block-pos
+                                                          button-pos
+                                                          image-pos
+                                                          link-pos
+                                                          source-block-pos
+                                                          table-pos)))))
+         (next-pos (when candidates
+                     (seq-max candidates))))
+    (if next-pos
+        (progn
+          (deactivate-mark)
+          (goto-char next-pos))
+      ;; No more items before current position, try previous interaction
+      (condition-case nil
+          ;; Switch to previous page and stop at point-max (call next-interaction directly)
+          (agent-shell-viewport-next-page :backwards t)
+        (error
+         ;; At the beginning of all interactions, stay at first item
+         (when prompt-start
+           (goto-char prompt-start)))))))
 
 (defconst agent-shell-viewport--suffix " [viewport]"
   "Suffix appended to shell buffer name to create viewport buffer name.")
@@ -1171,6 +1217,7 @@ VIEWPORT-BUFFER is the viewport buffer to check."
     (define-key map (kbd "<backtab>") #'agent-shell-viewport-previous-item)
     (define-key map (kbd "n") #'agent-shell-viewport-next-item)
     (define-key map (kbd "p") #'agent-shell-viewport-previous-item)
+    (define-key map (kbd "C-M-u") #'agent-shell-backward-up-item)
     (define-key map (kbd "f") #'agent-shell-viewport-next-page)
     (define-key map (kbd "b") #'agent-shell-viewport-previous-page)
     (define-key map (kbd "r") #'agent-shell-viewport-reply)
@@ -1185,6 +1232,9 @@ VIEWPORT-BUFFER is the viewport buffer to check."
     (define-key map (kbd "7") #'agent-shell-viewport-reply-7)
     (define-key map (kbd "8") #'agent-shell-viewport-reply-8)
     (define-key map (kbd "9") #'agent-shell-viewport-reply-9)
+    (define-key map (kbd "+") #'agent-shell-markdown-image-scale-increase)
+    (define-key map (kbd "-") #'agent-shell-markdown-image-scale-decrease)
+    (define-key map (kbd "0") #'agent-shell-markdown-image-scale-reset)
     (define-key map (kbd "q") #'bury-buffer)
     (define-key map (kbd "C-<tab>") #'agent-shell-viewport-cycle-session-mode)
     (define-key map (kbd "v") #'agent-shell-viewport-set-session-model)
@@ -1200,7 +1250,7 @@ VIEWPORT-BUFFER is the viewport buffer to check."
   "Keymap for `agent-shell-viewport-view-mode'.")
 
 (transient-define-prefix agent-shell-viewport--help-menu ()
-  "`agent-shell' viewport help menu"
+  "`agent-shell' viewport help menu."
   [:class transient-columns
           :setup-children
           (lambda (_)
@@ -1214,6 +1264,8 @@ VIEWPORT-BUFFER is the viewport buffer to check."
                          (:description . "Next item"))
                         ((:function . agent-shell-viewport-previous-item)
                          (:description . "Previous item"))
+                        ((:function . agent-shell-backward-up-item)
+                         (:description . "Up to table's first cell"))
                         ((:function . agent-shell-viewport-next-page)
                          (:description . "Next page")
                          (:if-not . agent-shell-viewport--busy-p))
@@ -1279,7 +1331,13 @@ VIEWPORT-BUFFER is the viewport buffer to check."
                         ((:function . agent-shell-viewport-copy-session-id)
                          (:description . "Copy session ID"))
                         ((:function . agent-shell-viewport-open-transcript)
-                         (:description . "Open transcript")))))
+                         (:description . "Open transcript"))
+                        ((:function . agent-shell-markdown-image-scale-increase)
+                         (:description . "Widen images"))
+                        ((:function . agent-shell-markdown-image-scale-decrease)
+                         (:description . "Narrow images"))
+                        ((:function . agent-shell-markdown-image-scale-reset)
+                         (:description . "Reset image size")))))
               )))])
 
 (defun agent-shell-viewport-help-menu ()
@@ -1291,7 +1349,7 @@ VIEWPORT-BUFFER is the viewport buffer to check."
   (call-interactively #'agent-shell-viewport--help-menu))
 
 (transient-define-prefix agent-shell-viewport--compose-help-menu ()
-  "`agent-shell' viewport compose help menu"
+  "`agent-shell' viewport compose help menu."
   [:class transient-columns
           :setup-children
           (lambda (_)
@@ -1452,8 +1510,6 @@ on current major mode."
                                                                  (:mode . ,mode-binding)
                                                                  (:thought-level . ,thought-level-binding))))))
       (setq-local header-line-format header))))
-
-(defvar-local agent-shell-viewport--clean-up t)
 
 (cl-defun agent-shell-viewport--shell-buffer (&optional viewport-buffer)
   "Get the shell buffer associated with VIEWPORT-BUFFER.

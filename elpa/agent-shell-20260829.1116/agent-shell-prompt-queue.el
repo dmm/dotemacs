@@ -39,6 +39,9 @@
 (declare-function agent-shell--shell-buffer "agent-shell")
 (declare-function agent-shell--state "agent-shell")
 (declare-function agent-shell--echo "agent-shell")
+(declare-function agent-shell-status "agent-shell")
+(declare-function agent-shell-steering-supported-p "agent-shell")
+(declare-function agent-shell-experimental--send-steering "agent-shell-experimental")
 (declare-function agent-shell-completion--setup-minibuffer "agent-shell-completion")
 (declare-function shell-maker-busy "shell-maker")
 
@@ -117,7 +120,7 @@ Remove: M-x agent-shell-prompt-queue-remove
 ACTIVE-PROMPT is the prompt currently running, or nil if none.
 
 PENDING-PROMPTS is a list of pending prompt strings, in the same form as
-\(map-elt agent-shell--state :pending-prompts).
+the :pending-prompts entry in variable `agent-shell--state'.
 
 Each prompt is shown on a single line, prefixed by a status column
 \(\"active\" or \"queued\"), and truncated to fit the frame width so it
@@ -176,6 +179,18 @@ as \"active\" and the queued prompts, PROMPT included, as \"queued\"."
                     (ring-ref comint-input-ring 0))
    :pending-prompts (map-elt agent-shell--state :pending-prompts)))
 
+(defvar agent-shell-prompt-queue-setup-minibuffer-functions nil
+  "Abnormal hook run while reading a queued prompt from the minibuffer.
+
+Each function is called with a single alist containing:
+
+  :shell-buffer - the shell the prompt is bound for
+
+and runs with the minibuffer current, so it can decorate or extend the
+prompt the way that shell renders its own.  The shell is carried rather
+than looked up: it is resolved for the project, so it need not be the
+buffer the minibuffer was entered from.")
+
 (cl-defun agent-shell--prompt-queue-read (&key initial)
   "Read a queue prompt from the minibuffer.
 
@@ -187,11 +202,63 @@ agent commands when the agent has reported them."
   (let ((shell-buffer (current-buffer)))
     (minibuffer-with-setup-hook
         (lambda ()
-          (agent-shell-completion--setup-minibuffer shell-buffer)
+          (run-hook-with-args 'agent-shell-prompt-queue-setup-minibuffer-functions
+                              `((:shell-buffer . ,shell-buffer)))
           (when initial
             (insert initial)))
       (read-string (or (map-nested-elt (agent-shell--state) '(:agent-config :shell-prompt))
                        "Enqueue prompt: ")))))
+
+(defun agent-shell-prompt-steer (&optional prompt)
+  "Steer PROMPT into the turn the agent is currently running.
+
+Unlike `agent-shell-prompt-queue', the prompt reaches the agent while
+it's already working on a submitted prompt, so it can change course
+instead of finishing first.  Signals a `user-error' when the agent does
+not support steering -- use `agent-shell-prompt-queue' for that one.
+
+With no turn running there is nothing to steer into, so PROMPT is simply
+submitted and starts the next turn.
+
+Steering is not additive: an agent that interrupts what it is generating
+may drop the instruction it was working on, so what the agent was already
+doing can be lost.  Whether that happens is the agent's choice, not ours.
+
+When the agent declines the steer, the running turn is interrupted rather
+than left to carry on in a direction you believe you already corrected.
+
+Steering a shell awaiting a permission answer asks for confirmation
+first: no implementation defines what an agent does with a prompt
+injected while a tool sits on that question, and a declined steer
+interrupts the turn, which rejects that permission along with it.
+
+While reading, @ completes project files and / completes available agent
+commands when the agent has reported them."
+  (interactive)
+  (with-current-buffer (agent-shell--shell-buffer :no-create t)
+    ;; Read once, before the prompt is asked for, so refusing costs no
+    ;; typing and so the same answer picks the path below.  The turn can
+    ;; end while the prompt is written, since the message pump drains on a
+    ;; timer and timers run from the minibuffer's own wait for input.
+    (let ((busy (shell-maker-busy)))
+      (when busy
+        (unless (agent-shell-steering-supported-p)
+          (user-error "This agent does not support steering"))
+        (when (eq (agent-shell-status) 'blocked)
+          (unless (y-or-n-p
+                   "Shell is pending user action (Steering may cancel work).  Steer anyway?")
+            (user-error "Steering cancelled"))))
+      (setq prompt (or prompt (agent-shell--prompt-queue-read)))
+      (if (not busy)
+          ;; No turn to join, so PROMPT starts the next one instead.
+          (agent-shell--insert-to-shell-buffer :text prompt :submit t :no-focus t)
+        ;; Steering is the one path that never reaches shell-maker, which
+        ;; would otherwise absorb a blank prompt by reprinting its own.
+        (when (string-empty-p (string-trim prompt))
+          (user-error "No prompt to steer"))
+        (agent-shell-experimental--send-steering
+         :state (agent-shell--state)
+         :prompt prompt)))))
 
 (defun agent-shell-prompt-queue (prompt)
   "Queue or immediately send a prompt depending on shell busy state.
@@ -201,6 +268,9 @@ resolving it via `agent-shell--shell-buffer' so this works even when
 invoked outside a shell buffer.  If the shell is busy, add PROMPT to the
 pending prompts queue.  Otherwise, submit it immediately.  Queued prompts
 will be automatically sent when the current prompt completes.
+
+To hand PROMPT to the agent mid-turn instead of waiting, see
+`agent-shell-prompt-steer'.
 
 While reading, @ completes project files and / completes available agent
 commands when the agent has reported them."

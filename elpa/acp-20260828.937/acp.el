@@ -4,11 +4,11 @@
 
 ;; Author: Alvaro Ramirez https://xenodium.com
 ;; URL: https://github.com/xenodium/acp.el
-;; Package-Version: 20260803.2034
-;; Package-Revision: 7d5c16ebcf2a
+;; Package-Version: 20260828.937
+;; Package-Revision: 42f5c2685372
 ;; Package-Requires: ((emacs "28.1"))
 
-(defconst acp-package-version "0.13.1")
+(defconst acp-package-version "0.14.3")
 
 ;; This package is free software; you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
@@ -230,9 +230,16 @@ agent over the wire.  Code -32603 is JSON-RPC's \"Internal error\"."
                              (map-elt client :context-buffer)
                              (current-buffer))
       (let ((callback (map-elt incoming-response :on-failure)))
-        (if (>= (cdr (func-arity callback)) 2)
-            (funcall callback error-data message)
-          (funcall callback error-data))))))
+        ;; Contained: an erroring callback would otherwise unwind out
+        ;; of the timer draining the message queue, leaving it flagged
+        ;; busy so no later message is ever routed.
+        (condition-case-unless-debug err
+            (if (>= (cdr (func-arity callback)) 2)
+                (funcall callback error-data message)
+              (funcall callback error-data))
+          (error
+           (acp--log client "RESPONSE HANDLER ERROR"
+                     "Failed with error: %S" err)))))))
 
 (cl-defun acp--fail-pending-requests (&key client event)
   "Invoke `:on-failure' for any pending requests on CLIENT.
@@ -335,23 +342,25 @@ Note: These are agent process errors.
     (map-put! client :error-handlers handlers)))
 
 (cl-defun acp-shutdown (&key client)
-  "Shutdown ACP CLIENT and release resources."
+  "Shutdown ACP CLIENT and release resources.
+
+Each resource is released independently, so a partially torn down client
+\(an exited process, an already killed log buffer, a client that was
+never started) is still fully released.  Safe to call repeatedly."
   (unless client
     (error ":client is required"))
-  (if (and (or (not (map-elt client :process))
-               (process-live-p (map-elt client :process)))
-           (buffer-live-p (acp-logs-buffer :client client))
-           (buffer-live-p (acp-traffic-buffer :client client)))
-      (progn
-        (map-put! client :error-handlers nil)
-        (map-put! client :notification-handlers nil)
-        (map-put! client :request-handlers nil)
-        (map-put! client :pending-requests nil)
-        (when (process-live-p (map-elt client :process))
-          (delete-process (map-elt client :process)))
-        (kill-buffer (acp-logs-buffer :client client))
-        (kill-buffer (acp-traffic-buffer :client client)))
-    (message "Client already shut down")))
+  (map-put! client :error-handlers nil)
+  (map-put! client :notification-handlers nil)
+  (map-put! client :request-handlers nil)
+  (map-put! client :pending-requests nil)
+  (when-let* ((process (map-elt client :process)))
+    (when (process-live-p process)
+      (delete-process process))
+    (map-put! client :process nil))
+  (when-let* ((buffer (get-buffer (acp--logs-buffer-name client))))
+    (kill-buffer buffer))
+  (when-let* ((buffer (get-buffer (acp--traffic-buffer-name client))))
+    (kill-buffer buffer)))
 
 (cl-defun acp-send-request (&key client request buffer on-success on-failure sync)
   "Send REQUEST from CLIENT.
@@ -866,7 +875,14 @@ ON-REQUEST is of the form (lambda (request))."
              (with-current-buffer (or (map-elt incoming-response :buffer)
                                       (map-elt client :context-buffer)
                                       (current-buffer))
-               (funcall (map-elt incoming-response :on-success) .result)))
+               ;; Contained: an erroring callback would otherwise unwind out
+               ;; of the timer draining the message queue, leaving it flagged
+               ;; busy so no later message is ever routed.
+               (condition-case-unless-debug err
+                   (funcall (map-elt incoming-response :on-success) .result)
+                 (error
+                  (acp--log client "RESPONSE HANDLER ERROR"
+                            "Failed with error: %S" err)))))
          ;; TODO: Consolidate serialization.
          (acp--log client nil "Unhandled result:\n\n%s" message))
        t)
@@ -1013,12 +1029,21 @@ DIRECTION is either `incoming' or `outgoing', OBJECT is the parsed object."
   (with-current-buffer (acp-traffic-buffer :client client)
     (erase-buffer)))
 
+(defun acp--logs-buffer-name (client)
+  "Return the name of CLIENT logs buffer, whether or not it exists."
+  (format "*acp-(%s)-%s log*"
+          (map-elt client :command)
+          (map-elt client :instance-count)))
+
+(defun acp--traffic-buffer-name (client)
+  "Return the name of CLIENT traffic buffer, whether or not it exists."
+  (format "*acp-(%s)-%s traffic*"
+          (map-elt client :command)
+          (map-elt client :instance-count)))
+
 (cl-defun acp-logs-buffer (&key client)
-  "Get CLIENT logs buffer."
-  (if-let* ((name
-             (format "*acp-(%s)-%s log*"
-                     (map-elt client :command)
-                     (map-elt client :instance-count)))
+  "Get CLIENT logs buffer, creating it when missing."
+  (if-let* ((name (acp--logs-buffer-name client))
             (buffer (get-buffer name)))
       buffer
     (with-current-buffer (get-buffer-create name)
@@ -1026,10 +1051,8 @@ DIRECTION is either `incoming' or `outgoing', OBJECT is the parsed object."
       (current-buffer))))
 
 (cl-defun acp-traffic-buffer (&key client)
-  "Get CLIENT traffic buffer."
-  (acp-traffic-get-buffer :named (format "*acp-(%s)-%s traffic*"
-                                         (map-elt client :command)
-                                         (map-elt client :instance-count))))
+  "Get CLIENT traffic buffer, creating it when missing."
+  (acp-traffic-get-buffer :named (acp--traffic-buffer-name client)))
 
 (defun acp--increment-instance-count ()
   "Increment variable `acp-instance-count'."

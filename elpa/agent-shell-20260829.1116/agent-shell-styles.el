@@ -32,7 +32,7 @@
 (require 'seq)
 (require 'agent-shell-faces)
 
-(declare-function agent-shell--add-text-properties "agent-shell")
+(declare-function agent-shell--add-text-properties "agent-shell-ui")
 
 (defun agent-shell--short-kind-label (kind)
   "Return a short label for tool call KIND string."
@@ -54,7 +54,7 @@
     (_ '((:label . "unknown") (:icon . "?") (:face . agent-shell-warning)))))
 
 (defun agent-shell--inverse-label-status-kind-label (status kind)
-  "Render STATUS as an inverse-video word label and KIND as boxed text.
+  "Render STATUS as an inverse video word label and KIND as boxed text.
 
 Uses the word label from `agent-shell--status-config' (e.g. \"done\")
 with `(:inverse-video t)' so the text sits on a face-colored
@@ -199,7 +199,7 @@ Returns a propertized string or nil."
     (concat status-text kind-text)))
 
 (defun agent-shell--inverse-icon-status-kind-label (status kind)
-  "Render STATUS as an inverse-video icon glyph and KIND as boxed text.
+  "Render STATUS as an inverse video icon glyph and KIND as boxed text.
 
 Uses the unicode glyph from `agent-shell--status-config' with
 `(:inverse-video t)' so the glyph sits on a face-colored rectangle.

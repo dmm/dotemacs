@@ -143,6 +143,13 @@ Example:
 (register-definition-prefixes "agent-shell-anthropic" '("agent-shell-anthropic-"))
 
 
+;;; Generated autoloads from agent-shell-antigravity.el
+
+(autoload 'agent-shell-antigravity-start-agent "agent-shell-antigravity" "\
+Start an interactive Antigravity agent shell." t)
+(register-definition-prefixes "agent-shell-antigravity" '("agent-shell-antigravity-"))
+
+
 ;;; Generated autoloads from agent-shell-artist.el
 
 (register-definition-prefixes "agent-shell-artist" '("agent-shell-artist-"))
@@ -157,23 +164,17 @@ Start an interactive Auggie agent shell." t)
 
 ;;; Generated autoloads from agent-shell-chat-mode.el
 
-(defvar agent-shell-chat-mode nil "\
-Non-nil if Agent-Shell-Chat mode is enabled.
-See the `agent-shell-chat-mode' command
-for a description of this minor mode.
-Setting this variable directly does not take effect;
-either customize it (see the info node `Easy Customization')
-or call the function `agent-shell-chat-mode'.")
-(custom-autoload 'agent-shell-chat-mode "agent-shell-chat-mode" nil)
 (autoload 'agent-shell-chat-mode "agent-shell-chat-mode" "\
-Toggle chat-style `Me'/agent labels in every `agent-shell' buffer.
+Toggle chat-style `Me'/agent labels in the current `agent-shell' buffer.
 
 Each submitted turn is boxed `Me' and each response the agent's name.
 The live prompt shows `Me' so you can type into the shell; when
 `agent-shell-prompt-bar-mode' is on it is hidden, since input flows
 through the bar instead.
 
-This is a global minor mode.  If called interactively, toggle the
+Enable it for new shells by default with `agent-shell-chat-mode-enabled'.
+
+This is a minor mode.  If called interactively, toggle the
 `Agent-Shell-Chat mode' mode.  If the prefix argument is positive,
 enable the mode, and if it is zero or negative, disable the mode.
 
@@ -182,13 +183,13 @@ mode if ARG is nil, omitted, or is a positive number.  Disable the mode
 if ARG is a negative number.
 
 To check whether the minor mode is enabled in the current buffer,
-evaluate `(default-value \\='agent-shell-chat-mode)'.
+evaluate the variable `agent-shell-chat-mode'.
 
 The mode's hook is called both when the mode is enabled and when it is
 disabled.
 
 (fn &optional ARG)" t)
-(register-definition-prefixes "agent-shell-chat-mode" '("agent-shell-chat--"))
+(register-definition-prefixes "agent-shell-chat-mode" '("agent-shell-chat-"))
 
 
 ;;; Generated autoloads from agent-shell-cline.el
@@ -365,10 +366,8 @@ evaluate the variable `agent-shell-ui-mode'.
 The mode's hook is called both when the mode is enabled and when it is
 disabled.
 
-\\{agent-shell-ui-mode-map}
-
 (fn &optional ARG)" t)
-(register-definition-prefixes "agent-shell-ui" '("agent-shell-ui-"))
+(register-definition-prefixes "agent-shell-ui" '("agent-shell-"))
 
 
 ;;; Generated autoloads from agent-shell-usage.el

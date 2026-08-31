@@ -28,7 +28,7 @@
 
 (defconst agent-shell-xai-icon-name
   "xai.png"
-  "xAI / Grok Build icon name (from lobe-icons).")
+  "Icon name for xAI / Grok Build (from lobe-icons).")
 
 (eval-when-compile
   (require 'cl-lib))
