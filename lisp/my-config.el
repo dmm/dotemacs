@@ -104,3 +104,6 @@
 ;; Don't overwrite the system clipboard with kills. Instead save it to
 ;; the killring first.
 (setq save-interprogram-paste-before-kill t)
+
+;; Show first error in compilation output
+(setq compilation-scroll-output 'first-error)
