@@ -43,22 +43,43 @@
 (defun agent-shell--normalize-config-option (acp-option)
   "Normalize ACP-OPTION (an ACP config option) to an internal alist.
 
+ACP `options' may be a flat array of values or an array of groups,
+each holding its own values.  Groups are flattened into a single
+list, with each value carrying its group's name under :group.
+
 For example:
 
   (agent-shell--normalize-config-option
    \\='((id . \"mode\") (type . \"select\") (currentValue . \"ask\")))
-  => \\='((:id . \"mode\") (:type . \"select\") (:current-value . \"ask\") ...)"
+  => \\='((:id . \"mode\") (:type . \"select\") (:current-value . \"ask\") ...)
+
+  (agent-shell--normalize-config-option
+   \\='((id . \"model\")
+     (options . [((group . \"recommended\")
+                  (name . \"Recommended\")
+                  (options . [((value . \"model-1\") (name . \"Model 1\"))]))])))
+  => \\='((:id . \"model\") ...
+       (:options . (((:value . \"model-1\") (:name . \"Model 1\")
+                     (:description . nil) (:group . \"Recommended\")))))"
   `((:id . ,(map-elt acp-option 'id))
     (:name . ,(map-elt acp-option 'name))
     (:description . ,(map-elt acp-option 'description))
     (:category . ,(map-elt acp-option 'category))
     (:type . ,(map-elt acp-option 'type))
     (:current-value . ,(map-elt acp-option 'currentValue))
-    (:options . ,(mapcar (lambda (acp-value)
-                           `((:value . ,(map-elt acp-value 'value))
-                             (:name . ,(map-elt acp-value 'name))
-                             (:description . ,(map-elt acp-value 'description))))
-                         (append (map-elt acp-option 'options) nil)))))
+    (:options . ,(seq-mapcat
+                  (lambda (acp-entry)
+                    (if (map-elt acp-entry 'group)
+                        (mapcar (lambda (acp-value)
+                                  `((:value . ,(map-elt acp-value 'value))
+                                    (:name . ,(map-elt acp-value 'name))
+                                    (:description . ,(map-elt acp-value 'description))
+                                    (:group . ,(map-elt acp-entry 'name))))
+                                (append (map-elt acp-entry 'options) nil))
+                      (list `((:value . ,(map-elt acp-entry 'value))
+                              (:name . ,(map-elt acp-entry 'name))
+                              (:description . ,(map-elt acp-entry 'description))))))
+                  (append (map-elt acp-option 'options) nil)))))
 
 (defun agent-shell--normalize-config-options (acp-config-options)
   "Normalize ACP-CONFIG-OPTIONS (ACP `configOptions') to internal alists.
@@ -144,6 +165,26 @@ For example:
                   matches)
         (car matches))))
 
+(defun agent-shell--resolve-config-option (state option)
+  "Return the config option in STATE addressed by OPTION, or nil.
+
+OPTION is matched against advertised ids first, then ACP categories, so
+both what a shell lists under \"Available config options\" (\"effort\")
+and the spec's category names (\"thought_level\") reach the same option.
+Ids cast the wider net: an option outside the spec's categories, say
+\"fast\", is only addressable by id.
+
+For example, against an agent advertising an \"effort\" option
+categorized as \"thought_level\":
+
+  (agent-shell--resolve-config-option state \"effort\")
+  => \\='((:id . \"effort\") (:category . \"thought_level\") ...)
+
+  (agent-shell--resolve-config-option state \"thought_level\")
+  => \\='((:id . \"effort\") (:category . \"thought_level\") ...)"
+  (or (agent-shell--config-option-get :state state :id option)
+      (agent-shell--config-option-by-category state option)))
+
 (defun agent-shell--select-config-options (state)
   "Return selectable (type = \"select\") config options from STATE."
   (seq-filter (lambda (option)
@@ -163,6 +204,30 @@ For example:
                          (map-elt option :options))
                :name)
       value))
+
+(defun agent-shell--config-option-value-choices (option)
+  "Return (LABEL . VALUE) completion choices for OPTION's values.
+
+LABEL is VALUE's :name, qualified with its :group when another value
+in OPTION shares that name, so every LABEL stays selectable.
+
+For example:
+
+  (agent-shell--config-option-value-choices
+   \\='((:options . (((:value . \"a/sonnet\") (:name . \"Sonnet\") (:group . \"A\"))
+                    ((:value . \"b/sonnet\") (:name . \"Sonnet\") (:group . \"B\"))
+                    ((:value . \"opus\") (:name . \"Opus\"))))))
+  => \\='((\"Sonnet (A)\" . ...) (\"Sonnet (B)\" . ...) (\"Opus\" . ...))"
+  (mapcar (lambda (value)
+            (cons (if (and (map-elt value :group)
+                           (< 1 (seq-count (lambda (other)
+                                             (equal (map-elt other :name)
+                                                    (map-elt value :name)))
+                                           (map-elt option :options))))
+                      (format "%s (%s)" (map-elt value :name) (map-elt value :group))
+                    (map-elt value :name))
+                  value))
+          (map-elt option :options)))
 
 ;;; Legacy shape conversion
 

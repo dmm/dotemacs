@@ -4,11 +4,20 @@
 
 ;; Author: Alvaro Ramirez https://xenodium.com
 ;; URL: https://github.com/xenodium/agent-shell
-;; Package-Version: 20260829.1116
-;; Package-Revision: f28ca5f5e7eb
-;; Package-Requires: ((emacs "29.1") (shell-maker "0.97.2") (acp "0.13.1"))
+;; Package-Version: 20261005.1257
+;; Package-Revision: c9def6efb656
+;; Package-Requires: ((emacs "29.1") (shell-maker "0.97.5") (acp "0.15.1"))
 
-(defconst agent-shell--version "0.74.3")
+(defconst agent-shell--version "0.84.2")
+
+;; Minimum dependency versions, as declared in the `Package-Requires'
+;; header above.  Package managers that resolve versions enforce the
+;; header on install; those that only resolve dependency names (straight.el,
+;; for one) leave `agent-shell--start' as the sole check, so keep these two
+;; in sync with it.
+(defconst agent-shell--shell-maker-minimum-version "0.97.5")
+
+(defconst agent-shell--acp-minimum-version "0.15.1")
 
 ;; This package is free software; you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
@@ -51,8 +60,6 @@
 (require 'json)
 (require 'mailcap)
 (require 'map)
-(unless (require 'markdown-overlays nil 'noerror)
-  (error "Please update 'shell-maker' to v0.91.2 or newer"))
 (require 'agent-shell-artist)
 (require 'agent-shell-faces)
 (require 'agent-shell-markdown)
@@ -67,6 +74,7 @@
 (require 'agent-shell-cursor)
 (require 'agent-shell-devcontainer)
 (require 'agent-shell-diff)
+(require 'agent-shell-dnd)
 (require 'agent-shell-experimental)
 (require 'agent-shell-droid)
 (require 'agent-shell-github)
@@ -75,6 +83,7 @@
 (require 'agent-shell-heartbeat)
 (require 'agent-shell-active-message)
 (require 'agent-shell-hermes)
+(require 'agent-shell-junie)
 (require 'agent-shell-kimi)
 (require 'agent-shell-kiro)
 (require 'agent-shell-mistral)
@@ -83,7 +92,9 @@
 (require 'agent-shell-opencode)
 (require 'agent-shell-pi)
 (require 'agent-shell-project)
+(require 'agent-shell-prompt)
 (require 'agent-shell-prompt-queue)
+(require 'agent-shell-qoder)
 (require 'agent-shell-qwen)
 (require 'agent-shell-styles)
 (require 'agent-shell-usage)
@@ -92,7 +103,6 @@
 (require 'agent-shell-viewport)
 (require 'agent-shell-xai)
 (require 'image)
-(require 'markdown-overlays)
 (require 'shell-maker)
 (require 'svg nil :noerror)
 (require 'transient)
@@ -302,25 +312,6 @@ are applied.  Each function is called with a range alist containing:
   :type 'boolean
   :group 'agent-shell)
 
-(cl-defun agent-shell--markdown-overlays-put (&key render-images highlight-blocks
-                                                   &allow-other-keys)
-  "Deprecated overlay-based markdown renderer.
-
-Wraps `markdown-overlays-put' from the `markdown-overlays' package
-and translates agent-shell's renderer-agnostic config to the
-`markdown-overlays-*' variables it expects, so call sites don't
-need to know about the overlay package's variable names.
-RENDER-IMAGES toggles image rendering; HIGHLIGHT-BLOCKS toggles
-source-block highlighting.
-
-Deprecated in favour of `agent-shell-markdown-replace-markup' (the
-in-place renderer, now the default).  Kept for backwards
-compatibility; will be removed once the in-place renderer has
-settled and `markdown-overlays' is no longer a dependency."
-  (let ((markdown-overlays-render-images render-images)
-        (markdown-overlays-highlight-blocks highlight-blocks))
-    (markdown-overlays-put)))
-
 (defcustom agent-shell-markdown-render-function
   #'agent-shell-markdown-replace-markup
   "Function called to render markdown in the current narrowed buffer.
@@ -331,24 +322,18 @@ renderer ignores) and is expected to render markdown in the
 current buffer.  COMPLETE marks a render nothing will be
 appended to, so a renderer holding markup back while it could
 still grow can settle it (see
-`agent-shell--render-deferred-images').
+`agent-shell--render-deferred-markup').
 
 Callers narrow the buffer to the target span
 \(for example, a fragment body or label) before calling, so the function can
 scan the whole accessible portion.
 
-Two implementations ship with agent-shell:
+One implementation ships with agent-shell:
 
   - `agent-shell-markdown-replace-markup' (default): in-place
     renderer that rewrites markup characters into propertized text
     (no overlays).  Faster on streaming workloads by rewriting
     buffer.
-
-  - `agent-shell--markdown-overlays-put' (deprecated):
-    overlay-based renderer wrapping `markdown-overlays-put'.
-    Honors both keyword arguments via the corresponding
-    `markdown-overlays-*' variables.  Will be removed once the
-    in-place renderer has settled.
 
 Set to a custom function to plug in a different renderer; the
 function should accept `&key render-images highlight-blocks
@@ -369,7 +354,7 @@ on label spans where images shouldn't appear.
 
 COMPLETE marks a render nothing will be appended to, so markup the
 streaming passes hold back renders now (see
-`agent-shell--render-deferred-images').  Left nil while streaming.
+`agent-shell--render-deferred-markup').  Left nil while streaming.
 
 EXTERNAL-RENDERERS defaults to t.  Pass nil on single-line label
 spans to suppress `agent-shell-markdown-render-functions'.  Those
@@ -391,19 +376,22 @@ cache so downloaded images share `agent-shell-cache-dir'."
              :complete complete
              :image-cache-directory (agent-shell-cache-dir "content"))))
 
-(defun agent-shell--render-deferred-images ()
-  "Render image markup the streaming passes held back, the turn being over.
+(defun agent-shell--render-deferred-markup ()
+  "Render markup the streaming passes held back, the turn being over.
 
 An image whose markup ends the text rendered so far is left raw: a
 `{width=...}' block may still be streaming in behind it, and rendering
 before it lands would strand those attributes as literal text (see
-`agent-shell-markdown--image-attributes-pending-p').  A response ending
-in an image never gets that following chunk, so its markup stays raw
-until a render marked complete comes along.
+`agent-shell-markdown--image-attributes-pending-p').  Likewise a list
+item, table row, blockquote line or header on the last line, whose
+newline has not arrived, as the rest of its line may still be on its
+way.  A response ending in any of these never gets that following
+chunk, so its markup stays raw until a render marked complete comes
+along.
 
 Re-renders, as complete, every fragment body still holding raw image
-markup.  Bodies without any are left untouched, so a turn ending in
-prose costs one scan.
+markup or ending in a raw list item or table row.  Other bodies are
+left untouched, so a turn ending in prose costs one scan.
 
 Collapsed bodies are re-rendered too, unlike while streaming, where
 they are skipped because expanding one renders it.  That later render
@@ -411,7 +399,8 @@ is not marked complete, so skipping them here would leave an image
 ending a folded tool call raw for good.
 
 For example, a body left as \"Here it is\\n\\n![plot](/tmp/plot.png)\"
-ends up showing the image, while a body of prose is untouched."
+ends up showing the image, one ending in \"- Last item\" shows its
+bullet, while a body of prose is untouched."
   (save-excursion
     (goto-char (point-min))
     (let ((inhibit-read-only t)
@@ -420,13 +409,42 @@ ends up showing the image, while a body of prose is untouched."
           (match nil))
       (while (setq match (text-property-search-forward
                           'agent-shell-ui-section 'body #'eq))
-        (when-let* ((start (prop-match-beginning match))
-                    (end (prop-match-end match))
-                    ((save-excursion
-                       (goto-char start)
-                       (re-search-forward regexp end t))))
-          (save-restriction
-            (narrow-to-region start end)
+        (save-restriction
+          (narrow-to-region (prop-match-beginning match)
+                            (prop-match-end match))
+          (when (or (save-excursion
+                      (goto-char (point-min))
+                      (re-search-forward regexp nil t))
+                    ;; A list item whose newline never arrived.
+                    (save-excursion
+                      (goto-char (point-max))
+                      (beginning-of-line)
+                      (and (looking-at-p
+                            agent-shell-markdown--list-item-last-line-regexp)
+                           (not (get-text-property
+                                 (point) 'agent-shell-markdown-list-rendered))))
+                    ;; A blockquote line or header whose newline never
+                    ;; arrived.  A rendered header has lost its `#'s.
+                    (save-excursion
+                      (goto-char (point-max))
+                      (beginning-of-line)
+                      (or (and (looking-at-p
+                                agent-shell-markdown--blockquote-last-line-regexp)
+                               (not (get-text-property
+                                     (point) 'agent-shell-markdown-frozen)))
+                          (looking-at-p
+                           agent-shell-markdown--header-last-line-regexp)))
+                    ;; A table row whose newline never arrived, either
+                    ;; a whole raw row or the rest of a rendered one.
+                    (save-excursion
+                      (goto-char (point-max))
+                      (beginning-of-line)
+                      (or (looking-at-p agent-shell-markdown--table-line-regexp)
+                          (and (get-text-property
+                                (point) 'agent-shell-markdown-table-source)
+                               (not (get-text-property
+                                     (1- (point-max))
+                                     'agent-shell-markdown-table-source))))))
             (agent-shell--render-markdown :complete t)))))))
 
 (defcustom agent-shell-confirm-interrupt t
@@ -517,7 +535,7 @@ default reuses a window already showing the file, else takes over the
 current one.  To keep the conversation in view instead, open beside it:
 
   (setq agent-shell-file-display-action
-        \='(display-buffer-pop-up-window))
+        \\='(display-buffer-pop-up-window))
 
 The window is selected either way, a link being followed to read what
 it points at.  Binary files the operating system handles never reach
@@ -572,8 +590,8 @@ Default is 100KB (102400 bytes)."
 
 Can be one of:
 
- \='graphical: Display header with icon and styled text.
- \='text: Display simple text-only header.
+ \\='graphical: Display header with icon and styled text.
+ \\='text: Display simple text-only header.
  nil: Display no header."
   :type '(choice (const :tag "Graphical" graphical)
                  (const :tag "Text only" text)
@@ -601,15 +619,25 @@ Only appears when a session is active."
 
 (defcustom agent-shell-busy-indicator-frames 'wide
   "Frames for the busy indicator animation.
-Can be a symbol selecting a predefined style, or a list of frame strings.
-When providing custom frames, do not include leading spaces as padding
-is added automatically."
+Can be a symbol selecting a predefined style, a list of frame strings,
+a string shown as is, without animating, or a function returning any of
+these (or nil to show nothing).  When providing custom frames, do not
+include leading spaces as padding is added automatically.
+
+A function takes no arguments and is called in the shell buffer on
+every heartbeat tick, so keep it cheap.  For example, to show
+\"(connecting)\" until the session starts, and \"(busy)\" after:
+
+  (lambda ()
+    (if (agent-shell-session-id) \"(busy)\" \"(connecting)\"))"
   :type '(choice (const :tag "Circle (blinks)" circle)
                  (const :tag "Wave (pulses up and down)" wave)
                  (const :tag "Dots Block (circular spin)" dots-block)
                  (const :tag "Dots Round (circular spin)" dots-round)
                  (const :tag "Wide (horizontal blocks)" wide)
-                 (repeat :tag "Custom frames" string))
+                 (string :tag "Static text")
+                 (repeat :tag "Custom frames" string)
+                 (function :tag "Function"))
   :group 'agent-shell)
 
 (defcustom agent-shell-inhibit-system-sleep t
@@ -694,8 +722,8 @@ on the system is used."
   "Format to use when generating agent shell buffer names.
 
 Each element can be:
-- Default: For example \='Claude Agent @ My Project\='
-- Kebab case: For example \='claude-agent @ my-project\='
+- Default: For example \\='Claude Agent @ My Project\\='
+- Kebab case: For example \\='claude-agent @ my-project\\='
 - A function: Called with agent name and project name."
   :type '(choice (const :tag "Default" default)
                  (const :tag "Kebab case" kebab-case)
@@ -711,6 +739,7 @@ Each element can be:
                                               authenticate-request-maker
                                               default-model-id
                                               default-session-mode-id
+                                              default-config-options
                                               session-meta
                                               mcp-servers
                                               notification-adapter
@@ -730,6 +759,17 @@ Keyword arguments:
 - AUTHENTICATE-REQUEST-MAKER: Function to create authentication requests
 - DEFAULT-MODEL-ID: Default model ID (function returning value).
 - DEFAULT-SESSION-MODE-ID: Default session mode ID (function returning value).
+- DEFAULT-CONFIG-OPTIONS: Default ACP session config options (function
+  returning an alist of (OPTION . VALUE), both strings).  OPTION is
+  matched against the ids the agent advertises, falling back to ACP
+  categories (\"model\", \"mode\", \"thought_level\").  The categories
+  \"model\" and \"mode\" additionally reach agents advertising no config
+  options, via the same legacy requests DEFAULT-MODEL-ID and
+  DEFAULT-SESSION-MODE-ID use.  Applied in the order listed, after
+  DEFAULT-MODEL-ID and DEFAULT-SESSION-MODE-ID, so an entry here wins
+  over either.  Order matters: options an agent scopes to the active
+  model (thought level, for example) must follow the option selecting
+  that model.
 - SESSION-META: Optional alist of agent-specific metadata sent as `_meta'
   with session-creating requests (`session/new', `session/load',
   `session/resume', and `session/fork').
@@ -752,6 +792,7 @@ Returns an alist with all specified values."
     (:authenticate-request-maker . ,authenticate-request-maker) ;; function
     (:default-model-id . ,default-model-id)                     ;; function
     (:default-session-mode-id . ,default-session-mode-id)       ;; function
+    (:default-config-options . ,default-config-options)         ;; function
     (:session-meta . ,session-meta)
     (:mcp-servers . ,mcp-servers)
     (:notification-adapter . ,notification-adapter)            ;; function
@@ -781,12 +822,14 @@ example filtering them.  See `agent-shell-agent-configs'."
         #'agent-shell-google-make-gemini-config
         #'agent-shell-goose-make-agent-config
         #'agent-shell-hermes-make-agent-config
+        #'agent-shell-junie-make-agent-config
         #'agent-shell-kimi-make-config
         #'agent-shell-kiro-make-config
         #'agent-shell-mistral-make-config
         #'agent-shell-omp-make-agent-config
         #'agent-shell-opencode-make-agent-config
         #'agent-shell-pi-make-agent-config
+        #'agent-shell-qoder-make-agent-config
         #'agent-shell-qwen-make-agent-config
         #'agent-shell-xai-make-grok-config))
 
@@ -874,6 +917,7 @@ behavior explicitly."
                  (const :tag "Mistral" le-chat)
                  (const :tag "OpenCode" opencode)
                  (const :tag "Pi" pi)
+                 (const :tag "Qoder" qoder)
                  (const :tag "Qwen Code" qwen-code)
                  (symbol :tag "Custom identifier")
                  (cons :tag "Preselect in picker (still prompt)"
@@ -954,6 +998,34 @@ Available values:
          (set-default sym value))
   :group 'agent-shell)
 
+(defun agent-shell--validate-session-list-page-limit (value)
+  "Signal a user error unless VALUE is nil or a positive integer."
+  (unless (or (null value)
+              (and (integerp value) (> value 0)))
+    (user-error
+     "`agent-shell-session-list-page-limit' must be nil or a positive integer, got: %S"
+     value)))
+
+(defcustom agent-shell-session-list-page-limit nil
+  "Maximum number of pages to request when listing sessions.
+
+When nil, retrieve all pages by following continuation cursors until the
+agent returns no next cursor.
+
+When a positive integer, retrieve at most that many pages, including the
+initial page.  If the final retrieved page contains a continuation cursor,
+remaining sessions are silently omitted.  Empty pages count toward the
+limit.
+
+A finite value may cause session selection and the `latest' session
+strategy to operate on only a subset of the agent's sessions."
+  :type '(choice (const :tag "Retrieve all pages" nil)
+                 (integer :tag "Maximum pages"))
+  :set (lambda (symbol value)
+         (agent-shell--validate-session-list-page-limit value)
+         (set-default symbol value))
+  :group 'agent-shell)
+
 (defcustom agent-shell-session-choices-function nil
   "Function to transform the choices offered when starting a shell.
 
@@ -980,7 +1052,7 @@ For example, to hide the Downloads and temp choices:
   (setq agent-shell-session-choices-function
         (lambda (choices)
           (seq-remove (lambda (choice)
-                        (memq (cdr choice) \='(:downloads-shell :temp-shell)))
+                        (memq (cdr choice) \\='(:downloads-shell :temp-shell)))
                       choices)))"
   :type '(choice (const :tag "Offer all choices" nil)
                  (function :tag "Transform function"))
@@ -1133,7 +1205,7 @@ The schema supports three transport variants:
 Example configuration with multiple servers:
 
   (setq agent-shell-mcp-servers
-        \='(((name . \"notion\")
+        \\='(((name . \"notion\")
            (type . \"http\")
            (url . \"https://mcp.notion.com/mcp\")
            (headers . ()))
@@ -1154,17 +1226,17 @@ for more details), you can embed a lambda for the URL that registers
 the session and returns the appropriate endpoint:
 
   (setq agent-shell-mcp-servers
-        \='(((name . \"emacs\")
+        \\='(((name . \"emacs\")
            (type . \"http\")
            (headers . ())
            (url . (lambda ()
-                    (require \='claude-code-ide-mcp-server)
+                    (require \\='claude-code-ide-mcp-server)
                     (let* ((project-dir (agent-shell-cwd))
                            (session-id (format \"agent-shell-%s-%s\"
                                          (file-name-nondirectory
                                            (directory-file-name project-dir))
                                          (format-time-string \"%Y%m%d-%H%M%S\"))))
-                      (puthash session-id `(:project-dir ,project-dir)
+                      (puthash session-id \\=`(:project-dir ,project-dir)
                                claude-code-ide-mcp-server--sessions)
                       (format \"http://localhost:%d/mcp/%s\"
                               (claude-code-ide-mcp-server-ensure-server)
@@ -1190,6 +1262,7 @@ OUTGOING-REQUEST-DECORATOR (passed through to `acp-make-client')."
         (cons :authenticated nil)
         (cons :set-model nil)
         (cons :set-session-mode nil)
+        (cons :set-config-options nil)
         (cons :session (list (cons :id nil)
                              (cons :config-options nil)
                              (cons :model-id nil)
@@ -1282,25 +1355,54 @@ With \\[universal-argument] \\[universal-argument] prefix ARG, prompt to pick an
    (t
     (agent-shell--dwim))))
 
-(defun agent-shell-submit ()
-  "Submit the current input to the agent.
+(defun agent-shell-submit (&optional arg)
+  "Submit the current input to the agent, or queue it while the agent is busy.
 
 The prompt is shown early (before the ACP session is ready) so users
 can type while the agent initializes.  Gate the actual send on the
-session being ready: when it is not, error with `Busy, please wait'
+session being ready: when it is not, error with `Starting agent, please wait'
 before the input is committed, so the typed text stays editable
 instead of being echoed into the transcript and rejected later.
+
+Submitting mid-turn hands the text to
+`agent-shell-busy-submit-default-function' and clears the input, which
+queues by default and drains when the turn ends.  Whether there is a
+prompt to submit from mid-turn is up to
+`agent-shell-persistent-prompt-enabled', but the routing does not depend
+on it: the same setting governs the viewport's compose buffer, which is
+there either way.
+
+With \\[universal-argument] prefix ARG, submit through
+`agent-shell-busy-submit-override-function' instead, which steers by
+default.  \\[agent-shell-submit-override] is bound to the same thing.
 
 This owns the `agent-shell-submit' name because shell-maker's
 per-start aliasing is disabled (see the `:alias-commands nil' call in
 `agent-shell--start')."
-  (interactive)
+  (interactive "P")
   (unless (derived-mode-p 'agent-shell-mode)
     (user-error "Not in an agent shell"))
   (unless (or (map-nested-elt agent-shell--state '(:session :id))
               (eq agent-shell-session-strategy 'new-deferred))
-    (user-error "Busy, please wait"))
-  (shell-maker-submit))
+    (user-error "Starting agent, please wait"))
+  (if (shell-maker-busy)
+      (when-let* ((prompt (agent-shell--prompt-input)))
+        (agent-shell--busy-submit :prompt prompt :override arg)
+        (agent-shell--clear-prompt-input))
+    (shell-maker-submit)))
+
+(defun agent-shell-submit-override ()
+  "Submit the current input through the override route.
+
+Submits through `agent-shell-busy-submit-override-function' rather than
+`agent-shell-busy-submit-default-function', so whichever of queueing and
+steering is not the default is one keystroke away.
+
+Only differs from \\[agent-shell-submit] while the agent is working:
+with no turn to queue behind or steer into, both simply submit."
+  (declare (modes agent-shell-mode))
+  (interactive)
+  (agent-shell-submit '(4)))
 
 (defun agent-shell--display-and-insert-context (shell-buffer text)
   "Display SHELL-BUFFER and insert TEXT into it."
@@ -1315,8 +1417,9 @@ per-start aliasing is disabled (see the `:alias-commands nil' call in
         (agent-shell-subscribe-to
          :shell-buffer shell-buffer
          :event 'session-selected
-         :on-event (lambda (_event)
-                     (agent-shell--display-buffer shell-buffer))))
+         :on-event (agent-shell--preserving-display-override
+                    (lambda (_event)
+                      (agent-shell--display-buffer shell-buffer)))))
     (agent-shell--display-buffer shell-buffer)
     (when text
       (agent-shell--insert-to-shell-buffer :text text
@@ -1336,9 +1439,10 @@ buffer, which is confusing.  APPEND, OVERRIDE and EDIT are forwarded to
       (agent-shell-subscribe-to
        :shell-buffer shell-buffer
        :event 'session-selected
-       :on-event (lambda (_event)
-                   (agent-shell-viewport--show-buffer
-                    :append append :override override :edit edit :shell-buffer shell-buffer)))
+       :on-event (agent-shell--preserving-display-override
+                  (lambda (_event)
+                    (agent-shell-viewport--show-buffer
+                     :append append :override override :edit edit :shell-buffer shell-buffer))))
     (agent-shell-viewport--show-buffer
      :append append :override override :edit edit :shell-buffer shell-buffer)))
 
@@ -1956,17 +2060,163 @@ associated viewport buffer exists, switch to that instead."
   (interactive)
   (message "agent-shell v%s" agent-shell--version))
 
+(cl-defun agent-shell-session-id (&key shell-buffer)
+  "Return the ACP session ID, or nil when no session is active.
+
+When SHELL-BUFFER is non-nil, read that buffer instead of the current one.
+
+A stable public API for packages that integrate with `agent-shell'
+programmatically.  Resolve a shell buffer from a viewport (or the
+surrounding project) with `agent-shell-shell-buffer'.
+
+Example:
+  (agent-shell-session-id)
+  (agent-shell-session-id
+   :shell-buffer (agent-shell-shell-buffer :no-error t :no-create t))"
+  (with-current-buffer (or shell-buffer (current-buffer))
+    (map-nested-elt agent-shell--state '(:session :id))))
+
+(cl-defun agent-shell-last-activity-time (&key shell-buffer)
+  "Return the time of the latest shell activity, or nil if none yet.
+
+Activity is either a submitted prompt or an incoming agent notification.
+The time is a Lisp timestamp, as returned by `current-time'.
+
+When SHELL-BUFFER is non-nil, read that buffer instead of the current one.
+
+A stable public API for packages that integrate with `agent-shell'
+programmatically.  Resolve a shell buffer from a viewport (or the
+surrounding project) with `agent-shell-shell-buffer'.
+
+Example:
+  (agent-shell-last-activity-time)
+  (agent-shell-last-activity-time
+   :shell-buffer (agent-shell-shell-buffer :no-error t :no-create t))"
+  (with-current-buffer (or shell-buffer (current-buffer))
+    (map-elt agent-shell--state :last-activity-time)))
+
 (defun agent-shell-copy-session-id ()
   "Copy the current session ID to the kill ring."
   (declare (modes agent-shell-mode))
   (interactive)
   (unless (derived-mode-p 'agent-shell-mode)
     (user-error "Not in a shell"))
-  (if-let* ((session-id (map-nested-elt (agent-shell--state) '(:session :id))))
+  (if-let* ((session-id (agent-shell-session-id)))
       (progn
         (kill-new session-id)
         (message "Copied session ID: %s" session-id))
     (user-error "No active session")))
+
+(defun agent-shell-copy-last-output ()
+  "Copy the last agent output to the kill ring.
+
+Copies the most recent output wherever point is, so the latest response
+can be grabbed without leaving an earlier one being read.
+
+Copies the rendered text, exactly what `kill-ring-save' over the same
+region yields, including the body of any collapsed section.  Use
+`agent-shell-copy-as-markdown' to recover the agent's original markdown
+instead."
+  (declare (modes agent-shell-mode))
+  (interactive)
+  (unless (derived-mode-p 'agent-shell-mode)
+    (user-error "Not in a shell"))
+  (if-let* ((process (get-buffer-process (current-buffer))))
+      (save-mark-and-excursion
+        ;; `shell-maker-mark-output' marks the output at point, and only
+        ;; falls back to the last one when point is at the latest prompt.
+        ;; Go there first so scrolled-back point never picks an older one.
+        (goto-char (process-mark process))
+        (shell-maker-mark-output)
+        (copy-region-as-kill (region-beginning) (region-end)))
+    (user-error "No agent running"))
+  (message "Copied last output"))
+
+(defun agent-shell--buffer-markdown-substring (beg end)
+  "Return the text between BEG and END as markdown, structure included.
+
+The shell shows structure the reconstructed markdown has no way to
+express: whose turn a passage belongs to, and which tool call a body
+sits under.  Both are drawn as chrome (a covered prompt, a fold
+triangle), so a plain reconstruction pastes them as terminal glyphs or
+loses them.  This renders them as headings instead: a turn opens `#', a
+group of tool calls `##', and a tool call `###'.  A group owns the
+fragments below it rather than a body of its own, so its children sit
+one level under it.
+
+The agent's own headings are pushed down to sit under those, by as many
+levels as still fit inside the six markdown allows.  A response already
+reaching `######' is left where it is rather than flattened, so nothing
+is ever silently merged into a level it did not have.
+
+A fragment whose body falls outside the region still gets its heading,
+with `...' standing in for the body, so a partial copy keeps the shape
+of what it came from.
+
+For example, a copied tool call renders as:
+
+  # Claude
+
+  ### Read README.org
+
+  file contents"
+  (let ((deepen (if-let* ((deepest (agent-shell-markdown-deepest-header beg end)))
+                    (min 3 (max 0 (- 6 deepest)))
+                  3))
+        (parts nil)
+        (headed nil)
+        (pos beg))
+    (while (< pos end)
+      (let ((section (get-text-property pos 'agent-shell-ui-section))
+            (turn (agent-shell-chat--turn-label-at pos))
+            (hidden (agent-shell-chat--hidden-range-at pos))
+            ;; Break wherever any of the three kinds of structure starts or
+            ;; stops.  They do not line up with each other, so sampling only
+            ;; one kind's boundaries steps straight over the others.
+            (next (min end
+                       (or (next-single-property-change
+                            pos 'agent-shell-ui-section nil end)
+                           end)
+                       (or (next-single-property-change
+                            pos 'shell-maker--marker nil end)
+                           end)
+                       (next-overlay-change pos))))
+        (when turn
+          (push (format "\n\n# %s\n\n" turn) parts))
+        (cond
+         ;; The fold triangle says "collapsed" about a body the copy
+         ;; carries anyway, and means nothing in a document.
+         ((eq section 'indicator))
+         ((get-text-property pos 'shell-maker--marker))
+         ((eq section 'label-left)
+          (when headed
+            (push "...\n\n" parts))
+          (let ((group (eq (map-elt (get-text-property pos 'agent-shell-ui-state) :kind)
+                           'group)))
+            (push (format "%s %s\n\n"
+                          (if group "##" "###")
+                          (string-trim (agent-shell-markdown-reconstruct pos next)))
+                  parts)
+            ;; A group heads the fragments below it, so it is not itself left
+            ;; wanting a body.
+            (setq headed (not group))))
+         ;; Chat mode covers the shell prompt with an overlay `display', so
+         ;; the buffer text under it is chrome the heading above replaces.
+         (hidden
+          (setq next (min end (map-elt hidden :end))))
+         (t
+          (let ((text (agent-shell-markdown-reconstruct pos next deepen)))
+            (unless (string-blank-p text)
+              (setq headed nil))
+            (push text parts))))
+        (setq pos next)))
+    (when headed
+      (push "..." parts))
+    ;; Headings bring their own blank line and so does the buffer text they
+    ;; sit above, which would otherwise stack up as gaps in the paste.
+    (string-trim (replace-regexp-in-string
+                  (rx "\n" (>= 2 "\n")) "\n\n"
+                  (apply #'concat (nreverse parts))))))
 
 (defun agent-shell-copy-as-markdown (beg end)
   "Copy the region between BEG and END to the kill ring as markdown.
@@ -1980,9 +2230,13 @@ fenced code blocks with their ```language fences, and tables.  A
 construct only partially selected (for example a single line of a
 code block) is copied verbatim as shown.
 
+Structure the shell draws as chrome becomes headings: a turn opens
+`#' and a tool call `##', with the agent's own headings pushed
+underneath.  See `agent-shell--buffer-markdown-substring'.
+
 Interactively, operates on the active region."
   (interactive "r")
-  (kill-new (agent-shell-markdown-reconstruct beg end))
+  (kill-new (agent-shell--buffer-markdown-substring beg end))
   (setq deactivate-mark t)
   (message "Copied as markdown"))
 
@@ -2079,8 +2333,18 @@ See also `agent-shell-confirm-interrupt'."
                            :session-id (map-nested-elt (agent-shell--state) '(:session :id))
                            :reason "User cancelled"))))
         (t
-         (agent-shell--shutdown)
-         (call-interactively #'shell-maker-interrupt))))
+         ;; No session id means the agent is still bootstrapping, so there
+         ;; is no turn to cancel.  Refuse exactly as `agent-shell-submit'
+         ;; does while the session is coming up: the shell is not ready,
+         ;; and waiting is the answer to both.
+         ;;
+         ;; Shutting the client down here instead left the shell with
+         ;; neither a client nor a session, and nothing re-bootstraps one,
+         ;; so the buffer could only be killed.  That was worse than doing
+         ;; nothing: it wedged the very prompt the user was typing into.
+         ;; `agent-shell-restart' (or killing the buffer) is how to abandon
+         ;; a bootstrap that never finishes.
+         (user-error "Starting agent, please wait"))))
 
 (cl-defun agent-shell--make-shell-maker-config (&key prompt prompt-regexp)
   "Create `shell-maker' configuration with PROMPT and PROMPT-REGEXP."
@@ -2090,40 +2354,103 @@ See also `agent-shell-confirm-interrupt'."
    :prompt-regexp prompt-regexp
    :execute-command
    (lambda (command shell)
+     ;; shell-maker has just committed the input and is about to hand the
+     ;; turn over.  Bring the prompt back before anything renders, so there
+     ;; is somewhere to type for the whole turn and every write has a prompt
+     ;; to land above (see `agent-shell-persistent-prompt-enabled').
+     (when agent-shell-persistent-prompt-enabled
+       (agent-shell--print-prompt))
      (agent-shell--handle
       :command command
       :shell-buffer (map-elt shell :buffer)))))
 
 (defun agent-shell--filter-buffer-substring (start end &optional delete)
-  "Return visible text between START and END, stripping hidden markup.
+  "Return the text between START and END, adjusted for copying.
 If DELETE is non-nil, delete the text between START and END.
 
-START and END may be given in either order: like the stock
-`buffer-substring', a reversed range (START > END, e.g. a
-right-to-left mouse selection or a kill where mark > point) is
-normalized.  Without this, the loop below would never run and the
-function would return the empty string, silently breaking mouse
-copy depending on selection direction."
+What the buffer shows is what gets copied: chat mode's labels come along
+and the prompt and marker they cover do not, since it draws them with
+overlays rather than text (see `agent-shell-chat--displayed-substring').
+
+A paste elsewhere should give plain characters rather than agent-shell's
+implementation, so every text property is dropped: our faces, keymaps,
+cursor sensors, display overrides and internal markers all go.  One
+\"> \" per line goes too, from text `agent-shell--block-quote' marked,
+so a quoted reply copies as the plain text it shows.
+
+Deciding this at copy time rather than on insertion keeps one copy
+meaning one thing: a `yank-handler' would rewrite for `yank' while the
+system clipboard and isearch kept the raw \"> \".
+
+`agent-shell-markdown-replace-markup' renders by rewriting markup in
+place, so the buffer already holds rendered text and there is nothing
+here to strip beyond those properties.
+
+shell-maker's structural markers go as well.  They are invisible on
+screen, so a copy spanning a prompt would otherwise carry
+\"<shell-maker-end-of-prompt>\" and friends into the kill ring, text the
+user never saw.
+
+A collapsed fold indicator is also pointed down, since the body it hides
+is copied along with it.
+
+For example, copying a collapsed thought:
+
+  \"▶ Thought\\nSo the user wants...\"
+  => \"▼ Thought\\nSo the user wants...\"
+
+or copying across a prompt boundary:
+
+  \"ask<shell-maker-end-of-prompt>\\nanswer\"
+  => \"ask\\nanswer\"
+
+START and END may be given in either order, like the stock
+`buffer-substring': a reversed range (START > END, e.g. a right-to-left
+mouse selection or a kill where mark > point) is normalized."
   (let* ((beg (min start end))
          (fin (max start end))
-         (text "")
-         (pos beg))
-    (while (< pos fin)
-      (let ((next (next-overlay-change pos))
-            (exclude (seq-find (lambda (ov)
-                                 (memq (overlay-get ov 'markdown-overlays-markup-type)
-                                       '(fence language inline-code
-                                               bold italic strikethrough header)))
-                               (overlays-at pos))))
-        (unless exclude
-          (setq text (concat text (buffer-substring pos (min next fin)))))
-        (setq pos (max next (1+ pos)))))
+         ;; Chat mode hides the prompt and shell-maker's marker behind
+         ;; overlay `display' and draws its labels with `before-string', so
+         ;; buffer text and screen disagree.  Follow the screen.
+         (text (agent-shell-chat--displayed-substring beg fin)))
     (when delete
       (delete-region beg fin))
-    (remove-text-properties 0 (length text)
-                            '(line-prefix nil wrap-prefix nil)
-                            text)
-    text))
+    ;; Point collapsed indicators down before the properties go, since this
+    ;; keys on the UI's own property, leaving a `▶' the agent wrote in its
+    ;; response alone.  Skipped when the text holds none, as every kill in the
+    ;; buffer lands here, prompt edits included.  Indicators carry `read-only',
+    ;; which travels with the text into the temp buffer and would otherwise
+    ;; block `replace-match'.
+    (when (string-search "▶" text)
+      (setq text
+            (with-temp-buffer
+              (let ((inhibit-read-only t))
+                (insert text)
+                (goto-char (point-min))
+                (while (search-forward "▶" nil t)
+                  (when (eq (get-text-property (match-beginning 0)
+                                               'agent-shell-ui-section)
+                            'indicator)
+                    (replace-match "▼" t t)))
+                (buffer-string)))))
+    ;; Drop shell-maker's markers, keyed on the property it tags them with
+    ;; rather than on their text, so a response that merely mentions
+    ;; "<shell-maker-end-of-prompt>" keeps its own words.  This is the same
+    ;; discriminator `shell-maker--find-marker' uses.
+    (when (string-search "<shell-maker-" text)
+      (setq text (replace-regexp-in-string
+                  (rx "<shell-maker-" (+ (any "a-z-")) ">")
+                  (lambda (match)
+                    (if (get-text-property 0 'shell-maker--marker match) "" match))
+                  text nil t)))
+    ;; One "> " per line, matching what the block quote inserted, so
+    ;; quoting already-quoted text keeps the inner level.
+    (substring-no-properties
+     (replace-regexp-in-string
+      (rx line-start "> ")
+      (lambda (match)
+        (if (get-text-property 0 'agent-shell-block-quote match) "" match))
+      text nil t))))
 
 (defvar-keymap agent-shell-mode-map
   :parent shell-maker-mode-map
@@ -2145,7 +2472,10 @@ copy depending on selection direction."
   "C-c C-o" #'agent-shell-other-buffer
   "C-c C-s" #'agent-shell-set-session-config-option
   "<remap> <yank>" #'agent-shell-yank-dwim
-  "<remap> <comint-send-input>" #'agent-shell-submit)
+  "<remap> <comint-send-input>" #'agent-shell-submit
+  ;; No equivalent in comint, bind explicitly.
+  "M-RET" #'agent-shell-submit-override
+  "M-<return>" #'agent-shell-submit-override)
 
 (shell-maker-define-major-mode (agent-shell--make-shell-maker-config) agent-shell-mode-map)
 
@@ -2173,7 +2503,7 @@ Flow:
     (when (and command
                (not (eq agent-shell-session-strategy 'new-deferred))
                (not (map-nested-elt (agent-shell--state) '(:session :id))))
-      (user-error "Session not ready... please wait"))
+      (user-error "Starting agent, please wait"))
     (map-put! (agent-shell--state) :request-count
               ;; TODO: Make public in shell-maker.
               (shell-maker--current-request-id))
@@ -2237,7 +2567,7 @@ Flow:
                                  ;; If there's no prompt already, add one now
                                  ;; that initialization is complete.
                                  (unless comint-last-prompt
-                                   (shell-maker-finish-output :config shell-maker--config
+                                   (agent-shell--finish-output :config shell-maker--config
                                                               :success nil)
                                    (goto-char (point-max)))
                                  (agent-shell--emit-event :event 'prompt-ready))
@@ -2248,7 +2578,6 @@ Flow:
                                          '(:agent-config :default-model-id)))
                 (not (map-elt (agent-shell--state) :set-model)))
            (agent-shell--set-default-model
-            :shell-buffer shell-buffer
             :model-id (funcall (map-nested-elt (agent-shell--state)
                                                '(:agent-config :default-model-id)))
             :on-model-changed (lambda ()
@@ -2259,11 +2588,19 @@ Flow:
                 (funcall (map-nested-elt (agent-shell--state) '(:agent-config :default-session-mode-id)))
                 (not (map-elt (agent-shell--state) :set-session-mode)))
            (agent-shell--set-default-session-mode
-            :shell-buffer shell-buffer
             :mode-id (funcall (map-nested-elt (agent-shell--state) '(:agent-config :default-session-mode-id)))
             :on-mode-changed (lambda ()
                                (map-put! (agent-shell--state) :set-session-mode t)
                                (agent-shell--handle :command command :shell-buffer shell-buffer))))
+          ;; Send ACP requests to set default config options (optional)
+          ((and (map-nested-elt (agent-shell--state) '(:agent-config :default-config-options))
+                (funcall (map-nested-elt (agent-shell--state) '(:agent-config :default-config-options)))
+                (not (map-elt (agent-shell--state) :set-config-options)))
+           (agent-shell--set-default-config-options
+            :config-options (funcall (map-nested-elt (agent-shell--state) '(:agent-config :default-config-options)))
+            :on-options-set (lambda ()
+                              (map-put! (agent-shell--state) :set-config-options t)
+                              (agent-shell--handle :command command :shell-buffer shell-buffer))))
           ;; Initialization complete
           (t
            (agent-shell--emit-event :event 'init-finished)
@@ -2577,12 +2914,38 @@ capitalize as needed.
             (if (= count 1) "a" (number-to-string count))
             (map-elt phrase (if (= count 1) :singular :plural)))))
 
+(defun agent-shell--raw-input-file-path (raw-input)
+  "Return the first non-empty file path in RAW-INPUT, or nil.
+For example, ((file_path . \"a.el\")) returns \"a.el\"."
+  ;; Some tools put a non-string under `path' (e.g. an HTTP API's
+  ;; path params), so pick the first string.
+  (seq-find (lambda (path) (and (stringp path) (not (string-empty-p path))))
+            (seq-map (lambda (key) (map-elt raw-input key))
+                     '(filepath fileName path file_path))))
+
+(defun agent-shell--tool-call-file-paths (tool-call)
+  "Return file paths reported by TOOL-CALL, or nil if unavailable.
+For example, two diffs for \"a.el\" return (\"a.el\" \"a.el\")."
+  (let ((valid-path (lambda (path)
+                      (and (stringp path) (not (string-empty-p path))))))
+    (or (seq-filter valid-path
+                    (seq-map (lambda (diff) (map-elt diff :file))
+                             (map-elt tool-call :diffs)))
+        (seq-filter valid-path
+                    (seq-map (lambda (location) (map-elt location 'path))
+                             (map-elt tool-call :locations)))
+        (when-let* ((path (agent-shell--raw-input-file-path
+                          (map-elt tool-call :raw-input))))
+          (list path)))))
+
 (cl-defun agent-shell--activity-group-descriptive-text (&key members thought)
   "Return a Claude Code style summary phrase for MEMBERS.
 
 MEMBERS is a list of (ID . TOOL-CALL) pairs in call order.  Kinds are
 collapsed into counted phrases joined by commas, e.g. \"Ran 3 commands,
 read a file\", in first-seen order.  Only the first word is capitalized.
+Reads, edits, and deletes count distinct reported file paths when all
+calls of that kind report paths; otherwise they retain the call count.
 A kind reads in the present tense (\"Run a command\") while any of its
 members is still pending or in progress, past tense once all have
 finished.
@@ -2600,16 +2963,23 @@ Thoughts are not counted."
          (tool-phrases
           (seq-map
            (lambda (kind)
-             (let ((of-kind (seq-filter (lambda (member)
+             (let* ((of-kind (seq-filter (lambda (member)
                                           (equal (funcall member-kind member) kind))
-                                        tool-members)))
+                                        tool-members))
+                    (pending (seq-some (lambda (member)
+                                         (member (map-elt (cdr member) :status)
+                                                 '("pending" "in_progress")))
+                                       of-kind))
+                    (paths (when (member kind '("read" "edit" "delete"))
+                             (seq-map (lambda (member)
+                                        (agent-shell--tool-call-file-paths (cdr member)))
+                                      of-kind))))
                (agent-shell--tool-call-kind-phrase
                 :kind kind
-                :count (length of-kind)
-                :pending (seq-some (lambda (member)
-                                     (member (map-elt (cdr member) :status)
-                                             '("pending" "in_progress")))
-                                   of-kind))))
+                :count (if (and paths (not (memq nil paths)))
+                           (length (seq-uniq (apply #'append paths)))
+                         (length of-kind))
+                :pending pending)))
            (seq-uniq (seq-map member-kind tool-members))))
          (summary (string-join (if thought (cons "thought" tool-phrases) tool-phrases)
                                ", ")))
@@ -2797,7 +3167,11 @@ Clears STATE's `:expanded-activity-group'."
                     (not (equal (map-nested-elt acp-notification '(params update sessionUpdate))
                                 "user_message_chunk")))
            (with-current-buffer (map-elt state :buffer)
-             (shell-maker-insert-end-of-prompt-marker)))
+             ;; The marker appends at `point-max', which with a prompt held
+             ;; at the buffer end is below it.  Narrow so it closes the
+             ;; replayed prompt it belongs to instead.
+             (agent-shell--with-buffer-narrowed-to (agent-shell--live-prompt-start)
+               (shell-maker-insert-end-of-prompt-marker))))
          (cond
           ;; Pending-restore: accumulate notifications during
           ;; session/load and suppress normal rendering.  Once the
@@ -2877,6 +3251,7 @@ Clears STATE's `:expanded-activity-group'."
                                           (map-nested-elt acp-notification '(params update rawInput command))))
                           (cons :description (map-nested-elt acp-notification '(params update rawInput description)))
                           (cons :content (map-nested-elt acp-notification '(params update content)))
+                          (cons :locations (map-nested-elt acp-notification '(params update locations)))
                           (cons :raw-input (map-nested-elt acp-notification '(params update rawInput))))
                     (when-let* ((diffs (agent-shell--make-diff-infos
                                         :acp-tool-call (map-nested-elt acp-notification '(params update)))))
@@ -3115,9 +3490,10 @@ Clears STATE's `:expanded-activity-group'."
                             (map-nested-elt acp-notification '(params update)))
                            "\n\n"))
                   (diff-text (agent-shell--format-diffs-as-text diffs))
-                  (body-text (if diff-text
-                                 (concat output "\n\n" diff-text)
-                               output))
+                  (body-text (agent-shell--truncate-tool-output-lines
+                              (if diff-text
+                                  (concat output "\n\n" diff-text)
+                                output)))
                   ;; Whether this update introduces a new tool call rather than
                   ;; editing an earlier one in place.  Captured before the
                   ;; group-id helper assigns a group, so an in-place update
@@ -3241,7 +3617,7 @@ Clears STATE's `:expanded-activity-group'."
            (agent-shell-experimental--on-session-push-end
             :state state
             :on-finished (lambda ()
-                           (shell-maker-finish-output :config shell-maker--config
+                           (agent-shell--finish-output :config shell-maker--config
                                                       :success t)
                            (agent-shell--prompt-queue-process-next))))
           (acp-logging-enabled
@@ -3945,8 +4321,17 @@ DIFFS is a list of diff infos as returned by
       (agent-shell--emit-event :event 'error
                                :data (list (cons :code (map-elt acp-error 'code))
                                            (cons :message (map-elt acp-error 'message))))
-      (shell-maker-finish-output :config shell-maker--config
-                                 :success t))))
+      ;; The shell shows a prompt from creation onward, so an error
+      ;; arriving with no turn in flight (bootstrapping failed, or an
+      ;; out of turn error) already has a live prompt to type into.
+      ;; Printing another would stack a second prompt below any
+      ;; unsubmitted input, and comint would strip the highlight off
+      ;; the first one.
+      (unless (and (not (shell-maker-busy))
+                   comint-last-prompt
+                   (agent-shell--live-input-prompt-p comint-last-prompt))
+        (agent-shell--finish-output :config shell-maker--config
+                                   :success t)))))
 
 (defun agent-shell--save-tool-call (state tool-call-id tool-call)
   "Store TOOL-CALL with TOOL-CALL-ID in STATE's :tool-calls alist."
@@ -4058,7 +4443,8 @@ For example, shut down ACP client."
     (map-put! (agent-shell--state) :initialized nil)
     (map-put! (agent-shell--state) :authenticated nil)
     (map-put! (agent-shell--state) :set-model nil)
-    (map-put! (agent-shell--state) :set-session-mode nil))
+    (map-put! (agent-shell--state) :set-session-mode nil)
+    (map-put! (agent-shell--state) :set-config-options nil))
   (agent-shell-heartbeat-stop
    :heartbeat (map-elt (agent-shell--state) :heartbeat)))
 
@@ -4256,12 +4642,31 @@ With INCLUDE-PROJECT
             (when (string-search "\n" text)
               "…"))))
 
+(cl-defun agent-shell--fit-to-window-line (&key text buffer reserved)
+  "Return TEXT ellipsized to fit on one line of BUFFER's window.
+
+RESERVED is the number of columns already taken on that line.  BUFFER
+displayed in no window is measured against the selected frame instead.
+
+\"cd /tmp && make test\" with 10 columns to spare -> \"cd /tmp &…\""
+  (when-let* ((text)
+              (available (- (window-body-width
+                             (or (and buffer (get-buffer-window buffer t))
+                                 (frame-root-window)))
+                            (or reserved 0))))
+    (if (> (string-width text) available)
+        (truncate-string-to-width text (max available 1) nil nil "…")
+      text)))
+
 (defun agent-shell-make-tool-call-label (state tool-call-id)
   "Create tool call label from STATE using TOOL-CALL-ID.
 
 Returns propertized labels in :status and :title propertized."
   (when-let* ((tool-call (map-nested-elt state `(:tool-calls ,tool-call-id))))
-    (let* ((title (when-let* ((text (agent-shell--shorten-paths
+    (let* ((status (agent-shell--make-status-kind-label
+                    :status (map-elt tool-call :status)
+                    :kind (map-elt tool-call :kind)))
+           (title (when-let* ((text (agent-shell--shorten-paths
                                      (map-elt tool-call :title)))
                               ;; Execute commands go to body instead; use description as title.
                               ((not (equal (map-elt tool-call :kind) "execute"))))
@@ -4278,8 +4683,15 @@ Returns propertized labels in :status and :title propertized."
                              (map-elt tool-call :description))
                             ;; Fall back to the first line of the command when
                             ;; description is missing for execute tool calls.
+                            ;; Claude Code streams the command ahead of its
+                            ;; description, so keep the stand-in to one line
+                            ;; rather than flash a wrapped command block.
                             (when (equal (map-elt tool-call :kind) "execute")
-                              (agent-shell--first-line (map-elt tool-call :title)))))
+                              (agent-shell--fit-to-window-line
+                               :text (agent-shell--first-line (map-elt tool-call :title))
+                               :buffer (map-elt state :buffer)
+                               ;; Indicator, separator and group indent.
+                               :reserved (+ (string-width (or status "")) 5)))))
            ;; Append a "+N -M" diff summary to edit titles.
            (stats (agent-shell--format-diffs-line-stats (map-elt tool-call :diffs)))
            (label (cond ((and title description
@@ -4293,9 +4705,7 @@ Returns propertized labels in :status and :title propertized."
                          (propertize title 'font-lock-face 'default))
                         (description
                          (propertize description 'font-lock-face 'default)))))
-      `((:status . ,(agent-shell--make-status-kind-label
-                     :status (map-elt tool-call :status)
-                     :kind (map-elt tool-call :kind)))
+      `((:status . ,status)
         (:title . ,(if (and label stats)
                        (concat label " " stats)
                      (or label stats)))))))
@@ -4453,10 +4863,12 @@ SESSION-STRATEGY overrides `agent-shell-session-strategy' buffer-locally.
 SESSION-ID resumes an existing session by its id string.
 FORK-SESSION-ID forks an existing session by its id string.
 OUTGOING-REQUEST-DECORATOR is passed through to `acp-make-client'."
-  (unless (version<= "0.91.2" shell-maker-version)
-    (error "Please update shell-maker to version 0.91.2 or newer"))
-  (unless (version<= "0.13.1" acp-package-version)
-    (error "Please update acp.el to version 0.13.1 or newer"))
+  (unless (version<= agent-shell--shell-maker-minimum-version shell-maker-version)
+    (error "Please update shell-maker to version %s or newer"
+           agent-shell--shell-maker-minimum-version))
+  (unless (version<= agent-shell--acp-minimum-version acp-package-version)
+    (error "Please update acp.el to version %s or newer"
+           agent-shell--acp-minimum-version))
   (when (boundp 'agent-shell--transcript-file-path-function)
     (user-error "'agent-shell--transcript-file-path-function is retired.
 
@@ -4464,6 +4876,16 @@ Please use 'agent-shell-transcript-file-path-function and unbind old
 variable (see makunbound)"))
   (when agent-shell-session-restore-strategy
     (user-error "Please migrate agent-shell-session-restore-strategy to agent-shell-session-restore-verbosity"))
+  ;; TODO: Remove after 2026-11-29.
+  ;; Retired default was ["|" "/" "-" "\\"], so only a customized value
+  ;; needs migrating.
+  (when (and (boundp 'agent-shell-chat-busy-frames)
+             (not (equal (symbol-value 'agent-shell-chat-busy-frames)
+                         ["|" "/" "-" "\\"])))
+    (user-error "'agent-shell-chat-busy-frames is retired.
+
+Please use 'agent-shell-prompt-busy-frames and unbind old
+variable (see makunbound)"))
   (agent-shell--validate-session-strategy
    (or session-strategy agent-shell-session-strategy))
   (let* ((shell-maker-config (agent-shell--make-shell-maker-config
@@ -4514,25 +4936,7 @@ variable (see makunbound)"))
                                       :buffer shell-buffer
                                       :heartbeat (agent-shell-heartbeat-make
                                                   :on-heartbeat
-                                                  (lambda (_heartbeat status)
-                                                    ;; 'ended is the final tick; render
-                                                    ;; even if off-screen ensures hidden.
-                                                    (when (or (eq status 'ended)
-                                                              (get-buffer-window shell-buffer t))
-                                                      (with-current-buffer shell-buffer
-                                                        (agent-shell--update-header-and-mode-line
-                                                         :cache-enabled (eq status 'busy))))
-                                                    ;; 'ended is the final tick; render even
-                                                    ;; if off-screen to ensure animation is hidden.
-                                                    (when-let* ((viewport-buffer (agent-shell-viewport--buffer
-                                                                                  :shell-buffer shell-buffer
-                                                                                  :existing-only t))
-                                                                ;; 'ended is the final tick; render even
-                                                                ;; if off-screen to ensure animation is hidden.
-                                                                ((or (eq status 'ended)
-                                                                     (get-buffer-window viewport-buffer t))))
-                                                      (with-current-buffer viewport-buffer
-                                                        (agent-shell-viewport--update-header)))))
+                                                  (agent-shell--make-heartbeat-handler shell-buffer))
                                       :client-maker (map-elt config :client-maker)
                                       :needs-authentication (map-elt config :needs-authentication)
                                       :authenticate-request-maker (map-elt config :authenticate-request-maker)
@@ -4549,8 +4953,11 @@ variable (see makunbound)"))
       (agent-shell-ui-mode +1)
       (add-hook 'agent-shell-ui-post-expand-fragment-at-point-hook
                 #'agent-shell--render-markdown nil t)
+      (agent-shell-completion--setup)
       (when agent-shell-file-completion-enabled
         (agent-shell-completion-mode +1))
+      (agent-shell--enable-dnd)
+      (yank-media-handler "image/.*" #'agent-shell--yank-media-image)
       (agent-shell--setup-modeline)
       (setq-local agent-shell--transcript-file (agent-shell--transcript-file-path))
       ;; We disabled aliasing comint/shell-maker commands
@@ -4599,8 +5006,10 @@ variable (see makunbound)"))
       ;; the `prompt'/`new'/`latest' subscriptions below, and
       ;; `agent-shell--insert-to-shell-buffer'.
       ;; Show the prompt immediately, before bootstrapping, so shell
-      ;; always has a prompt to type into regardless of strategy.
-      (shell-maker-finish-output :config shell-maker--config :success nil)
+      ;; always has a prompt to type into regardless of strategy.  It then
+      ;; stays for the rest of the session, not just until the first
+      ;; submission (see `agent-shell-persistent-prompt-enabled').
+      (agent-shell--finish-output :config shell-maker--config :success nil)
       ;; Land point on the freshly shown prompt (see #668).  Later context
       ;; insertion / user edits move it from here; bootstrapping does not.
       (goto-char (point-max))
@@ -4672,8 +5081,9 @@ variable (see makunbound)"))
             (agent-shell-subscribe-to
              :shell-buffer shell-buffer
              :event 'session-selected
-             :on-event (lambda (_event)
-                         (agent-shell--display-buffer shell-buffer)))
+             :on-event (agent-shell--preserving-display-override
+                        (lambda (_event)
+                          (agent-shell--display-buffer shell-buffer))))
           (agent-shell--display-buffer shell-buffer))))
     shell-buffer))
 
@@ -4718,25 +5128,6 @@ nothing when BLOCK-ID names no rendered group header."
     (with-current-buffer shell-buffer
       (agent-shell-ui-set-group-collapsed-by-id
        :namespace-id namespace-id :block-id block-id :collapsed t :no-undo t))))
-
-(defun agent-shell--live-input-prompt-p (prompt)
-  "Non-nil when PROMPT is a live input prompt at the end of the buffer.
-PROMPT is a `comint-last-prompt' cons of (start . end) markers.  It's
-live when nothing follows it (empty input area) or when everything
-between its end and `point-max' is user input rather than agent output.
-This tells a real prompt awaiting input, possibly with unsubmitted typed
-text, apart from a stale prompt left mid-buffer while output streams
-below it (where `comint-last-prompt' still points at the previous
-prompt).  Output carries a `field' of `output'; typed input does not."
-  (let ((end (marker-position (cdr prompt)))
-        (max (point-max)))
-    ;; When narrowed above the prompt, `end' sits past the accessible
-    ;; `point-max' and `text-property-any' would get inverted bounds.
-    ;; Treat that as not-live so callers fall back to inserting at the
-    ;; narrowed `point-max' (still above the prompt).
-    (and (<= end max)
-         (or (= end max)
-             (not (text-property-any end max 'field 'output))))))
 
 (defun agent-shell--reset-undo-history ()
   "Reset `buffer-undo-list' to undo the active prompt's input only.
@@ -4809,11 +5200,19 @@ NAVIGATION for navigation style, EXPANDED to show block expanded
 by default, RENDER-BODY-IMAGES to enable inline image rendering in
 body, ABOVE-LAST-PROMPT to land content above the active prompt
 instead of after it (typical for notifications arriving out of
-turn).  Programmatic fragment updates do not enter undo history.
+turn).  Ignored while `agent-shell-persistent-prompt-enabled' is on, where a
+prompt is live for the whole turn and everything renders above it.
+Programmatic fragment updates do not enter undo history.
 
 GROUP-ID nests this block under a collapsible group header, materialized
 from GROUP-LABEL on first use (see `agent-shell-ui-make-fragment-model'),
 with GROUP-EXPANDED as the group's initial fold state."
+  ;; A persistent prompt is live for the whole turn, so there is always one
+  ;; to render above and every write goes there.  Callers decide
+  ;; ABOVE-LAST-PROMPT from whether the shell is busy, which only tells
+  ;; them about the out-of-turn case.
+  (when agent-shell-persistent-prompt-enabled
+    (setq above-last-prompt t))
   (when label-right
     (setq label-right (string-trim label-right)))
   ;; Convert non-standard multiline single-backtick code spans to fenced
@@ -4885,8 +5284,11 @@ with GROUP-EXPANDED as the group's initial fold state."
               (when-let* ((label-right-start (map-nested-elt range '(:label-right :start)))
                           (label-right-end (map-nested-elt range '(:label-right :end))))
                 (narrow-to-region label-right-start label-right-end)
+                ;; Labels are replaced whole, never appended to, so
+                ;; nothing more is coming.
                 (agent-shell--render-markdown :render-images nil
-                                              :external-renderers nil))))
+                                              :external-renderers nil
+                                              :complete t))))
           (when auto-scroll
             (goto-char (point-max)))))))
   (with-current-buffer (map-elt state :buffer)
@@ -4903,28 +5305,13 @@ with GROUP-EXPANDED as the group's initial fold state."
            (saved-mark (mark t))
            (saved-mark-active mark-active)
            (saved-window-start (and window (window-start window)))
-           ;; Caller is asking us to land content above the active
-           ;; prompt (typical for notifications arriving after
-           ;; `end_turn').  Narrow above the prompt so the fragment
-           ;; system inserts there, and flip the prompt-start marker's
-           ;; insertion-type so it advances past the new text rather
-           ;; than ending up stranded inside it.  Anchor on the
-           ;; prompt-start so unsubmitted typed input is pushed down with
-           ;; the prompt.  Falls back to the normal in-line path when no
-           ;; live input prompt sits at the buffer end.
+           ;; Land the content above the active prompt.  Falls back to the
+           ;; normal in-line path when no live prompt sits at the buffer
+           ;; end, which only happens with the persistent prompt off: with
+           ;; it on, `agent-shell--live-prompt-start' signals instead.
            (late-prompt-start (and above-last-prompt
-                                   comint-last-prompt
-                                   (marker-position (car comint-last-prompt))
-                                   (agent-shell--live-input-prompt-p comint-last-prompt)
-                                   (car comint-last-prompt)))
-           (orig-insertion-type (and late-prompt-start
-                                     (marker-insertion-type late-prompt-start))))
-      (when late-prompt-start
-        (set-marker-insertion-type late-prompt-start t))
-      (unwind-protect
-       (save-restriction
-        (when late-prompt-start
-          (narrow-to-region (point-min) (marker-position late-prompt-start)))
+                                   (agent-shell--live-prompt-start))))
+      (agent-shell--with-buffer-narrowed-to late-prompt-start
         (shell-maker-with-auto-scroll-edit
          (when-let* ((range (agent-shell-ui-update-fragment
                              (agent-shell-ui-make-fragment-model
@@ -4983,12 +5370,13 @@ with GROUP-EXPANDED as the group's initial fold state."
              (when-let* ((label-right-start (map-nested-elt range '(:label-right :start)))
                          (label-right-end (map-nested-elt range '(:label-right :end))))
                (narrow-to-region label-right-start label-right-end)
+               ;; Labels are replaced whole, never appended to, so
+               ;; nothing more is coming.
                (agent-shell--render-markdown :render-images nil
-                                             :external-renderers nil)
+                                             :external-renderers nil
+                                             :complete t)
                (widen))))
          (run-hook-with-args 'agent-shell-section-functions range))))
-       (when late-prompt-start
-         (set-marker-insertion-type late-prompt-start orig-insertion-type)))
       ;; Late-arrival inserts run under a narrow that ends at
       ;; `comint-last-prompt'.  The auto-scroll branch of
       ;; `shell-maker-with-auto-scroll-edit' goes to the narrowed
@@ -5019,7 +5407,12 @@ with GROUP-EXPANDED as the group's initial fold state."
 Uses STATE's request count as namespace unless NAMESPACE-ID is given.
 BLOCK-ID uniquely identifies the entry.
 TEXT is the string to insert or append.
-APPEND and CREATE-NEW control update behavior."
+APPEND and CREATE-NEW control update behavior.
+
+Lands above the live prompt while
+`agent-shell-persistent-prompt-enabled' is on, the same as
+`agent-shell--update-fragment'.  Without it this appends at `point-max',
+which mid-turn is past whatever the user is typing."
   (let ((ns (or namespace-id (map-elt state :request-count))))
     (when-let* (((map-elt state :buffer))
                 (viewport-buffer (agent-shell-viewport--buffer
@@ -5037,6 +5430,10 @@ APPEND and CREATE-NEW control update behavior."
            :create-new create-new
            :no-undo t))))
     (with-current-buffer (map-elt state :buffer)
+      (let ((auto-scroll (eobp))
+            (late-prompt-start (and agent-shell-persistent-prompt-enabled
+                                    (agent-shell--live-prompt-start))))
+        (agent-shell--with-buffer-narrowed-to late-prompt-start
       (shell-maker-with-auto-scroll-edit
        (agent-shell-ui-update-text
         :namespace-id ns
@@ -5044,7 +5441,17 @@ APPEND and CREATE-NEW control update behavior."
         :text text
         :append append
         :create-new create-new
-        :no-undo t)))))
+            :no-undo t)))
+        ;; The auto-scroll branch above goes to the narrowed `point-max'
+        ;; (the prompt's first char), leaving point stranded there once the
+        ;; narrowing is dropped.  Put it back at the real end, where the
+        ;; user was.
+        (when (and late-prompt-start auto-scroll)
+          (goto-char (point-max)))
+        ;; Rendering above the prompt pushed any unsubmitted input down, so
+        ;; the undo entries recorded for it point at the shifted text.
+        (when late-prompt-start
+          (agent-shell--reset-undo-history))))))
 
 (defun agent-shell-toggle-logging ()
   "Toggle logging."
@@ -5332,9 +5739,10 @@ returns 1482."
 
 Sums each tspan's text width and the `dx' gap preceding it.
 
-Exact rather than estimated: the header SVG names the same font family
-and pixel size Emacs is using, so `string-pixel-width' measures what
-librsvg will draw.
+An estimate: the header SVG names the same font family and pixel size
+Emacs is using, but glyphs missing from that font (like \"➤\") fall back
+to whichever font each of Emacs and librsvg picks, and those can differ
+in width.  See `agent-shell--svg-content-width' for the slack added.
 
 For example, with \"Claude\" measuring 60 pixels and \"➤\" 15:
 
@@ -5356,13 +5764,20 @@ For example, with \"Claude\" measuring 60 pixels and \"➤\" 15:
   "Return the pixel width SVG's text rows reach.
 
 The widest row wins, each measured from its own `x' offset, so the result
-is where the rightmost drawn text ends.
+is where the rightmost drawn text ends, plus slack.
 
-For example, an SVG whose top row starts at x 79 and measures 634, and
-whose bottom row starts at x 79 and measures 168, returns 713."
+Each tspan adds a `frame-char-width' of slack, since librsvg may render
+fallback glyphs wider than `string-pixel-width' measured them, and that
+error builds up along a row.
+
+For example, with a 10 pixel `frame-char-width', an SVG whose top row
+starts at x 79, measures 634 and has 7 tspans, and whose bottom row
+starts at x 79, measures 168 and has 3 tspans, returns 783."
   (seq-reduce (lambda (widest node)
                 (max widest (+ (string-to-number (format "%s" (dom-attr node 'x)))
-                               (agent-shell--svg-text-width node))))
+                               (agent-shell--svg-text-width node)
+                               (* (frame-char-width)
+                                  (length (dom-by-tag node 'tspan))))))
               (dom-by-tag svg 'text)
               0))
 
@@ -5410,6 +5825,7 @@ defaulting to the frame width."
                      (frame-char-height)))
     (:background-mode . ,(frame-parameter nil 'background-mode))
     (:context-indicator . ,(agent-shell--context-usage-indicator))
+    (:cost-indicator . ,(agent-shell--cost-indicator))
     (:busy-indicator-frame . ,(agent-shell--busy-indicator-frame))
     (:position . ,position)
     (:status . ,status)
@@ -5540,7 +5956,7 @@ keeps entries fresh."
                                            'face 'agent-shell-key-binding)
                                " "
                                (map-elt help-hint :description))))
-         (text-header (format " %s%s%s%s%s ➤ %s%s%s%s%s"
+         (text-header (format " %s%s%s%s%s ➤ %s%s%s%s%s%s"
                               (cond
                                ((and (map-elt header-model :position)
                                      (map-elt header-model :status))
@@ -5603,6 +6019,9 @@ keeps entries fresh."
                                               " ➤ "
                                             " ")
                                           (map-elt header-model :context-indicator))
+                                "")
+                              (if (map-elt header-model :cost-indicator)
+                                  (concat " ➤ " (map-elt header-model :cost-indicator))
                                 "")
                               (if (and (map-elt header-model :status)
                                        (not (map-elt header-model :position)))
@@ -5715,6 +6134,20 @@ keeps entries fresh."
                                                                               'default)))
                                                                 (dx . "8"))
                                                               (format-mode-line (map-elt header-model :context-indicator)))))
+                                ;; Cost (optional)
+                                (when (map-elt header-model :cost-indicator)
+                                  (dom-append-child text-node
+                                                    (dom-node 'tspan
+                                                              `((fill . ,(agent-shell--svg-fill-color 'default))
+                                                                (dx . "8"))
+                                                              "➤"))
+                                  (dom-append-child text-node
+                                                    (dom-node 'tspan
+                                                              `((fill . ,(agent-shell--svg-fill-color
+                                                                          (or (get-text-property 0 'face (map-elt header-model :cost-indicator))
+                                                                              'default)))
+                                                                (dx . "8"))
+                                                              (substring-no-properties (map-elt header-model :cost-indicator)))))
                                 text-node))
              ;; Bottom text line
              (svg--append svg (let ((text-node (dom-node 'text
@@ -5897,9 +6330,9 @@ GitHub avatar), so `image-supported-file-p' can recognize it later."
         ((or "image/x-icon" "image/vnd.microsoft.icon") "ico")))))
 
 (defun agent-shell--fetch-agent-icon (icon-name)
-  "Download icon with ICON-NAME from GitHub, only if it exists, and save as binary.
+  "Download icon with ICON-NAME from LobeHub's static PNG package, if available.
 
-Names can be found at https://github.com/lobehub/lobe-icons/tree/master/packages/static-png
+Names can be found at https://www.npmjs.com/package/@lobehub/icons-static-png.
 
 Icon names starting with https:// are downloaded directly from that location."
   (when icon-name
@@ -5907,7 +6340,7 @@ Icon names starting with https:// are downloaded directly from that location."
            (is-url (string-prefix-p "https://" (downcase icon-name)))
            (url (if is-url
                     icon-name
-                  (concat "https://raw.githubusercontent.com/lobehub/lobe-icons/refs/heads/master/packages/static-png/"
+                  (concat "https://unpkg.com/@lobehub/icons-static-png@latest/"
                           mode "/" icon-name)))
            (filename (if is-url
                          ;; For URLs, sanitize to create readable filename
@@ -6043,6 +6476,25 @@ INSTALL-INSTRUCTIONS is optional installation guidance."
           (when install-instructions
             (concat "  " install-instructions))))
 
+(defun agent-shell--preserving-display-override (function)
+  "Return FUNCTION wrapped to display buffers as the current command would.
+
+Displaying a shell is sometimes deferred to an event subscriber that
+runs after the command that started the shell has finished.  By then
+`display-buffer-override-next-command' (behind `other-window-prefix',
+`same-window-prefix', etc.) has already removed its override from
+`display-buffer-overriding-action', so the deferred display would
+ignore the prefix.  Capture the override now and reinstate it around
+FUNCTION."
+  ;; Copy rather than capture the value: `display-buffer-override-next-command'
+  ;; clears its override by mutating the same cons cell in place with `setcar'
+  ;; (and `delq' on the list of actions), so a captured reference would be
+  ;; emptied along with the global.
+  (let ((overriding-action (copy-tree display-buffer-overriding-action)))
+    (lambda (&rest args)
+      (let ((display-buffer-overriding-action overriding-action))
+        (apply function args)))))
+
 (defun agent-shell--display-buffer (shell-buffer)
   "Toggle agent SHELL-BUFFER display."
   (interactive)
@@ -6082,6 +6534,7 @@ Initialization events (emitted in order):
   `init-session'        - ACP session created
   `init-model'          - Default model set (optional)
   `init-session-mode'   - Default session mode set (optional)
+  `init-config-options' - Default config options applied (optional)
   `session-list'        - Session list fetch initiated
   `session-prompt'      - About to prompt user for session selection
   `session-selected'    - Session chosen (new or existing)
@@ -6113,7 +6566,7 @@ Session events:
   `session-restored'      - Reloaded session fully replayed and settled
   `input-submitted'       - User submitted input to the agent
     :data contains :prompt (the text sent to the agent, with any
-    truncated regions expanded)
+    truncated regions expanded).  Emitted for a prompt steered input also.
   `idle'                  - Agent idle for variable `agent-shell-idle-timeout'
     seconds :data contains :idle-event and :buffer
 
@@ -6307,9 +6760,14 @@ the original EVENT as :idle-event."
                                    (map-elt agent-shell--state :buffer)))
         (agent-shell--emit-event :event 'init-client)
         t)
-    (shell-maker-write-output :config shell-maker--config
-                              :output "No :client-maker found")
-    (shell-maker-finish-output :config shell-maker--config
+    (agent-shell--update-fragment
+     :state (agent-shell--state)
+     :block-id "bootstrap-misconfigured"
+     :label-left (propertize "Cannot start agent"
+                             'font-lock-face 'agent-shell-section-heading)
+     :body "No :client-maker found"
+     :create-new t)
+    (agent-shell--finish-output :config shell-maker--config
                                :success nil)
     nil))
 
@@ -6328,9 +6786,14 @@ the original EVENT as :idle-event."
         (agent-shell--subscribe-to-client-events :state agent-shell--state)
         (agent-shell--emit-event :event 'init-subscriptions)
         t)
-    (shell-maker-write-output :config shell-maker--config
-                              :output "No :client found")
-    (shell-maker-finish-output :config shell-maker--config
+    (agent-shell--update-fragment
+     :state (agent-shell--state)
+     :block-id "bootstrap-misconfigured"
+     :label-left (propertize "Cannot start agent"
+                             'font-lock-face 'agent-shell-section-heading)
+     :body "No :client found"
+     :create-new t)
+    (agent-shell--finish-output :config shell-maker--config
                                :success nil)
     nil))
 
@@ -6467,9 +6930,14 @@ Must provide ON-AUTHENTICATED (lambda ())."
                      (funcall on-authenticated))
        :on-failure (agent-shell--make-error-handler
                     :state (agent-shell--state) :shell-buffer shell-buffer))
-    (shell-maker-write-output :config shell-maker--config
-                              :output "No :authenticate-request-maker")
-    (shell-maker-finish-output :config shell-maker--config
+    (agent-shell--update-fragment
+     :state (agent-shell--state)
+     :block-id "bootstrap-misconfigured"
+     :label-left (propertize "Cannot start agent"
+                             'font-lock-face 'agent-shell-section-heading)
+     :body "No :authenticate-request-maker"
+     :create-new t)
+    (agent-shell--finish-output :config shell-maker--config
                                :success nil)))
 
 (cl-defun agent-shell--set-session-config-option (&key config-id value on-success on-failure)
@@ -6494,6 +6962,10 @@ on error."
                     :config-id config-id
                     :value value))
                  (agent-shell--update-header-and-mode-line)
+                 (agent-shell--emit-event
+                  :event 'config-option-update
+                  :data (list (cons :config-options
+                                    (agent-shell--config-options (agent-shell--state)))))
                  (when on-success
                    (funcall on-success)))
    :on-failure (or on-failure
@@ -6590,53 +7062,276 @@ Call ON-SUCCESS on success, or ON-FAILURE on error."
     ;; thought level, so it is not a config option, it cannot be changed
     (user-error "Agent does not advertise a thought level option for this session")))
 
-(cl-defun agent-shell--set-default-model (&key shell-buffer model-id on-model-changed)
-  "Set default model to MODEL-ID in SHELL-BUFFER.
-Call ON-MODEL-CHANGED on success."
-  (when (map-nested-elt (agent-shell--state) '(:session :id))
-    (with-current-buffer (map-elt agent-shell--state :buffer)
-      (agent-shell--update-bootstrapping-fragment
-       :state (agent-shell--state)
-       :block-id "set-model"
-       :label-left (propertize "Setting model" 'font-lock-face 'agent-shell-section-heading)
-       :body (format "Requesting %s..." model-id)))
-    (agent-shell--config-option-set-model-id
-     :model-id model-id
-     :on-success (lambda ()
-                   (agent-shell--update-bootstrapping-fragment
-                    :state (agent-shell--state)
-                    :block-id "set-model"
-                    :body "\n\nDone"
-                    :append t)
-                   (agent-shell--emit-event :event 'init-model)
-                   (when on-model-changed
-                     (funcall on-model-changed)))
-     :on-failure (agent-shell--make-error-handler
-                  :state (agent-shell--state) :shell-buffer shell-buffer))))
+(cl-defun agent-shell--set-default-model (&key model-id on-model-changed)
+  "Set default model to MODEL-ID.
 
-(cl-defun agent-shell--set-default-session-mode (&key shell-buffer mode-id on-mode-changed)
-  "Set default session mode to MODE-ID in SHELL-BUFFER.
-Call ON-MODE-CHANGED on success."
-  (when (map-nested-elt (agent-shell--state) '(:session :id))
-    (with-current-buffer (map-elt agent-shell--state :buffer)
-      (agent-shell--update-bootstrapping-fragment
-       :state (agent-shell--state)
-       :block-id "set-session-mode"
-       :label-left (propertize "Setting session mode" 'font-lock-face 'agent-shell-section-heading)
-       :body (format "Requesting %s..." mode-id)))
-    (agent-shell--config-option-set-mode-id
-     :mode-id mode-id
-     :on-success (lambda ()
-                   (agent-shell--update-bootstrapping-fragment
-                    :state (agent-shell--state)
-                    :block-id "set-session-mode"
-                    :body "\n\nDone"
-                    :append t)
-                   (agent-shell--emit-event :event 'init-session-mode)
-                   (when on-mode-changed
-                     (funcall on-mode-changed)))
-     :on-failure (agent-shell--make-error-handler
-                  :state (agent-shell--state) :shell-buffer shell-buffer))))
+Call ON-MODEL-CHANGED once the request settles, whether the agent
+applied the model or refused it.  Setting a default model is optional,
+so a refusal is reported and initialization continues.  Stopping here
+would wedge the shell: every later prompt re-enters initialization,
+retries the same request, and never gets sent."
+  (unless (map-nested-elt (agent-shell--state) '(:session :id))
+    (error "No session to set default model"))
+  (with-current-buffer (map-elt agent-shell--state :buffer)
+    (agent-shell--update-bootstrapping-fragment
+     :state (agent-shell--state)
+     :block-id "set-model"
+     :label-left (propertize "Setting model" 'font-lock-face 'agent-shell-section-heading)
+     :body (format "Requesting %s..." model-id)))
+  (agent-shell--config-option-set-model-id
+   :model-id model-id
+   :on-success (lambda ()
+                 (agent-shell--update-bootstrapping-fragment
+                  :state (agent-shell--state)
+                  :block-id "set-model"
+                  :body "\n\nDone"
+                  :append t)
+                 (agent-shell--emit-event :event 'init-model)
+                 (when on-model-changed
+                   (funcall on-model-changed)))
+   :on-failure (lambda (acp-error _raw-message)
+                 ;; Its own block: the step's block carries a label, so it
+                 ;; folds shut and this would go unread inside it.
+                 (agent-shell--update-bootstrapping-fragment
+                  :state (agent-shell--state)
+                  :block-id "set-model-unapplied"
+                  :body (agent-shell--make-boxed-message
+                         :text (format "Warning: Could not set model to %s: %s"
+                                       model-id
+                                       (or (map-elt acp-error 'message)
+                                           "agent gave no reason"))))
+                 (when on-model-changed
+                   (funcall on-model-changed)))))
+
+(cl-defun agent-shell--set-default-session-mode (&key mode-id on-mode-changed)
+  "Set default session mode to MODE-ID.
+
+Call ON-MODE-CHANGED once the request settles, whether the agent
+applied the mode or refused it.  Setting a default mode is optional, so
+a refusal is reported and initialization continues.  Stopping here
+would wedge the shell: every later prompt re-enters initialization,
+retries the same request, and never gets sent."
+  (unless (map-nested-elt (agent-shell--state) '(:session :id))
+    (error "No session to set default session mode"))
+  (with-current-buffer (map-elt agent-shell--state :buffer)
+    (agent-shell--update-bootstrapping-fragment
+     :state (agent-shell--state)
+     :block-id "set-session-mode"
+     :label-left (propertize "Setting session mode" 'font-lock-face 'agent-shell-section-heading)
+     :body (format "Requesting %s..." mode-id)))
+  (agent-shell--config-option-set-mode-id
+   :mode-id mode-id
+   :on-success (lambda ()
+                 (agent-shell--update-bootstrapping-fragment
+                  :state (agent-shell--state)
+                  :block-id "set-session-mode"
+                  :body "\n\nDone"
+                  :append t)
+                 (agent-shell--emit-event :event 'init-session-mode)
+                 (when on-mode-changed
+                   (funcall on-mode-changed)))
+   :on-failure (lambda (acp-error _raw-message)
+                 (agent-shell--update-bootstrapping-fragment
+                  :state (agent-shell--state)
+                  :block-id "set-session-mode-unapplied"
+                  :body (agent-shell--make-boxed-message
+                         :text (format "Warning: Could not set session mode to %s: %s"
+                                       mode-id
+                                       (or (map-elt acp-error 'message)
+                                           "agent gave no reason"))))
+                 (when on-mode-changed
+                   (funcall on-mode-changed)))))
+
+(defun agent-shell--default-config-option-values (state option)
+  "Return the value ids STATE advertises for OPTION.
+
+The ACP categories \"model\" and \"mode\" read through the accessors
+that unify config options with the legacy `models'/`modes' session
+fields, so they cover agents advertising no config options at all.
+Returns nil when OPTION is unknown to STATE, or constrains nothing.
+
+For example:
+
+  (agent-shell--default-config-option-values state \"thought_level\")
+  => \\='(\"low\" \"high\" \"max\")"
+  (pcase option
+    ("model" (seq-map (lambda (model)
+                        (map-elt model :model-id))
+                      (agent-shell--get-available-models state)))
+    ("mode" (seq-map (lambda (mode)
+                       (map-elt mode :id))
+                     (agent-shell--get-available-modes state)))
+    (_ (seq-map (lambda (value)
+                  (map-elt value :value))
+                (map-elt (agent-shell--resolve-config-option state option) :options)))))
+
+(defun agent-shell--default-config-option-addressable-p (state option)
+  "Return non-nil when STATE can be asked to set OPTION.
+
+\"model\" and \"mode\" are always addressable: agents advertising no
+config options still answer the legacy `session/set_model' and
+`session/set_mode' requests.  Any other OPTION has to resolve to an
+advertised config option."
+  (or (member option '("model" "mode"))
+      (agent-shell--resolve-config-option state option)))
+
+(defun agent-shell--default-config-option-settable-p (state option value)
+  "Return non-nil when STATE can be asked to set OPTION to VALUE.
+
+An option enumerating no values (a free-form string option, or one an
+agent only exposes over the legacy requests) accepts any VALUE."
+  (and (agent-shell--default-config-option-addressable-p state option)
+       (if-let* ((values (agent-shell--default-config-option-values state option)))
+           (member value values)
+         t)))
+
+(defun agent-shell--default-config-option-skip-reason (state option)
+  "Explain why OPTION could not be set in STATE.
+
+Names the ids the agent does offer, since agents advertise options
+conditionally and scope their values to the active model.
+
+For example:
+
+  (agent-shell--default-config-option-skip-reason state \"effort\")
+  => \"agent offers low, high, max\"
+
+  (agent-shell--default-config-option-skip-reason state \"fast\")
+  => \"agent advertises no fast option\""
+  (if-let* (((agent-shell--default-config-option-addressable-p state option))
+            (values (agent-shell--default-config-option-values state option)))
+      (format "agent offers %s" (string-join values ", "))
+    (format "agent advertises no %s option" option)))
+
+(cl-defun agent-shell--set-default-config-options (&key config-options (first t) on-options-set)
+  "Apply CONFIG-OPTIONS one at a time, in order.
+
+CONFIG-OPTIONS is an alist of (OPTION . VALUE), as described in
+`agent-shell-make-agent-config'.  Applying them in sequence (rather
+than concurrently) lets an earlier entry determine what a later one can
+choose from, since agents re-advertise their options on every change.
+
+An entry that is not an (OPTION . VALUE) pair is reported and skipped
+like any other entry the agent cannot satisfy.
+
+FIRST tracks whether the next entry opens the progress report, and is
+managed by the recursion.
+
+Call ON-OPTIONS-SET once the list is exhausted."
+  (if-let* ((entry (car config-options)))
+      (agent-shell--set-default-config-option
+       ;; An entry that is not a pair is a typo in the user's alist
+       ;; ("effort" for ("effort" . "high")).  Read it as an option
+       ;; naming no value, so it is reported like any other entry the
+       ;; agent cannot satisfy.  Destructuring it blindly would throw
+       ;; here, and initialization would never reach the prompt.
+       :option (if (consp entry) (car entry) entry)
+       :value (when (consp entry) (cdr entry))
+       :first first
+       :on-option-set (lambda ()
+                        (agent-shell--set-default-config-options
+                         :config-options (cdr config-options)
+                         :first nil
+                         :on-options-set on-options-set)))
+    (agent-shell--emit-event :event 'init-config-options)
+    (when on-options-set
+      (funcall on-options-set))))
+
+(cl-defun agent-shell--set-default-config-option (&key option value first on-option-set)
+  "Set config OPTION to VALUE, then call ON-OPTION-SET.
+
+Agents advertise options conditionally (thought levels only for models
+supporting them, for example) and scope values to the active model, so
+an option or value the agent does not offer is reported and skipped
+rather than aborting initialization.  A request the agent refuses is
+reported the same way, since an agent may reject a value it
+advertised.
+
+Every outcome calls ON-OPTION-SET.  Stopping on one entry would wedge
+the shell: every later prompt re-enters initialization, retries the
+same entry, and never gets sent.
+
+FIRST reports this as the opening line of the shared progress block,
+which later entries append their own line to."
+  (unless (map-nested-elt (agent-shell--state) '(:session :id))
+    (error "No session to set default config option"))
+  (with-current-buffer (map-elt agent-shell--state :buffer)
+    (agent-shell--update-bootstrapping-fragment
+     :state (agent-shell--state)
+     :block-id "set-config-options"
+     :label-left (propertize "Setting config options" 'font-lock-face 'agent-shell-section-heading)
+     :body (format "%s%s: requesting %s..." (if first "" "\n") option value)
+     :append t))
+  (if (agent-shell--default-config-option-settable-p (agent-shell--state) option value)
+      (agent-shell--request-default-config-option
+       :option option
+       :value value
+       :on-success (lambda ()
+                     (agent-shell--update-bootstrapping-fragment
+                      :state (agent-shell--state)
+                      :block-id "set-config-options"
+                      :body " done"
+                      :append t)
+                     (when on-option-set
+                       (funcall on-option-set)))
+       :on-failure (lambda (acp-error _raw-message)
+                     (agent-shell--update-bootstrapping-fragment
+                      :state (agent-shell--state)
+                      :block-id "set-config-options"
+                      :body " failed"
+                      :append t)
+                     (agent-shell--update-bootstrapping-fragment
+                      :state (agent-shell--state)
+                      :block-id (format "set-config-option-unapplied-%s" option)
+                      :body (agent-shell--make-boxed-message
+                             :text (format "Warning: Could not set %s to %s: %s"
+                                           option value
+                                           (or (map-elt acp-error 'message)
+                                               "agent gave no reason"))))
+                     (when on-option-set
+                       (funcall on-option-set))))
+    (agent-shell--update-bootstrapping-fragment
+     :state (agent-shell--state)
+     :block-id "set-config-options"
+     :body " skipped"
+     :append t)
+    (agent-shell--update-bootstrapping-fragment
+     :state (agent-shell--state)
+     :block-id (format "set-config-option-unapplied-%s" option)
+     :body (agent-shell--make-boxed-message
+            :text (format "Warning: Skipped %s: %s"
+                          option
+                          (agent-shell--default-config-option-skip-reason (agent-shell--state) option))))
+    (when on-option-set
+      (funcall on-option-set))))
+
+(cl-defun agent-shell--request-default-config-option (&key option value on-success on-failure)
+  "Ask the agent to set OPTION to VALUE.
+
+Call ON-SUCCESS on success, or ON-FAILURE on error.
+
+The ACP categories \"model\" and \"mode\" route through the setters
+owning their legacy fallbacks, so an agent advertising no config
+options is still reachable over `session/set_model' and
+`session/set_mode'.  Any other OPTION resolves to an advertised
+config option and goes out as `session/set_config_option'.
+
+ON-FAILURE takes (acp-error raw-message), as the setters this routes
+to do."
+  (pcase option
+    ("model" (agent-shell--config-option-set-model-id
+              :model-id value
+              :on-success on-success
+              :on-failure on-failure))
+    ("mode" (agent-shell--config-option-set-mode-id
+             :mode-id value
+             :on-success on-success
+             :on-failure on-failure))
+    (_ (agent-shell--set-session-config-option
+        :config-id (map-elt (agent-shell--resolve-config-option (agent-shell--state) option) :id)
+        :value value
+        :on-success on-success
+        :on-failure on-failure))))
 
 (cl-defun agent-shell--initiate-session (&key shell-buffer on-session-init)
   "Initiate ACP session creation with SHELL-BUFFER.
@@ -6960,7 +7655,15 @@ overwrites an existing fragment with equivalent content."
      :block-id "set-session-mode"
      :label-left (propertize "Setting session mode"
                              'font-lock-face 'agent-shell-section-heading)
-     :body (format "Requesting %s..." mode-id))))
+     :body (format "Requesting %s..." mode-id)))
+  (when-let* ((options-fn (map-nested-elt state '(:agent-config :default-config-options)))
+              ((funcall options-fn))
+              ((not (map-elt state :set-config-options))))
+    (agent-shell--update-bootstrapping-fragment
+     :state state
+     :block-id "set-config-options"
+     :label-left (propertize "Setting config options"
+                             'font-lock-face 'agent-shell-section-heading))))
 
 (defun agent-shell--display-session-options ()
   "Display available session options during bootstrapping."
@@ -7235,6 +7938,7 @@ pending-restore state once replay completes."
               ;; notification (say `available_commands_update') emits the
               ;; marker unnarrowed, landing it after the live prompt.
               (when (equal (map-elt state :last-entry-type) "user_message_chunk")
+                (agent-shell--with-buffer-narrowed-to (agent-shell--live-prompt-start)
                 (shell-maker-insert-end-of-prompt-marker)
                 (let ((inhibit-read-only t))
                   (goto-char (point-max))
@@ -7242,7 +7946,7 @@ pending-restore state once replay completes."
                                       'field 'output
                                       'read-only t
                                       'front-sticky '(read-only)
-                                      'rear-nonsticky '(field read-only))))
+                                        'rear-nonsticky '(field read-only)))))
                 (map-put! state :last-entry-type nil))))
         (map-put! state :active-requests saved-active-requests))
       ;; Replay renders history as a live turn would, so the last replayed
@@ -7250,10 +7954,10 @@ pending-restore state once replay completes."
       ;; running, so fold it like a completed turn.
       (agent-shell--collapse-expanded-activity-group state)
       ;; Replayed history renders through the streaming path, which holds
-      ;; back an image ending a message in case a `{width=...}' block
+      ;; back an image or list item ending a message in case more of it
       ;; follows.  No further notification is coming for it, so render it
       ;; now, as at the end of a live turn.
-      (agent-shell--render-deferred-images)
+      (agent-shell--render-deferred-markup)
       ;; Point followed the narrowed history insertions up above the live
       ;; prompt.  Return it to the input area so the cursor lands where the
       ;; user types (matching pre-early-prompt restore behavior).
@@ -7372,6 +8076,52 @@ SESSION-TITLE is an optional display title for the resumed session."
    :on-failure (agent-shell--make-error-handler
                 :state (agent-shell--state) :shell-buffer shell-buffer)))
 
+(cl-defun agent-shell--list-sessions (&key state cwd buffer cursor seen-cursors
+                                           sessions
+                                           (page-limit agent-shell-session-list-page-limit)
+                                           on-success on-failure)
+  "Fetch all session/list pages for CWD using STATE and BUFFER.
+
+CURSOR, SEEN-CURSORS, and SESSIONS carry pagination state between
+requests.  SEEN-CURSORS also counts the pages fetched so far: every page
+past the first is reached through exactly one cursor, so this request is
+for page (1+ (length SEEN-CURSORS)).  PAGE-LIMIT is nil to fetch all
+pages, or a positive integer limiting the number of requests.  Call
+ON-SUCCESS with the fetched sessions when the agent omits `nextCursor'
+or PAGE-LIMIT is reached.  Call ON-FAILURE with the ACP error and raw
+message when a request fails or the agent repeats a cursor."
+  (agent-shell--validate-session-list-page-limit page-limit)
+  (agent-shell--send-request
+   :state state
+   :client (map-elt state :client)
+   :request (acp-make-session-list-request :cwd cwd :cursor cursor)
+   :buffer buffer
+   :on-success
+   (lambda (acp-response)
+     (let ((all-sessions (append sessions
+                                 (append (or (map-elt acp-response 'sessions) '()) nil)))
+           (next-cursor (map-elt acp-response 'nextCursor)))
+       (cond
+        ((or (not next-cursor)
+             (and page-limit (>= (1+ (length seen-cursors)) page-limit)))
+         (funcall on-success all-sessions))
+        ((seq-contains-p seen-cursors next-cursor #'equal)
+         (funcall on-failure
+                  '((message . "Agent repeated a session/list cursor"))
+                  nil))
+        (t
+         (agent-shell--list-sessions
+          :state state
+          :cwd cwd
+          :buffer buffer
+          :cursor next-cursor
+          :seen-cursors (cons next-cursor seen-cursors)
+          :sessions all-sessions
+          :page-limit page-limit
+          :on-success on-success
+          :on-failure on-failure)))))
+   :on-failure on-failure))
+
 (cl-defun agent-shell--initiate-session-list-and-load (&key shell-buffer on-session-init)
   "Try loading latest existing session with SHELL-BUFFER and ON-SESSION-INIT."
   (with-current-buffer (map-elt (agent-shell--state) :buffer)
@@ -7381,15 +8131,12 @@ SESSION-TITLE is an optional display title for the resumed session."
      :body "\n\nLooking for existing sessions..."
      :append t))
   (agent-shell--emit-event :event 'session-list)
-  (agent-shell--send-request
+  (agent-shell--list-sessions
    :state (agent-shell--state)
-   :client (map-elt (agent-shell--state) :client)
-   :request (acp-make-session-list-request
-             :cwd (agent-shell--resolve-path (agent-shell-cwd)))
+   :cwd (agent-shell--resolve-path (agent-shell-cwd))
    :buffer (current-buffer)
-   :on-success (lambda (acp-response)
-                 (let ((acp-sessions (agent-shell--sort-sessions-by-recency
-                                      (append (or (map-elt acp-response 'sessions) '()) nil))))
+   :on-success (lambda (acp-sessions)
+                 (let ((acp-sessions (agent-shell--sort-sessions-by-recency acp-sessions)))
                    (condition-case nil
                        (let* ((acp-session
                                (pcase agent-shell-session-strategy
@@ -7773,6 +8520,34 @@ Example:
               ((seq-contains-p image-file-name-extensions extension)))
     (agent-shell--data-to-cache-file data extension)))
 
+(defconst agent-shell--tool-output-max-line-length 32768
+  "Maximum number of characters in a displayed tool output line.
+
+Longer lines make redisplay and vertical motion crawl (see
+https://github.com/xenodium/agent-shell/issues/839).")
+
+(defconst agent-shell--tool-output-truncation-context-length 200
+  "Number of characters kept at each end of a truncated tool output line.")
+
+(defun agent-shell--truncate-tool-output-lines (output)
+  "Shorten long lines in tool OUTPUT while preserving line breaks.
+
+Lines longer than `agent-shell--tool-output-max-line-length' keep
+`agent-shell--tool-output-truncation-context-length' characters at each
+end, with an omitted-character count between them.  For example, a
+33000-character line reports that 32600 characters were omitted."
+  (if (<= (length output) agent-shell--tool-output-max-line-length)
+      output
+    (mapconcat (lambda (line)
+                 (if (<= (length line) agent-shell--tool-output-max-line-length)
+                     line
+                   (format "%s ... [%d characters omitted] ... %s"
+                           (substring line 0 agent-shell--tool-output-truncation-context-length)
+                           (- (length line) (* 2 agent-shell--tool-output-truncation-context-length))
+                           (substring line (- agent-shell--tool-output-truncation-context-length)))))
+               (split-string output "\n")
+               "\n")))
+
 (defun agent-shell--tool-call-update-output-markdown (acp-update)
   "Return markdown output for ACP-UPDATE, a `tool_call_update' update.
 
@@ -8076,14 +8851,13 @@ reads the buffer's prompt capabilities."
                         :create-new t))
                      (agent-shell-heartbeat-stop
                       :heartbeat (map-elt agent-shell--state :heartbeat))
-                     (unless success
-                       (agent-shell--prompt-queue-display))
                      ;; No more chunks are coming, so markup the streaming
-                     ;; passes held back for one (a trailing image) can
-                     ;; render now.  Runs whatever the stop reason: an
-                     ;; interrupted turn leaves the same markup raw.
-                     (agent-shell--render-deferred-images)
-                     (shell-maker-finish-output :config shell-maker--config
+                     ;; passes held back for one (a trailing image or
+                     ;; list item) can render now.  Runs whatever the
+                     ;; stop reason: an interrupted turn leaves the same
+                     ;; markup raw.
+                     (agent-shell--render-deferred-markup)
+                     (agent-shell--finish-output :config shell-maker--config
                                                 :success t)
                      (let ((data (list (cons :stop-reason (map-elt acp-response 'stopReason))
                                        (cons :usage (map-elt (agent-shell--state) :usage)))))
@@ -8097,8 +8871,19 @@ reads the buffer's prompt capabilities."
                                                    :existing-only t)))
                        (with-current-buffer viewport-buffer
                          (agent-shell-viewport--update-header)))
-                     (when success
-                       (agent-shell--prompt-queue-process-next))))
+                     (cond
+                      (success
+                       (agent-shell--prompt-queue-process-next))
+                      ((not (equal (map-elt acp-response 'stopReason) "cancelled"))
+                       (agent-shell--prompt-queue-display))
+                      ;; Cancelled with nothing queued: nothing to ask.
+                      ((not (map-elt (agent-shell--state) :pending-prompts)))
+                      ((y-or-n-p (format "%s
+
+Continue?" (agent-shell--prompt-queue-summary)))
+                       (agent-shell--prompt-queue-process-next))
+                      (t
+                       (agent-shell--prompt-queue-display :skip-summary t)))))
      :on-failure (lambda (acp-error raw-message)
                    ;; A failed/interrupted turn may have stopped mid
                    ;; agent_message_chunk, leaving the transcript body
@@ -8204,10 +8989,13 @@ Return nil when point is not on an interaction with a response.  The
 position sits right after the `<shell-maker-end-of-prompt>' delimiter, so
 it aligns with the start of the response text copied into the viewport."
   (save-excursion
-    (when-let* ((begin (ignore-errors (shell-maker--prompt-begin-position))))
-      (goto-char begin)
-      (when (re-search-forward "<shell-maker-end-of-prompt>" nil t)
-        (point)))))
+    (when-let* ((begin (ignore-errors (shell-maker--prompt-begin-position)))
+                ;; Located by property rather than by text: an agent quoting
+                ;; the delimiter back writes the same characters without it,
+                ;; and the response would then appear to start mid-sentence.
+                (marker (text-property-any begin (point-max)
+                                           'shell-maker--marker t)))
+      (next-single-property-change marker 'shell-maker--marker nil (point-max)))))
 
 (defun agent-shell--point-location (prompt-start response-start)
   "Return point's location as an alist, or nil.
@@ -8291,7 +9079,8 @@ than editable user input."
   "Execute a shell command and insert output as a code block.
 
 The command executes asynchronously.  When finished, the output is
-inserted into the shell buffer prompt."
+inserted into the prompt of the buffer it ran from, shell or viewport.
+If the shell is busy with no live prompt, it is queued instead."
   (declare (modes agent-shell-mode
                   agent-shell-viewport-view-mode
                   agent-shell-viewport-edit-mode))
@@ -8343,16 +9132,19 @@ inserted into the shell buffer prompt."
 %s
 ```" (with-current-buffer output-buffer
        (buffer-string)))))
-                      (if (with-current-buffer shell-buffer (shell-maker-busy))
-                          (with-current-buffer shell-buffer
-                            (agent-shell-prompt-queue
-                             (agent-shell--prompt-queue-read
-                              :initial (concat code-block "\n\n"))))
-                        (with-current-buffer destination-buffer
-                          (save-excursion
-                            (goto-char (point-max))
-                            (insert "\n\n" code-block))
-                          (agent-shell--render-markdown))))
+                      (if (agent-shell--can-insert-into-prompt-p :shell-buffer shell-buffer)
+                          (when-let* ((inserted (with-current-buffer destination-buffer
+                                                  (agent-shell-insert :text code-block
+                                                                      :shell-buffer shell-buffer))))
+                            (with-current-buffer (map-elt inserted :buffer)
+                              (save-restriction
+                                (narrow-to-region (map-elt inserted :start)
+                                                  (map-elt inserted :end))
+                                (agent-shell--render-markdown))))
+                        (with-current-buffer shell-buffer
+                          (agent-shell-prompt-queue
+                           (agent-shell--prompt-queue-read
+                            :initial (concat code-block "\n\n"))))))
                     (when (buffer-live-p output-buffer)
                       (kill-buffer output-buffer)))))))
     (set-process-query-on-exit-flag proc nil)
@@ -8362,6 +9154,20 @@ inserted into the shell buffer prompt."
                      (agent-shell--display-buffer output-buffer))))))
 
 ;;; Completion
+
+(defun agent-shell--file-mention (path)
+  "Return PATH as an @ mention `agent-shell--parse-file-mentions' reads whole.
+
+The parser stops a bare mention at the first space, so a path holding
+whitespace is quoted.
+
+For example:
+
+  \"src/main.el\"   => \"@src/main.el\"
+  \"My Design.png\" => \"@\\\"My Design.png\\\"\""
+  (if (string-match-p "[[:space:]]" path)
+      (format "@\"%s\"" path)
+    (concat "@" path)))
 
 (cl-defun agent-shell--get-files-context (&key files agent-cwd)
   "Process FILES into sendable text with image preview if applicable.
@@ -8376,7 +9182,7 @@ Uses AGENT-CWD to shorten file paths where necessary."
                                            :max-width 200)))
                      ;; Propertize text to display the image
                      (agent-shell--make-file-link
-                      :label (propertize (concat "@" file)
+                      :label (propertize (agent-shell--file-mention file)
                                          'display image-display
                                          'pointer 'hand
                                          'agent-shell-context-image t
@@ -8403,9 +9209,9 @@ Uses AGENT-CWD to shorten file paths where necessary."
                    (agent-shell--make-file-link
                     :label (if (and agent-cwd (file-in-directory-p file agent-cwd))
                                ;; File within project, shorten path.
-                               (propertize (concat "@" (file-relative-name file agent-cwd))
+                               (propertize (agent-shell--file-mention (file-relative-name file agent-cwd))
                                            'pointer 'hand)
-                             (propertize (concat "@" file)
+                             (propertize (agent-shell--file-mention file)
                                          'pointer 'hand))
                     :file file
                     :hint "open file")))
@@ -8616,14 +9422,7 @@ For example:
          (raw-input (map-elt tool-call :raw-input))
          (command (agent-shell--tool-call-command-to-string
                    (map-elt raw-input 'command)))
-         ;; Some tools put a non-string under `path' (e.g. an HTTP API's
-         ;; path params), so pick the first string, like the `locations'
-         ;; paths guard below.
-         (filepath (seq-find #'stringp
-                             (list (map-elt raw-input 'filepath)
-                                   (map-elt raw-input 'fileName)
-                                   (map-elt raw-input 'path)
-                                   (map-elt raw-input 'file_path))))
+         (filepath (agent-shell--raw-input-file-path raw-input))
          ;; Fetch tools (eg. OpenCode's webfetch) put the target URL
          ;; under `url'.  Surface it in full below, since the basename
          ;; alone isn't enough to decide whether to allow the request.
@@ -9079,9 +9878,9 @@ ACP-OPTION should be a PermissionOption per ACP spec:
 
   An alist of the form:
 
-  ((\='kind . \"allow_once\")
-   (\='name . \"Allow\")
-   (\='optionId . \"allow\"))
+  ((\\='kind . \"allow_once\")
+   (\\='name . \"Allow\")
+   (\\='optionId . \"allow\"))
 
 ACP-SEEN-KINDS is a list of kinds already processed.  If kind is in
 ACP-SEEN-KINDS, omit the keybinding to avoid duplicates.
@@ -9208,7 +10007,8 @@ Returns an alist with insertion details or nil otherwise:
                                (point-max)))
                (insert-end nil))
           (with-current-buffer shell-buffer
-            (when (shell-maker-busy)
+            (when (and (shell-maker-busy)
+                       (or submit (not (agent-shell--prompt-input-start))))
               (user-error "Busy, try later"))
             (save-excursion
               (save-restriction
@@ -9234,7 +10034,8 @@ Returns an alist with insertion details or nil otherwise:
                            (agent-shell-unsubscribe :subscription token)
                            (agent-shell--insert-to-shell-buffer
                             :text text :submit submit
-                            :no-focus no-focus :shell-buffer shell-buffer))))))))
+                            :no-focus no-focus :shell-buffer shell-buffer))))
+        nil))))
 
 (cl-defun agent-shell-insert (&key text submit no-focus shell-buffer)
   "Insert TEXT into the agent shell at `point-max'.
@@ -9278,11 +10079,11 @@ When PICK-SHELL is non-nil, prompt for which shell buffer to use."
                 :deactivate t
                 :agent-cwd (with-current-buffer shell-buffer
                              (agent-shell-cwd)))))
-    (if (with-current-buffer shell-buffer (shell-maker-busy))
-        (with-current-buffer shell-buffer
-          (agent-shell-prompt-queue
-           (agent-shell--prompt-queue-read :initial (concat text "\n\n"))))
-      (agent-shell-insert :text text :shell-buffer shell-buffer))))
+    (if (agent-shell--can-insert-into-prompt-p :shell-buffer shell-buffer)
+        (agent-shell-insert :text text :shell-buffer shell-buffer)
+      (with-current-buffer shell-buffer
+        (agent-shell-prompt-queue
+         (agent-shell--prompt-queue-read :initial (concat text "\n\n")))))))
 
 (defun agent-shell-send-region-to ()
   "Like `agent-shell-send-region' but prompt for which shell to use."
@@ -9307,11 +10108,11 @@ With \\[universal-argument] \\[universal-argument] prefix ARG, prompt to pick an
    (t
     (let* ((shell-buffer (agent-shell--shell-buffer))
            (text (agent-shell--context :shell-buffer shell-buffer)))
-      (if (with-current-buffer shell-buffer (shell-maker-busy))
-          (with-current-buffer shell-buffer
-            (agent-shell-prompt-queue
-             (agent-shell--prompt-queue-read :initial (concat text "\n\n"))))
-        (agent-shell-insert :text text :shell-buffer shell-buffer))))))
+      (if (agent-shell--can-insert-into-prompt-p :shell-buffer shell-buffer)
+          (agent-shell-insert :text text :shell-buffer shell-buffer)
+        (with-current-buffer shell-buffer
+          (agent-shell-prompt-queue
+           (agent-shell--prompt-queue-read :initial (concat text "\n\n")))))))))
 
 (cl-defun agent-shell--get-region-context (&key deactivate no-error agent-cwd)
   "Get region as insertable text, ready for sending to agent.
@@ -9681,8 +10482,9 @@ When DEACTIVATE is non-nil, deactivate region/selection."
   "Return TEXT with each line prefixed by \"> \", displayed as a bar.
 
 Underlying text keeps the \"> \" so it remains valid markdown;
-the bar is a display-only override.  Yanks strip both the bar
-styling and the leading \"> \" so paste gives plain text."
+the bar is a display-only override.  The `agent-shell-block-quote'
+property tells `agent-shell--filter-buffer-substring' to drop the
+\"> \" from copies so paste gives plain text."
   (let* ((bar      (propertize "▌" 'face 'agent-shell-markdown-blockquote))
          (wrap     (propertize "▌ " 'face 'agent-shell-markdown-blockquote))
          (quoted   (concat "> " (replace-regexp-in-string
@@ -9693,12 +10495,7 @@ styling and the leading \"> \" so paste gives plain text."
      0 (length rendered)
      (list 'wrap-prefix wrap
            'face 'agent-shell-markdown-blockquote
-           'yank-handler
-           (list (lambda (s)
-                   (insert
-                    (replace-regexp-in-string
-                     (rx line-start "> ") ""
-                     (substring-no-properties s))))))
+           'agent-shell-block-quote t)
      rendered)
     (while (string-match (rx line-start ">") rendered pos)
       (put-text-property (match-beginning 0) (match-end 0)
@@ -9768,16 +10565,64 @@ Prefers config option data when available."
   "Return busy frame string or nil if not busy."
   (when-let* ((agent-shell-show-busy-indicator)
               ((eq 'busy (map-nested-elt (agent-shell--state) '(:heartbeat :status))))
-              (frames (pcase agent-shell-busy-indicator-frames
+              (frames (pcase (if (functionp agent-shell-busy-indicator-frames)
+                                 (funcall agent-shell-busy-indicator-frames)
+                               agent-shell-busy-indicator-frames)
                         ('circle '("●" "●" "●" "●" "●" " " " " " " " "  " "))
                         ('wave '("▁" "▂" "▃" "▄" "▅" "▆" "▇" "█" "▇" "▆" "▅" "▄" "▃" "▂"))
                         ('dots-block '("⣷" "⣯" "⣟" "⡿" "⢿" "⣻" "⣽" "⣾"))
                         ('dots-round '("⢎⡰" "⢎⡡" "⢎⡑" "⢎⠱" "⠎⡱" "⢊⡱" "⢌⡱" "⢆⡱"))
                         ('wide '("░   " "░░  " "░░░ " "░░░░" "░░░ " "░░  " "░   " "    "))
-                        ((pred listp) agent-shell-busy-indicator-frames)
+                        ((and (pred stringp) frame) (list frame))
+                        ((and (or (pred listp) (pred vectorp)) frames) frames)
                         (_ '("▁" "▂" "▃" "▄" "▅" "▆" "▇" "█" "▇" "▆" "▅" "▄" "▃" "▂"))))
               (value (map-nested-elt (agent-shell--state) '(:heartbeat :value))))
     (concat " " (seq-elt frames (mod value (length frames))))))
+
+(defun agent-shell--make-heartbeat-handler (shell-buffer)
+  "Return a heartbeat handler drawing SHELL-BUFFER's busy indicators.
+
+The handler redraws the shell's header, mode line and live prompt
+marker, and its viewport's header, whichever are visible.  A busy tick
+whose frames match those it last drew redraws nothing, so a static
+indicator (see `agent-shell-busy-indicator-frames' and
+`agent-shell-prompt-busy-frames') costs no redisplay while busy.
+
+For example, with both set to \"(busy)\", a turn redraws on its starting
+tick, its first busy tick and its ending tick, and on none in between."
+  (let ((shell-frames nil)
+        (viewport-frames nil))
+    (lambda (_heartbeat status)
+      (when-let* (((buffer-live-p shell-buffer))
+                  (frames (with-current-buffer shell-buffer
+                            (cons (agent-shell--busy-indicator-frame)
+                                  (and agent-shell-chat-mode
+                                       (agent-shell-chat--busy-frame))))))
+        ;; 'ended is the final tick; render even if off-screen to
+        ;; ensure animation is hidden.  Frames go unrecorded while
+        ;; off-screen, so the next visible tick redraws.
+        (if (or (eq status 'ended)
+                (get-buffer-window shell-buffer t))
+            (unless (and (eq status 'busy)
+                         (equal frames shell-frames))
+              (setq shell-frames frames)
+              (with-current-buffer shell-buffer
+                (agent-shell--update-header-and-mode-line
+                 :cache-enabled (eq status 'busy))
+                (when agent-shell-chat-mode
+                  (agent-shell-chat--animate-live-marker))))
+          (setq shell-frames nil))
+        (when-let* ((viewport-buffer (agent-shell-viewport--buffer
+                                      :shell-buffer shell-buffer
+                                      :existing-only t)))
+          (if (or (eq status 'ended)
+                  (get-buffer-window viewport-buffer t))
+              (unless (and (eq status 'busy)
+                           (equal frames viewport-frames))
+                (setq viewport-frames frames)
+                (with-current-buffer viewport-buffer
+                  (agent-shell-viewport--update-header)))
+            (setq viewport-frames nil)))))))
 
 (defun agent-shell--mode-line-model-menu ()
   "Build a menu keymap for selecting a model from the mode line.
@@ -10112,14 +10957,13 @@ with ON-SUCCESS function."
                                                 config-choices))))
     (unless selected-config-option
       (user-error "Unknown session config option: %s" config-selection))
-    (let* ((value-choices (mapcar (lambda (value)
-                                    (cons (map-elt value :name)
-                                          value))
-                                  (map-elt selected-config-option :options)))
+    (let* ((value-choices (agent-shell--config-option-value-choices
+                           selected-config-option))
            (current-value (map-elt selected-config-option :current-value))
-           (default-value-name (agent-shell--config-option-value-name
-                                selected-config-option
-                                current-value))
+           (default-value-name (car (seq-find (lambda (choice)
+                                                (equal (map-elt (cdr choice) :value)
+                                                       current-value))
+                                              value-choices)))
            (value-selection
             (completing-read
              "Set value: "
@@ -10248,45 +11092,71 @@ For example:
        (message "Failed to generate transcript path: %S" err)
        nil))))
 
+(defun agent-shell--make-transcript-frontmatter (fields)
+  "Return FIELDS rendered as a YAML frontmatter block.
+
+FIELDS is an alist mapping string keys to string values.  Values are
+emitted as double-quoted YAML scalars.  Fields with nil values are
+skipped, so optional fields can be passed as is.
+
+For example:
+
+  (agent-shell--make-transcript-frontmatter
+   \='((\"agent\" . \"Claude\")
+     (\"model\" . nil)))
+
+returns:
+
+  ---
+  agent: \"Claude\"
+  ---
+"
+  (format "---
+%s
+---
+
+"
+          (string-join
+           (map-apply (lambda (key value)
+                        (format "%s: %s" key (json-encode-string value)))
+                      (map-filter (lambda (_key value) value) fields))
+           "\n")))
+
 (defun agent-shell--ensure-transcript-file ()
-  "Ensure the transcript file exists, creating it with header if needed.
-Returns the file path, or nil if disabled."
+  "Return the transcript file path, creating it with header if needed.
+
+Also recreates the file and its directory if deleted mid-session, as
+long as the shell's working directory still exists.  On failure,
+disable the transcript for this shell and return nil."
   (unless (derived-mode-p 'agent-shell-mode)
     (user-error "Not in an agent-shell buffer"))
   (when-let* ((filepath agent-shell--transcript-file)
               (dir (file-name-directory filepath)))
     (unless (file-exists-p filepath)
       (condition-case err
-          (let ((agent-name (or (map-nested-elt agent-shell--state '(:agent-config :mode-line-name))
-                                (map-nested-elt agent-shell--state '(:agent-config :buffer-name))
-                                "Unknown Agent"))
-                (session-id (map-nested-elt agent-shell--state '(:session :id)))
-                (model-id (map-nested-elt agent-shell--state '(:session :model-id))))
+          (progn
+            (unless (file-directory-p (agent-shell-cwd))
+              (error "%s no longer exists" (agent-shell-cwd)))
+            (make-directory dir t)
             (write-region
-             (format "# Agent Shell Transcript
+             (concat (agent-shell--make-transcript-frontmatter
+                      (list (cons "agent" (or (map-nested-elt agent-shell--state '(:agent-config :mode-line-name))
+                                              (map-nested-elt agent-shell--state '(:agent-config :buffer-name))
+                                              "Unknown Agent"))
+                            (cons "started" (format-time-string "%FT%T%:z"))
+                            (cons "working_directory" (agent-shell-cwd))
+                            (cons "session_id" (map-nested-elt agent-shell--state '(:session :id)))
+                            (cons "model" (map-nested-elt agent-shell--state '(:session :model-id)))))
+                     "# Agent Shell Transcript
 
-**Agent:** %s
-**Started:** %s
-**Working Directory:** %s%s%s
-
----
-
-"
-                     agent-name
-                     (format-time-string "%F %T")
-                     (agent-shell-cwd)
-                     (if session-id
-                         (format "\n**Session ID:** %s" session-id)
-                       "")
-                     (if model-id
-                         (format "\n**Model:** %s" model-id)
-                       ""))
+")
              nil filepath nil 'no-message)
             (message "Created %s"
                      (agent-shell--shorten-paths filepath t)))
         (error
-         (message "Failed to initialize transcript: %S" err))))
-    filepath))
+         (setq-local agent-shell--transcript-file nil)
+         (message "Transcript disabled: %s" (error-message-string err)))))
+    agent-shell--transcript-file))
 
 (defun agent-shell--indent-markdown-headers (text)
   "Indent markdown headers in TEXT by 2 levels for transcript hierarchy.
@@ -10333,7 +11203,8 @@ For example:
     (condition-case err
         (write-region text nil file-path t 'no-message)
       (error
-       (message "Error writing to transcript: %S" err)))))
+       (setq-local agent-shell--transcript-file nil)
+       (message "Transcript disabled: %s" (error-message-string err))))))
 
 (cl-defun agent-shell--separate-transcript-after-agent-message (&key last-entry-type file-path)
   "Append a blank-line separator to the transcript at FILE-PATH.
@@ -10474,17 +11345,20 @@ start of the COUNTth-from-last navigatable block to `point-max'."
 If point is at the last prompt, behave as regular editing (typing
 the originating key) so the user can type `r' as plain input.
 
-Otherwise, when a region is active, wrap it as a Markdown block quote.
-If the shell is not busy, insert the quote at the latest prompt with
-point left below it, ready to type.  If the shell is busy, read a
-follow-up prompt in the minibuffer prefilled with the block quote
-and queue it via `agent-shell-prompt-queue'."
+Otherwise, when a region is active, wrap it as a Markdown block quote
+and insert it at the live prompt, point left below it, ready to type.
+Busy or not makes no difference: with
+`agent-shell-persistent-prompt-enabled' there is a prompt to quote into
+for the whole turn.
+
+Falls back to reading a follow-up prompt in the minibuffer, prefilled
+with the block quote, when there is no prompt to insert into."
   (declare (modes agent-shell-mode))
   (interactive)
   (unless (derived-mode-p 'agent-shell-mode)
     (error "Not in a shell"))
   (cond
-   ;; At prompt + not busy: behave as regular editing.
+   ;; Composing at the live prompt: behave as regular editing.
    ((agent-shell--typing-at-prompt-p)
     (self-insert-command 1))
    ;; Region active and not at prompt: quote into prompt or queue.
@@ -10493,22 +11367,30 @@ and queue it via `agent-shell-prompt-queue'."
     (let ((quoted (agent-shell--block-quote
                    (string-trim
                     (map-elt (agent-shell--get-region :deactivate t) :content)))))
-      (if (shell-maker-busy)
+      (if (not (agent-shell--can-insert-into-prompt-p))
           (agent-shell-prompt-queue
            (agent-shell--prompt-queue-read :initial (concat "\n\n" quoted "\n\n")))
-        (goto-char (point-max))
-        (insert "\n\n" quoted "\n\n"))))
+        (agent-shell-insert :text (concat quoted "\n\n")
+                            :shell-buffer (current-buffer)
+                            :no-focus t)
+        (goto-char (point-max)))))
    ;; Otherwise: fall back to self-insert.
    (t
     (self-insert-command 1))))
 
 (defun agent-shell--typing-at-prompt-p ()
-  "Return non-nil when a character key was typed at the latest prompt.
+  "Return non-nil when a character key was typed at the live prompt.
 Single-character bindings in `agent-shell-mode-map' (`n', `+', ...)
 consult this to insert the character while a prompt is being
-composed, acting as commands anywhere else in the shell."
-  (and (not (shell-maker-busy))
-       (shell-maker-point-at-last-prompt-p)
+composed, acting as commands anywhere else in the shell.
+
+Where point is decides it, not whether the shell is busy: with
+`agent-shell-persistent-prompt-enabled' a prompt is composed for the
+whole turn, so type-ahead starting with a bound character has to reach
+the buffer.
+Without it there is no live prompt to compose into mid-turn, and this
+answers nil regardless."
+  (and (agent-shell--point-in-live-input-p)
        (integerp last-command-event)
        (> (length (this-command-keys-vector)) 0)
        ;; Ensure invoked using a key binding.

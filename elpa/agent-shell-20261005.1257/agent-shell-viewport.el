@@ -33,6 +33,7 @@
 (require 'subr-x)
 (require 'window)
 (require 'flymake)
+(require 'agent-shell-dnd)
 (require 'agent-shell-list-edit)
 (require 'agent-shell-markdown)
 (require 'agent-shell-faces)
@@ -62,6 +63,9 @@
 (declare-function agent-shell-interrupt-confirmed-p "agent-shell")
 (declare-function agent-shell-open-transcript "agent-shell")
 (declare-function agent-shell-prompt-queue "agent-shell-prompt-queue")
+(declare-function agent-shell--busy-submit "agent-shell-prompt-queue")
+(defvar agent-shell-busy-submit-default-function)
+(defvar agent-shell-busy-submit-override-function)
 (declare-function agent-shell-prompt-queue-remove "agent-shell-prompt-queue")
 (declare-function agent-shell-prompt-queue-resume "agent-shell-prompt-queue")
 (declare-function agent-shell-view-acp-logs "agent-shell")
@@ -76,6 +80,7 @@
 (declare-function agent-shell-ui-forward-block "agent-shell")
 (declare-function agent-shell-ui-mode "agent-shell")
 (declare-function agent-shell--render-markdown "agent-shell")
+(declare-function agent-shell-completion--setup "agent-shell-completion")
 (declare-function agent-shell-completion-mode "agent-shell-completion")
 (declare-function agent-shell-yank-dwim "agent-shell")
 
@@ -211,7 +216,7 @@ queued right away, regardless of `agent-shell-viewport-dismiss-on-send'."
   (when (and (not (eq agent-shell-session-strategy 'new-deferred))
              (not (with-current-buffer (agent-shell-viewport--shell-buffer)
                     (map-nested-elt agent-shell--state '(:session :id)))))
-    (user-error "Session not ready... please wait"))
+    (user-error "Starting agent, please wait"))
   (setq agent-shell-viewport--compose-snapshot nil)
   (setq agent-shell-viewport--ring-index nil)
   (setq agent-shell-viewport--peek-location nil)
@@ -225,6 +230,27 @@ queued right away, regardless of `agent-shell-viewport-dismiss-on-send'."
    (t
     (agent-shell-viewport-compose-send-and-kill))))
 
+(defun agent-shell-viewport-compose-send-override (&optional keep-composing)
+  "Send the viewport composed prompt through the override route.
+
+Mid-turn the prompt goes to `agent-shell-busy-submit-override-function'
+rather than `agent-shell-busy-submit-default-function', so whichever of
+queueing and steering is not the default is one keystroke away.  With no
+turn running both simply submit, as \\[agent-shell-viewport-compose-send]
+does.
+
+KEEP-COMPOSING behaves as it does there, so \\[universal-argument]
+\\[agent-shell-viewport-compose-send-override] overrides the route and
+keeps the compose buffer open for the next prompt.
+
+Rebinds the default for this one call rather than threading a flag
+through each way of sending, so every route stays a single code path."
+  (declare (modes agent-shell-viewport-edit-mode))
+  (interactive "P")
+  (let ((agent-shell-busy-submit-default-function
+         agent-shell-busy-submit-override-function))
+    (agent-shell-viewport-compose-send keep-composing)))
+
 (defun agent-shell-viewport-compose-send-and-kill ()
   "Send the viewport composed prompt to the agent shell and kill compose buffer."
   (declare (modes agent-shell-viewport-edit-mode))
@@ -236,7 +262,7 @@ queued right away, regardless of `agent-shell-viewport-dismiss-on-send'."
         (prompt (string-trim (buffer-string))))
     (with-current-buffer shell-buffer
       (if (agent-shell-viewport--busy-p)
-          (agent-shell-prompt-queue prompt)
+          (agent-shell--busy-submit :prompt prompt)
         (agent-shell--insert-to-shell-buffer
          :text prompt
          :submit t)))
@@ -250,26 +276,29 @@ queued right away, regardless of `agent-shell-viewport-dismiss-on-send'."
     (pop-to-buffer shell-buffer)))
 
 (defun agent-shell-viewport--compose-queue ()
-  "Queue or submit the composed prompt, then clear the compose buffer.
+  "Send the composed prompt, then clear the compose buffer.
 
-The prompt is queued when the shell is busy and submitted otherwise, so
-prompts can be fired in a row.  Signals a `user-error' when the draft is
-empty.  Leaves the compose buffer open in edit mode, cleared.
+Mid-turn the prompt goes through `agent-shell-busy-submit-default-function',
+which queues by default, so prompts can be fired in a row; otherwise it is
+submitted.  Signals a `user-error' when the draft is empty.  Leaves the
+compose buffer open in edit mode, cleared.
 
-When the prompt is submitted immediately (not queued), it is echoed to
-the minibuffer as the active prompt, since the cleared compose buffer
-does not itself show the submitted prompt.  When it is queued instead,
-`agent-shell-prompt-queue' already echoes the resulting queue."
+A submitted prompt is echoed to the minibuffer as the active one, since
+the cleared compose buffer does not itself show it.  Mid-turn the chosen
+function does its own reporting: queueing echoes the queue, steering
+renders the prompt into the shell."
   (let ((shell-buffer (agent-shell-viewport--shell-buffer))
         (prompt (string-trim (buffer-string)))
-        ;; Sample busy state before `agent-shell-prompt-queue' below submits or queues.
-        (queued (agent-shell-viewport--busy-p)))
+        ;; Sampled before submitting, which clears it.
+        (busy (agent-shell-viewport--busy-p)))
     (when (string-empty-p prompt)
       (user-error "Nothing to send"))
     (with-current-buffer shell-buffer
-      (agent-shell-prompt-queue prompt))
+      (if busy
+          (agent-shell--busy-submit :prompt prompt)
+        (agent-shell--insert-to-shell-buffer :text prompt :submit t :no-focus t)))
     (agent-shell-viewport--initialize)
-    (unless queued
+    (unless busy
       (agent-shell--prompt-queue-echo :active-prompt prompt))))
 
 (defun agent-shell-viewport-compose-send-and-dismiss ()
@@ -309,7 +338,7 @@ resolving to its shell on the next invocation."
         (user-error "Nothing to send"))
       (when (agent-shell-viewport--busy-p)
         (with-current-buffer shell-buffer
-          (agent-shell-prompt-queue prompt))
+          (agent-shell--busy-submit :prompt prompt))
         (with-current-buffer viewport-buffer
           (agent-shell-viewport-view-last))
         (throw 'exit nil))
@@ -383,7 +412,8 @@ Optionally set its PROMPT and RESPONSE."
                        'agent-shell-viewport-prompt t
                        'line-prefix "  "
                        'wrap-prefix "  "
-                       'face 'agent-shell-viewport-prompt)
+                       'face 'agent-shell-viewport-prompt
+                       'font-lock-face 'agent-shell-viewport-prompt)
          prompt)))
     (when response
       (insert response))
@@ -945,24 +975,74 @@ QUOTED-TEXT is inserted as a block quote as part of the reply."
   (insert "continue")
   (agent-shell-viewport-compose-send))
 
-(defun agent-shell-viewport-previous-page ()
-  "Show previous interaction (request / response)."
-  (declare (modes agent-shell-viewport-view-mode))
-  (interactive)
-  (agent-shell-viewport-next-page :backwards t :start-at-top t))
+(defun agent-shell-viewport--restore-compose-snapshot ()
+  "Open the compose page on the parked draft, consuming the snapshot."
+  (let ((snapshot agent-shell-viewport--compose-snapshot))
+    (agent-shell-viewport-edit-mode)
+    (agent-shell-viewport--initialize)
+    (insert (map-elt snapshot :content))
+    (goto-char (map-elt snapshot :location))
+    (setq agent-shell-viewport--compose-snapshot nil)))
 
-(cl-defun agent-shell-viewport-next-page (&key backwards start-at-top)
+(cl-defun agent-shell-viewport--move-pages (&key backwards (n 1))
+  "Return an alist describing a move of up to N interactions.
+
+:interaction is the last interaction reached, nil when none was.
+:exhausted is non-nil when history ran out before N moves.
+Move backwards through the current shell buffer when BACKWARDS is non-nil.
+
+With three interactions ahead:
+
+  (agent-shell-viewport--move-pages :n 2)
+  ;; => ((:interaction . (\"prompt\" . \"response\")) (:exhausted . nil))
+
+With only one interaction ahead:
+
+  (agent-shell-viewport--move-pages :n 2)
+  ;; => ((:interaction . (\"prompt\" . \"response\")) (:exhausted . t))"
+  (let ((remaining n)
+        (interaction nil)
+        (stepped t))
+    (while (and (> remaining 0) stepped)
+      (setq stepped (shell-maker-next-command-and-response backwards :trimmed nil))
+      (when stepped
+        (setq interaction stepped)
+        (setq remaining (1- remaining))))
+    `((:interaction . ,interaction)
+      (:exhausted . ,(> remaining 0)))))
+
+(defun agent-shell-viewport-previous-page (&optional n)
+  "Show previous interaction (request / response).
+
+N (default 1) is how many interactions to move back; a prefix argument
+supplies it.  A negative N moves forward instead."
+  (declare (modes agent-shell-viewport-view-mode))
+  (interactive "p")
+  (agent-shell-viewport-next-page :backwards t :start-at-top t :n n))
+
+(cl-defun agent-shell-viewport-next-page (&key backwards start-at-top n)
   "Show next interaction (request / response).
 
 If BACKWARDS is non-nil, go to previous interaction.
 If START-AT-TOP is non-nil, position at point-min regardless of direction.
+N (default 1) is how many interactions to move; a prefix argument
+supplies it.  A negative N moves the other way, and a zero N does
+nothing.  Moving forward past the newest interaction restores a
+compose snapshot when one exists, and otherwise stops on the last
+interaction reached.
 
 If there are no more next items and a compose snapshot exists, restore the
 buffer from the snapshot and switch to edit mode."
   (declare (modes agent-shell-viewport-view-mode))
-  (interactive)
+  (interactive (list :n (prefix-numeric-value current-prefix-arg)))
   (unless (derived-mode-p 'agent-shell-viewport-view-mode)
     (error "Not in a viewport buffer"))
+  (setq n (or n 1))
+  (when (zerop n)
+    (cl-return-from agent-shell-viewport-next-page))
+  (when (< n 0)
+    (setq backwards (not backwards))
+    (setq n (- n)))
   (when (agent-shell-viewport--busy-p)
     (user-error "Busy... please wait"))
   (let ((shell-buffer (agent-shell-viewport--shell-buffer))
@@ -972,13 +1052,9 @@ buffer from the snapshot and switch to edit mode."
     (if (and (not backwards) snapshot pos
              (= (map-elt pos :current) (map-elt pos :total)))
         (progn
-          (agent-shell-viewport-edit-mode)
-          (agent-shell-viewport--initialize)
-          (insert (map-elt snapshot :content))
-          (goto-char (map-elt snapshot :location))
-          (setq agent-shell-viewport--compose-snapshot nil)
+          (agent-shell-viewport--restore-compose-snapshot)
           (cl-return-from agent-shell-viewport-next-page))
-      (when-let* ((next (with-current-buffer shell-buffer
+      (when-let* ((move (with-current-buffer shell-buffer
                           (if backwards
                               (progn
                                 ;; Navigate relative to the interaction
@@ -999,7 +1075,15 @@ buffer from the snapshot and switch to edit mode."
                                       (comint-next-prompt 1)
                                       (= orig-line (point))))
                               (error "No next page")))
-                          (shell-maker-next-command-and-response backwards :trimmed nil))))
+                          (agent-shell-viewport--move-pages
+                           :backwards backwards :n n)))
+                  (next (map-elt move :interaction)))
+        ;; A jump that ran past the newest interaction carries on into the
+        ;; parked draft, so a prefix argument does what pressing the key
+        ;; that many times does.
+        (when (and (not backwards) snapshot (map-elt move :exhausted))
+          (agent-shell-viewport--restore-compose-snapshot)
+          (cl-return-from agent-shell-viewport-next-page))
         (agent-shell-viewport--initialize
          :prompt (car next) :response (cdr next))
         (goto-char (if start-at-top
@@ -1195,6 +1279,9 @@ VIEWPORT-BUFFER is the viewport buffer to check."
 (defvar agent-shell-viewport-edit-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "C-c C-c") #'agent-shell-viewport-compose-send)
+    ;; Both spellings: a GUI frame and a terminal disagree on which arrives.
+    (define-key map (kbd "M-RET") #'agent-shell-viewport-compose-send-override)
+    (define-key map (kbd "M-<return>") #'agent-shell-viewport-compose-send-override)
     (define-key map (kbd "C-c C-p") #'agent-shell-viewport-compose-peek-last)
     (define-key map (kbd "C-c C-k") #'agent-shell-viewport-compose-cancel)
     (define-key map (kbd "C-c C-h") #'agent-shell-viewport-compose-help-menu)
@@ -1564,9 +1651,12 @@ For example, offer to kill associated shell session."
   ;; major-mode change, so view mode keeps its own text-property prefixes.
   (setq-local line-prefix "  ")
   (setq-local wrap-prefix "  ")
+  (agent-shell-completion--setup)
   (when agent-shell-file-completion-enabled
     (agent-shell-completion-mode +1))
   (agent-shell-list-edit-mode +1)
+  (agent-shell--enable-dnd)
+  (yank-media-handler "image/.*" #'agent-shell--yank-media-image)
   (agent-shell-viewport--update-header)
   (let ((inhibit-read-only t))
     (erase-buffer))
@@ -1580,6 +1670,8 @@ For example, offer to kill associated shell session."
   (agent-shell-ui-mode +1)
   (add-hook 'agent-shell-ui-post-expand-fragment-at-point-hook
             #'agent-shell--render-markdown nil t)
+  (agent-shell--enable-dnd)
+  (yank-media-handler "image/.*" #'agent-shell--yank-media-image)
   (agent-shell-viewport--update-header)
   (setq-local filter-buffer-substring-function #'agent-shell--filter-buffer-substring)
   (setq buffer-read-only t)

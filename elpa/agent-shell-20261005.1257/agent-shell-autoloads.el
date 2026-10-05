@@ -26,6 +26,17 @@ Keyword arguments:
 - AUTHENTICATE-REQUEST-MAKER: Function to create authentication requests
 - DEFAULT-MODEL-ID: Default model ID (function returning value).
 - DEFAULT-SESSION-MODE-ID: Default session mode ID (function returning value).
+- DEFAULT-CONFIG-OPTIONS: Default ACP session config options (function
+  returning an alist of (OPTION . VALUE), both strings).  OPTION is
+  matched against the ids the agent advertises, falling back to ACP
+  categories (\"model\", \"mode\", \"thought_level\").  The categories
+  \"model\" and \"mode\" additionally reach agents advertising no config
+  options, via the same legacy requests DEFAULT-MODEL-ID and
+  DEFAULT-SESSION-MODE-ID use.  Applied in the order listed, after
+  DEFAULT-MODEL-ID and DEFAULT-SESSION-MODE-ID, so an entry here wins
+  over either.  Order matters: options an agent scopes to the active
+  model (thought level, for example) must follow the option selecting
+  that model.
 - SESSION-META: Optional alist of agent-specific metadata sent as `_meta'
   with session-creating requests (`session/new', `session/load',
   `session/resume', and `session/fork').
@@ -38,7 +49,7 @@ Keyword arguments:
 
 Returns an alist with all specified values.
 
-(fn &key IDENTIFIER MODE-LINE-NAME WELCOME-FUNCTION BUFFER-NAME SHELL-PROMPT SHELL-PROMPT-REGEXP CLIENT-MAKER NEEDS-AUTHENTICATION AUTHENTICATE-REQUEST-MAKER DEFAULT-MODEL-ID DEFAULT-SESSION-MODE-ID SESSION-META MCP-SERVERS NOTIFICATION-ADAPTER ICON-NAME INSTALL-INSTRUCTIONS)")
+(fn &key IDENTIFIER MODE-LINE-NAME WELCOME-FUNCTION BUFFER-NAME SHELL-PROMPT SHELL-PROMPT-REGEXP CLIENT-MAKER NEEDS-AUTHENTICATION AUTHENTICATE-REQUEST-MAKER DEFAULT-MODEL-ID DEFAULT-SESSION-MODE-ID DEFAULT-CONFIG-OPTIONS SESSION-META MCP-SERVERS NOTIFICATION-ADAPTER ICON-NAME INSTALL-INSTRUCTIONS)")
 (autoload 'agent-shell "agent-shell" "\
 Start or reuse an existing agent shell.
 
@@ -189,7 +200,7 @@ The mode's hook is called both when the mode is enabled and when it is
 disabled.
 
 (fn &optional ARG)" t)
-(register-definition-prefixes "agent-shell-chat-mode" '("agent-shell-chat-"))
+(register-definition-prefixes "agent-shell-chat-mode" '("agent-shell-"))
 
 
 ;;; Generated autoloads from agent-shell-cline.el
@@ -233,6 +244,11 @@ Start an interactive Cursor agent shell." t)
 (register-definition-prefixes "agent-shell-diff" '("agent-shell-diff-"))
 
 
+;;; Generated autoloads from agent-shell-dnd.el
+
+(register-definition-prefixes "agent-shell-dnd" '("agent-shell--"))
+
+
 ;;; Generated autoloads from agent-shell-droid.el
 
 (autoload 'agent-shell-droid-start-agent "agent-shell-droid" "\
@@ -267,6 +283,13 @@ Start an interactive Goose agent shell." t)
 (autoload 'agent-shell-hermes-start-agent "agent-shell-hermes" "\
 Start an interactive Hermes agent shell." t)
 (register-definition-prefixes "agent-shell-hermes" '("agent-shell-hermes-"))
+
+
+;;; Generated autoloads from agent-shell-junie.el
+
+(autoload 'agent-shell-junie-start-agent "agent-shell-junie" "\
+Start an interactive Junie agent shell." t)
+(register-definition-prefixes "agent-shell-junie" '("agent-shell-junie-"))
 
 
 ;;; Generated autoloads from agent-shell-kimi.el
@@ -332,9 +355,21 @@ Start an interactive Pi coding agent shell." t)
 (register-definition-prefixes "agent-shell-project" '("agent-shell-"))
 
 
+;;; Generated autoloads from agent-shell-prompt.el
+
+(register-definition-prefixes "agent-shell-prompt" '("agent-shell-"))
+
+
 ;;; Generated autoloads from agent-shell-prompt-queue.el
 
 (register-definition-prefixes "agent-shell-prompt-queue" '("agent-shell-"))
+
+
+;;; Generated autoloads from agent-shell-qoder.el
+
+(autoload 'agent-shell-qoder-start-agent "agent-shell-qoder" "\
+Start an interactive Qoder agent shell." t)
+(register-definition-prefixes "agent-shell-qoder" '("agent-shell-qoder-"))
 
 
 ;;; Generated autoloads from agent-shell-qwen.el
@@ -365,6 +400,8 @@ evaluate the variable `agent-shell-ui-mode'.
 
 The mode's hook is called both when the mode is enabled and when it is
 disabled.
+
+\\{agent-shell-ui-mode-map}
 
 (fn &optional ARG)" t)
 (register-definition-prefixes "agent-shell-ui" '("agent-shell-"))
