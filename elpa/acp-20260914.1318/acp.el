@@ -4,11 +4,11 @@
 
 ;; Author: Alvaro Ramirez https://xenodium.com
 ;; URL: https://github.com/xenodium/acp.el
-;; Package-Version: 20260828.937
-;; Package-Revision: 42f5c2685372
+;; Package-Version: 20260914.1318
+;; Package-Revision: 242cef63d76c
 ;; Package-Requires: ((emacs "28.1"))
 
-(defconst acp-package-version "0.14.3")
+(defconst acp-package-version "0.15.2")
 
 ;; This package is free software; you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
@@ -125,6 +125,7 @@ the error is logged."
          (pending-input "")
          (message-queue nil)
          (message-queue-busy nil)
+         (drain-queue nil)
          (process-environment (append (map-elt client :environment-variables)
                                       process-environment))
          (stderr-buffer (get-buffer-create (format "acp-client-stderr(%s)-%s"
@@ -138,13 +139,64 @@ the error is logged."
                     (when-let* ((std-error (cond
                                             ((acp--parse-stderr-api-error raw-output)
                                              (acp--parse-stderr-api-error raw-output))
-                                            ((not (string-empty-p (string-trim raw-output)))
-                                             ;; Fallback: create a generic error response
+                                            ((not (string-empty-p raw-output))
+                                             ;; Preserve whitespace-only chunks: consumers
+                                             ;; append messages to reconstruct stderr.
                                              (acp--make-internal-error raw-output)))))
                       (acp--log client "API-ERROR" "%s" (string-trim raw-output))
                       (dolist (handler (map-elt client :error-handlers))
                         (funcall handler std-error)))))
                 nil t))
+    ;; Drains the queue in order, resetting the busy flag via
+    ;; `unwind-protect' and rescheduling itself when messages are left
+    ;; behind.  A non-local exit would otherwise unwind out of the timer
+    ;; with the queue still flagged busy, so no later message is ever
+    ;; routed and the client silently stops responding.
+    ;;
+    ;; Timers run with `inhibit-quit' bound to t, so a bare C-g cannot
+    ;; interrupt a drain.  Exits still arrive from a handler reading
+    ;; input (aborting a minibuffer prompt signals `quit'), from
+    ;; quitting the debugger when `debug-on-error' is set, and from any
+    ;; error signalled outside the contained handler calls below.
+    (setq drain-queue
+          (lambda ()
+            (unwind-protect
+                (while message-queue
+                  ;; Bind print variables so the debugger
+                  ;; can safely print the client alist
+                  ;; without infinite recursion (#360).
+                  (let ((message (car message-queue))
+                        ;; Handle circular refs in client alist.
+                        (print-circle t)
+                        ;; Cap nesting depth.
+                        (print-level 25)
+                        ;; Cap list elements printed.
+                        (print-length 200))
+                    (setq message-queue (cdr message-queue))
+                    (acp--route-incoming-message
+                     :message message
+                     :client client
+                     :on-notification
+                     (lambda (notification)
+                       (dolist (handler (map-elt client :notification-handlers))
+                         (condition-case-unless-debug err
+                             (funcall handler notification)
+                           (error
+                            (acp--log client "NOTIFICATION HANDLER ERROR"
+                                      "Failed with error: %S" err)))))
+                     :on-request
+                     (lambda (request)
+                       (dolist (handler (map-elt client :request-handlers))
+                         (condition-case-unless-debug err
+                             (funcall handler request)
+                           (error
+                            (acp--log client "REQUEST HANDLER ERROR"
+                                      "Failed with error: %S" err))))))))
+              ;; Keep the busy flag raised while a drain is still
+              ;; pending, so the filter doesn't schedule a second one.
+              (if message-queue
+                  (run-at-time 0 nil drain-queue)
+                (setq message-queue-busy nil)))))
     (let ((process (make-process
                     :name (format "acp-client(%s)-%s"
                                   (map-elt client :command)
@@ -173,40 +225,7 @@ the error is logged."
                                                     (list (acp--make-message :json json :object object))))
                                       (unless message-queue-busy
                                         (setq message-queue-busy t)
-                                        (run-at-time 0 nil
-                                                     (lambda ()
-                                                       (while message-queue
-                                                         ;; Bind print variables so the debugger
-                                                         ;; can safely print the client alist
-                                                         ;; without infinite recursion (#360).
-                                                         (let ((message (car message-queue))
-                                                               ;; Handle circular refs in client alist.
-                                                               (print-circle t)
-                                                               ;; Cap nesting depth.
-                                                               (print-level 25)
-                                                               ;; Cap list elements printed.
-                                                               (print-length 200))
-                                                           (setq message-queue (cdr message-queue))
-                                                           (acp--route-incoming-message
-                                                            :message message
-                                                            :client client
-                                                            :on-notification
-                                                            (lambda (notification)
-                                                              (dolist (handler (map-elt client :notification-handlers))
-                                                                (condition-case-unless-debug err
-                                                                    (funcall handler notification)
-                                                                  (error
-                                                                   (acp--log client "NOTIFICATION HANDLER ERROR"
-                                                                             "Failed with error: %S" err)))))
-                                                            :on-request
-                                                            (lambda (request)
-                                                              (dolist (handler (map-elt client :request-handlers))
-                                                                (condition-case-unless-debug err
-                                                                    (funcall handler request)
-                                                                  (error
-                                                                   (acp--log client "REQUEST HANDLER ERROR"
-                                                                             "Failed with error: %S" err))))))))
-                                                       (setq message-queue-busy nil))))))
+                                        (run-at-time 0 nil drain-queue))))
                                   (setq start (1+ pos)))
                                 (setq pending-input (substring pending-input start))))
                     :sentinel (lambda (process event)
@@ -523,7 +542,9 @@ When non-nil SYNC, send notification synchronously."
 (cl-defun acp-make-initialize-request (&key protocol-version
                                             client-info
                                             read-text-file-capability
-                                            write-text-file-capability)
+                                            write-text-file-capability
+                                            elicitation-form-capability
+                                            elicitation-url-capability)
   "Instantiate an \"initialize\" request.
 
 PROTOCOL-VERSION is the version of the ACP protocol to use.
@@ -533,6 +554,10 @@ READ-TEXT-FILE-CAPABILITY is a boolean indicating if the client
 can read text files.
 WRITE-TEXT-FILE-CAPABILITY is a boolean indicating if the client
 can write text files.
+ELICITATION-FORM-CAPABILITY is a boolean indicating if the client
+can render \"form\" elicitations.
+ELICITATION-URL-CAPABILITY is a boolean indicating if the client
+can render \"url\" elicitations.
 
 See https://agentclientprotocol.com/protocol/schema#initializerequest
 and https://agentclientprotocol.com/protocol/schema#initializeresponse."
@@ -547,7 +572,14 @@ and https://agentclientprotocol.com/protocol/schema#initializeresponse."
                                                                  :false))
                                               (writeTextFile . ,(if write-text-file-capability
                                                                     t
-                                                                  :false))))))))))
+                                                                  :false))))
+                                       ,@(when (or elicitation-form-capability
+                                                   elicitation-url-capability)
+                                           `((elicitation
+                                              . (,@(when elicitation-form-capability
+                                                     '((form . nil)))
+                                                 ,@(when elicitation-url-capability
+                                                     '((url . nil)))))))))))))
 
 (cl-defun acp-make-authenticate-request (&key method-id method)
   "Instantiate an \"authenticate\" request.
@@ -703,10 +735,21 @@ See https://agentclientprotocol.com/rfds/session-fork."
                 (mcpServers . ,(or mcp-servers []))
                 ,@(when meta `((_meta . ,meta)))))))
 
-(cl-defun acp-make-session-list-request (&key cwd)
+(cl-defun acp-make-session-list-request (&key cwd cursor)
   "Instantiate a \"session/list\" request.
 
 CWD is the current working directory used to filter sessions.
+CURSOR is an optional opaque token, taken from the `nextCursor' of a
+previous \"session/list\" response, requesting the page that follows it.
+Omit it to request the first page.
+
+  (acp-make-session-list-request :cwd \"/tmp/\")
+  ;; => ((:method . \"session/list\")
+  ;;     (:params (cwd . \"/tmp\")))
+
+  (acp-make-session-list-request :cwd \"/tmp/\" :cursor \"page-2\")
+  ;; => ((:method . \"session/list\")
+  ;;     (:params (cwd . \"/tmp\") (cursor . \"page-2\")))
 
 Note: This is an unstable ACP feature.
 
@@ -715,7 +758,8 @@ See https://agentclientprotocol.com/rfds/session-list."
     (error ":cwd is required"))
   `((:method . "session/list")
     ;; directory-file-name removes any trailing /
-    (:params . ((cwd . ,(directory-file-name (expand-file-name cwd)))))))
+    (:params . ((cwd . ,(directory-file-name (expand-file-name cwd)))
+                ,@(when cursor `((cursor . ,cursor)))))))
 
 (cl-defun acp-make-session-load-request (&key session-id cwd mcp-servers meta)
   "Instantiate a \"session/load\" request.

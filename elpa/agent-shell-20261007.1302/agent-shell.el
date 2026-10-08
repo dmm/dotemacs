@@ -4,11 +4,11 @@
 
 ;; Author: Alvaro Ramirez https://xenodium.com
 ;; URL: https://github.com/xenodium/agent-shell
-;; Package-Version: 20261005.1257
-;; Package-Revision: c9def6efb656
+;; Package-Version: 20261007.1302
+;; Package-Revision: 9a52907d7c6c
 ;; Package-Requires: ((emacs "29.1") (shell-maker "0.97.5") (acp "0.15.1"))
 
-(defconst agent-shell--version "0.84.2")
+(defconst agent-shell--version "0.86.2")
 
 ;; Minimum dependency versions, as declared in the `Package-Requires'
 ;; header above.  Package managers that resolve versions enforce the
@@ -75,6 +75,7 @@
 (require 'agent-shell-devcontainer)
 (require 'agent-shell-diff)
 (require 'agent-shell-dnd)
+(require 'agent-shell-elicitation)
 (require 'agent-shell-experimental)
 (require 'agent-shell-droid)
 (require 'agent-shell-github)
@@ -1263,6 +1264,7 @@ OUTGOING-REQUEST-DECORATOR (passed through to `acp-make-client')."
         (cons :set-model nil)
         (cons :set-session-mode nil)
         (cons :set-config-options nil)
+        (cons :init-finished nil)
         (cons :session (list (cons :id nil)
                              (cons :config-options nil)
                              (cons :model-id nil)
@@ -1280,6 +1282,7 @@ OUTGOING-REQUEST-DECORATOR (passed through to `acp-make-client')."
         (cons :request-count 0)
         (cons :last-activity-time nil)
         (cons :tool-calls nil)
+        (cons :elicitations nil)
         (cons :available-commands nil)
         (cons :available-modes nil)
         (cons :supports-session-list nil)
@@ -1622,7 +1625,13 @@ Works from both shell and viewport buffers."
       ;; The restarted shell inherits the directory, so unschedule it here to
       ;; keep this buffer's cleanup from deleting it.
       (setq-local agent-shell--pending-directory-cleanup nil))
-    (kill-buffer shell-buffer)
+    ;; Killing may be declined (e.g. queued prompts), so leave the shell
+    ;; as it was, cleanup included, rather than start a second one.
+    (unless (kill-buffer shell-buffer)
+      (with-current-buffer shell-buffer
+        (setq-local agent-shell--pending-directory-cleanup
+                    pending-directory-cleanup))
+      (user-error "Cancelled"))
     (let* ((default-directory shell-dir)
            (new-shell-buffer (agent-shell--start
                               :config config
@@ -2095,6 +2104,166 @@ Example:
   (with-current-buffer (or shell-buffer (current-buffer))
     (map-elt agent-shell--state :last-activity-time)))
 
+(cl-defun agent-shell-initialized-p (&key shell-buffer)
+  "Return non-nil once the shell has finished initializing.
+
+Initializing covers the ACP handshake, authentication, the session and
+any default model, session mode and config options.  Until then, wait
+for the `init-finished' event (see `agent-shell-subscribe-to').
+
+When SHELL-BUFFER is non-nil, read that buffer instead of the current one.
+Signal an error if the buffer read is not a shell.
+
+A stable public API for packages that integrate with `agent-shell'
+programmatically.  Resolve a shell buffer from a viewport (or the
+surrounding project) with `agent-shell-shell-buffer'.
+
+Example:
+  (agent-shell-initialized-p)
+  => t"
+  (with-current-buffer (or shell-buffer (current-buffer))
+    (unless (derived-mode-p 'agent-shell-mode)
+      (error "Not an agent-shell buffer: %s" (buffer-name)))
+    ;; TODO: Remove after 2026-12-07.
+    ;; State made before `:init-finished' existed: a session means
+    ;; initialization already finished.
+    (if (assq :init-finished agent-shell--state)
+        (map-elt agent-shell--state :init-finished)
+      (map-nested-elt agent-shell--state '(:session :id)))))
+
+(cl-defun agent-shell-config-options (&key shell-buffer)
+  "Return the config options the agent advertises, or nil if none.
+
+Each option is an alist holding :id, :name, :description, :category,
+:type, :current-value and :options, where :options lists the values
+the option accepts, each with :value, :name and :description.
+Returns a copy, so modifying it leaves the shell's state untouched.
+
+When SHELL-BUFFER is non-nil, read that buffer instead of the current one.
+Signal an error if the buffer read is not a shell, or not yet
+`agent-shell-initialized-p'.
+
+A stable public API for packages that integrate with `agent-shell'
+programmatically.  Resolve a shell buffer from a viewport (or the
+surrounding project) with `agent-shell-shell-buffer'.
+
+Example:
+  (agent-shell-config-options)
+  => \\='(((:id . \"model\")
+        (:category . \"model\")
+        (:current-value . \"opus\")
+        (:options . (((:value . \"opus\")
+                      (:name . \"Opus\"))
+                     ...)))
+       ((:id . \"effort\")
+        (:category . \"thought_level\")
+        ...))"
+  (with-current-buffer (or shell-buffer (current-buffer))
+    (unless (agent-shell-initialized-p)
+      (error "Shell not initialized yet: %s" (buffer-name)))
+    (copy-tree (agent-shell--config-options agent-shell--state))))
+
+(cl-defun agent-shell-config-option (&key shell-buffer id category)
+  "Return the config option with ID or in CATEGORY, or nil if none.
+
+Pass exactly one of ID or CATEGORY.  CATEGORY is an ACP category such
+as \"thought_level\".  Agents may omit categories, so an option without
+one is only found by ID.  Signal an error when several options share
+CATEGORY, naming their ids so one can be passed as ID instead.
+
+Returns a copy, shaped like the entries of `agent-shell-config-options'.
+
+When SHELL-BUFFER is non-nil, read that buffer instead of the current one.
+Signal an error if the buffer read is not a shell, or not yet
+`agent-shell-initialized-p'.
+
+A stable public API for packages that integrate with `agent-shell'
+programmatically.  Resolve a shell buffer from a viewport (or the
+surrounding project) with `agent-shell-shell-buffer'.
+
+Example:
+  (agent-shell-config-option :category \"thought_level\")
+  => \\='((:id . \"effort\")
+       (:category . \"thought_level\")
+       (:current-value . \"low\")
+       (:options . (((:value . \"low\")
+                     (:name . \"Low\"))
+                    ...)))"
+  (with-current-buffer (or shell-buffer (current-buffer))
+    (unless (agent-shell-initialized-p)
+      (error "Shell not initialized yet: %s" (buffer-name)))
+    (copy-tree (agent-shell--config-option-find
+                :state agent-shell--state
+                :id id
+                :category category))))
+
+(cl-defun agent-shell-config-option-value (&key shell-buffer id category)
+  "Return the current value of the config option, or nil if none.
+
+ID and CATEGORY find the option as in `agent-shell-config-option'.
+
+When SHELL-BUFFER is non-nil, read that buffer instead of the current one.
+Signal an error if the buffer read is not a shell, or not yet
+`agent-shell-initialized-p'.
+
+A stable public API for packages that integrate with `agent-shell'
+programmatically.  Resolve a shell buffer from a viewport (or the
+surrounding project) with `agent-shell-shell-buffer'.
+
+Example:
+  (agent-shell-config-option-value :category \"thought_level\")
+  => \"low\""
+  (map-elt (agent-shell-config-option :shell-buffer shell-buffer
+                                      :id id
+                                      :category category)
+           :current-value))
+
+(cl-defun agent-shell-set-config-option-value (&key shell-buffer id category
+                                                    value on-success on-failure)
+  "Ask the agent to set the config option to VALUE.
+
+ID and CATEGORY find the option as in `agent-shell-config-option'.
+
+ON-SUCCESS is called with an alist holding :config-option, the option
+as the agent reports it after the change.  ON-FAILURE is called with
+an alist holding :acp-error.  Signal an error when the buffer used is
+not a shell, is not yet `agent-shell-initialized-p', or its agent
+advertises no such option.
+
+When SHELL-BUFFER is non-nil, use that buffer instead of the current one.
+
+A stable public API for packages that integrate with `agent-shell'
+programmatically.  Resolve a shell buffer from a viewport (or the
+surrounding project) with `agent-shell-shell-buffer'.
+
+Example:
+  (agent-shell-set-config-option-value
+   :category \"thought_level\"
+   :value \"high\"
+   :on-success (lambda (result)
+                 (map-nested-elt result \\='(:config-option :current-value))))
+  ;; ON-SUCCESS returns \"high\""
+  (with-current-buffer (or shell-buffer (current-buffer))
+    (unless (agent-shell-initialized-p)
+      (error "Shell not initialized yet: %s" (buffer-name)))
+    (if-let* ((config-option (agent-shell--config-option-find
+                              :state (agent-shell--state)
+                              :id id
+                              :category category)))
+        (agent-shell--set-session-config-option
+         :config-id (map-elt config-option :id)
+         :value value
+         :on-success (lambda ()
+                       (when on-success
+                         (funcall on-success
+                                  `((:config-option . ,(agent-shell--config-option-get
+                                                        :state (agent-shell--state)
+                                                        :id (map-elt config-option :id)))))))
+         :on-failure (when on-failure
+                       (lambda (acp-error _raw-message)
+                         (funcall on-failure `((:acp-error . ,acp-error))))))
+      (error "Agent advertises no %s option" (or id category)))))
+
 (defun agent-shell-copy-session-id ()
   "Copy the current session ID to the kill ring."
   (declare (modes agent-shell-mode))
@@ -2289,7 +2458,8 @@ Returns one of:
   (with-current-buffer (or shell-buffer (current-buffer))
     (cond
      ((and (shell-maker-busy)
-           (agent-shell--permission-pending-p)) 'blocked)
+           (or (agent-shell--permission-pending-p)
+               (agent-shell-elicitation--pending-p))) 'blocked)
      (t
       (if (shell-maker-busy)
           'busy
@@ -2326,6 +2496,9 @@ See also `agent-shell-confirm-interrupt'."
                  :state (agent-shell--state)
                  :tool-call-id tool-call-id)))
             (map-elt (agent-shell--state) :tool-calls))
+           ;; Then cancel any form still waiting on an answer, or the
+           ;; agent keeps waiting for one that is never coming.
+           (agent-shell-elicitation--cancel-pending :state (agent-shell--state))
            ;; Then send the cancel notification
            (acp-send-notification
             :client (map-elt (agent-shell--state) :client)
@@ -2603,7 +2776,11 @@ Flow:
                               (agent-shell--handle :command command :shell-buffer shell-buffer))))
           ;; Initialization complete
           (t
-           (agent-shell--emit-event :event 'init-finished)
+           (unless (map-elt (agent-shell--state) :init-finished)
+             ;; TODO: Use `map-put!' after 2026-12-07.
+             ;; `setf' inserts the key into state made before it existed.
+             (setf (map-elt agent-shell--state :init-finished) t)
+             (agent-shell--emit-event :event 'init-finished))
            ;; Send ACP prompt request
            (when (and command (not (string-empty-p (string-trim command))))
              (agent-shell--send-command :prompt command :shell-buffer shell-buffer))))))
@@ -3541,9 +3718,14 @@ Clears STATE's `:expanded-activity-group'."
                     ;; like MCP calls.
                     (tool-call-kind (map-nested-elt state `(:tool-calls ,tool-call-id :kind)))
                     (saved-input (map-nested-elt state `(:tool-calls ,tool-call-id :raw-input)))
+                    ;; A questionnaire's input is the questions themselves,
+                    ;; which the tool call's own `content' already spells out
+                    ;; in prose, so dumping it as JSON only repeats it.
                     (input-block (when (and (member tool-call-kind '(nil "other"))
                                             saved-input
-                                            (not saved-command))
+                                            (not saved-command)
+                                            (not (agent-shell-elicitation--questionnaire-p
+                                                  saved-input)))
                                    (agent-shell--format-tool-call-input saved-input))))
                (agent-shell--update-fragment
                 :state state
@@ -3554,6 +3736,11 @@ Clears STATE's `:expanded-activity-group'."
                 :group-label agent-shell--activity-group-label
                 :group-expanded (agent-shell--activity-group-initial-expanded-p)
                 :body (cond
+                       ;; A form is showing these questions interactively
+                       ;; just below, so repeating them here would ask twice.
+                       ((agent-shell-elicitation--pending-for-tool-call-p
+                         :state state :tool-call-id tool-call-id)
+                        "")
                        (command-block
                         (concat command-block "\n\n" (string-trim body-text)))
                        (input-block
@@ -3724,6 +3911,11 @@ Clears STATE's `:expanded-activity-group'."
           :acp-request acp-request))
         ((equal (map-elt acp-request 'method) "session/push")
          (agent-shell-experimental--on-session-push-request
+          :state state
+          :acp-request acp-request))
+        ((and (equal (map-elt acp-request 'method) "elicitation/create")
+              agent-shell-elicitation--experimental-feature-enabled)
+         (agent-shell-elicitation--on-create-request
           :state state
           :acp-request acp-request))
         (t
@@ -4444,7 +4636,9 @@ For example, shut down ACP client."
     (map-put! (agent-shell--state) :authenticated nil)
     (map-put! (agent-shell--state) :set-model nil)
     (map-put! (agent-shell--state) :set-session-mode nil)
-    (map-put! (agent-shell--state) :set-config-options nil))
+    (map-put! (agent-shell--state) :set-config-options nil)
+    ;; TODO: Use `map-put!' after 2026-12-07 (see `agent-shell--handle').
+    (setf (map-elt agent-shell--state :init-finished) nil))
   (agent-shell-heartbeat-stop
    :heartbeat (map-elt (agent-shell--state) :heartbeat)))
 
@@ -4602,7 +4796,11 @@ STATUS is one of: \"pending\", \"in_progress\", \"completed\", \"failed\".
 See URL `https://agentclientprotocol.com/protocol/schema#toolcallstatus'.
 
 KIND is the tool call kind string (e.g. \"read\", \"edit\", \"execute\") or nil.
-See URL `https://agentclientprotocol.com/protocol/tool-calls'."
+See URL `https://agentclientprotocol.com/protocol/tool-calls'.
+
+KIND is not limited to the kinds ACP defines.  A tool call carrying a
+questionnaire is passed as \"question\" whatever kind the agent gave it,
+so handle an unrecognised KIND rather than assuming the enum."
   :type 'function
   :group 'agent-shell)
 
@@ -4665,7 +4863,13 @@ Returns propertized labels in :status and :title propertized."
   (when-let* ((tool-call (map-nested-elt state `(:tool-calls ,tool-call-id))))
     (let* ((status (agent-shell--make-status-kind-label
                     :status (map-elt tool-call :status)
-                    :kind (map-elt tool-call :kind)))
+                    ;; A call carrying a questionnaire is a question,
+                    ;; whatever kind the agent gave it: those bridged from
+                    ;; an ask-the-user tool arrive as the catch-all "other".
+                    :kind (if (agent-shell-elicitation--questionnaire-p
+                               (map-elt tool-call :raw-input))
+                              "question"
+                            (map-elt tool-call :kind))))
            (title (when-let* ((text (agent-shell--shorten-paths
                                      (map-elt tool-call :title)))
                               ;; Execute commands go to body instead; use description as title.
@@ -4948,6 +5152,10 @@ variable (see makunbound)"))
       (setq-local filter-buffer-substring-function #'agent-shell--filter-buffer-substring)
       (agent-shell--update-header-and-mode-line)
       (add-hook 'kill-buffer-hook #'agent-shell--clean-up nil t)
+      (add-hook 'kill-buffer-query-functions
+                #'agent-shell--prompt-queue-confirm-kill-buffer nil t)
+      (add-hook 'kill-emacs-query-functions
+                #'agent-shell--prompt-queue-confirm-kill-emacs)
       (add-hook 'change-major-mode-hook #'agent-shell--clean-up nil t)
       (add-hook 'window-configuration-change-hook #'agent-shell--resize-header nil t)
       (agent-shell-ui-mode +1)
@@ -5508,6 +5716,8 @@ insert the character instead."
                         (agent-shell-ui-forward-block)))
            (button-pos (save-mark-and-excursion
                          (agent-shell-next-permission-button)))
+           (field-pos (save-mark-and-excursion
+                        (agent-shell-elicitation-next-field)))
            (image-pos (save-mark-and-excursion
                         (agent-shell-markdown--next-visible-image)))
            (link-pos (save-mark-and-excursion
@@ -5525,6 +5735,7 @@ insert the character instead."
                                            (delq nil (list prompt-pos
                                                            block-pos
                                                            button-pos
+                                                           field-pos
                                                            image-pos
                                                            link-pos
                                                            source-block-pos
@@ -5575,6 +5786,8 @@ insert the character instead."
                         (agent-shell-ui-backward-block)))
            (button-pos (save-mark-and-excursion
                          (agent-shell-previous-permission-button)))
+           (field-pos (save-mark-and-excursion
+                        (agent-shell-elicitation-previous-field)))
            (image-pos (save-mark-and-excursion
                         (agent-shell-markdown--previous-visible-image)))
            (link-pos (save-mark-and-excursion
@@ -5594,6 +5807,7 @@ insert the character instead."
                                            (delq nil (list prompt-pos
                                                            block-pos
                                                            button-pos
+                                                           field-pos
                                                            image-pos
                                                            link-pos
                                                            source-block-pos
@@ -6540,7 +6754,8 @@ Initialization events (emitted in order):
   `session-selected'    - Session chosen (new or existing)
     :data contains :session-id (nil when starting new)
   `session-selection-cancelled' - User cancelled session selection
-  `init-finished'       - Initialization pipeline completed
+  `init-finished'       - Initialization pipeline completed (once per
+                          initialization, see `agent-shell-initialized-p')
   `prompt-ready'        - Shell prompt displayed and ready for input
 
 Session events:
@@ -6852,7 +7067,8 @@ Must provide ON-INITIATED (lambda ())."
                             (title . "Emacs Agent Shell")
                             (version . ,agent-shell--version))
              :read-text-file-capability agent-shell-text-file-capabilities
-             :write-text-file-capability agent-shell-text-file-capabilities)
+             :write-text-file-capability agent-shell-text-file-capabilities
+             :elicitation-form-capability agent-shell-elicitation--experimental-feature-enabled)
    :on-success (lambda (acp-response)
                  (with-current-buffer shell-buffer
                    (let ((acp-session-capabilities (or (map-elt acp-response 'sessionCapabilities)
@@ -7969,10 +8185,30 @@ pending-restore state once replay completes."
       ;; fully laid down; notify observers that the shell has settled.
       (agent-shell--emit-event :event 'session-restored))))
 
-(cl-defun agent-shell--initiate-session-resume-by-id (&key session-id session-title shell-buffer on-session-init)
+(cl-defun agent-shell--resume-failure-message (&key session-id)
+  "Return the message reporting SESSION-ID couldn't be resumed.
+
+Also describes the fallback `agent-shell--initiate-session-list-and-load'
+takes under `agent-shell-session-strategy'.
+
+With `agent-shell-session-strategy' set to `prompt':
+
+  (agent-shell--resume-failure-message :session-id \"abc\")
+  ;; => \"Couldn't resume session abc. Pick another session to load.\""
+  (format "Couldn't resume session %s. %s"
+          session-id
+          (pcase agent-shell-session-strategy
+            ('latest "Loading the latest session.")
+            ('prompt "Pick another session to load.")
+            (_ "Starting a new one."))))
+
+(cl-defun agent-shell--initiate-session-resume-by-id (&key session-id session-title shell-buffer on-session-init on-failure)
   "Resume or load session SESSION-ID with SHELL-BUFFER and ON-SESSION-INIT.
 
-SESSION-TITLE is an optional display title for the resumed session."
+SESSION-TITLE is an optional display title for the resumed session.
+
+ON-FAILURE (lambda ()), when non-nil, replaces the default fallback of
+listing sessions to pick one to load."
   (agent-shell--update-bootstrapping-fragment
    :state (agent-shell--state)
    :block-id "starting"
@@ -8028,15 +8264,18 @@ SESSION-TITLE is an optional display title for the resumed session."
                                        (funcall on-session-init))))
      :on-failure (lambda (_acp-error _raw-message)
                    (map-put! (agent-shell--state) :pending-restore nil)
-                   (message "Couldn't resume session. Starting a new one.")
-                   (agent-shell--update-bootstrapping-fragment
-                    :state (agent-shell--state)
-                    :block-id "starting"
-                    :body "\n\nCouldn't resume session."
-                    :append t)
-                   (agent-shell--initiate-session-list-and-load
-                    :shell-buffer shell-buffer
-                    :on-session-init on-session-init)))))
+                   (if on-failure
+                       (funcall on-failure)
+                     (let ((text (agent-shell--resume-failure-message :session-id session-id)))
+                       (message "%s" text)
+                       (agent-shell--update-bootstrapping-fragment
+                        :state (agent-shell--state)
+                        :block-id "resume_failed"
+                        :body (agent-shell--make-boxed-message
+                               :text (concat "Warning: " text))))
+                     (agent-shell--initiate-session-list-and-load
+                      :shell-buffer shell-buffer
+                      :on-session-init on-session-init))))))
 
 (cl-defun agent-shell--initiate-session-fork-by-id (&key session-id shell-buffer on-session-init)
   "Fork session SESSION-ID with SHELL-BUFFER and ON-SESSION-INIT."
@@ -8072,7 +8311,30 @@ SESSION-TITLE is an optional display title for the resumed session."
                                         (propertize "Forked session" 'font-lock-face 'agent-shell-section-heading))
                     :expanded t
                     :body (or new-session-id ""))
-                   (agent-shell--finalize-session-init :on-session-init on-session-init)))
+                   ;; Some agents (e.g. claude-agent-acp) fork by copying the
+                   ;; transcript only, returning neither models nor modes and
+                   ;; leaving the new session inactive (prompts fail with
+                   ;; "Session not found").  Resuming activates it and also
+                   ;; replays the forked history when loading.
+                   (if (or (map-elt (agent-shell--state) :supports-session-load)
+                           (map-elt (agent-shell--state) :supports-session-resume))
+                       (agent-shell--initiate-session-resume-by-id
+                        :session-id new-session-id
+                        :shell-buffer shell-buffer
+                        :on-session-init on-session-init
+                        ;; The fork itself succeeded, so stay on it rather
+                        ;; than falling back to picking another session.
+                        :on-failure (lambda ()
+                                      (let ((text "Couldn't load forked session. Prompts may fail."))
+                                        (message "%s" text)
+                                        (agent-shell--update-bootstrapping-fragment
+                                         :state (agent-shell--state)
+                                         :block-id "fork_load_failed"
+                                         :body (agent-shell--make-boxed-message
+                                                :text (concat "Warning: " text))))
+                                      (agent-shell--finalize-session-init
+                                       :on-session-init on-session-init)))
+                     (agent-shell--finalize-session-init :on-session-init on-session-init))))
    :on-failure (agent-shell--make-error-handler
                 :state (agent-shell--state) :shell-buffer shell-buffer)))
 
@@ -8823,6 +9085,7 @@ reads the buffer's prompt capabilities."
                    ;; a session prompt request is finished.
                    ;; Avoid accumulating them unnecessarily.
                    (map-put! (agent-shell--state) :tool-calls nil)
+                   (agent-shell-elicitation--clear :state (agent-shell--state))
                    ;; The turn is over, so nothing is active any more: fold
                    ;; the last activity group `latest' left expanded.
                    (agent-shell--collapse-expanded-activity-group (agent-shell--state))

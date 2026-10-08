@@ -185,6 +185,41 @@ categorized as \"thought_level\":
   (or (agent-shell--config-option-get :state state :id option)
       (agent-shell--config-option-by-category state option)))
 
+(cl-defun agent-shell--config-option-find (&key state id category)
+  "Return the config option in STATE with ID or in CATEGORY, or nil.
+
+Exactly one of ID and CATEGORY must be given.  Unlike
+`agent-shell--resolve-config-option', CATEGORY never guesses: when
+several options share it, signal an error naming their ids, so the
+caller can pass one as ID instead.
+
+For example, against an agent advertising \"effort\" and \"reasoning\"
+options, both categorized as \"thought_level\":
+
+  (agent-shell--config-option-find :state state :id \"effort\")
+  => \\='((:id . \"effort\")
+       (:category . \"thought_level\")
+       ...)
+
+  (agent-shell--config-option-find :state state :category \"thought_level\")
+  => error: Several thought_level options, pass :id with one of:
+     effort, reasoning"
+  (when (eq (null id) (null category))
+    (error "Pass either :id or :category"))
+  (if id
+      (agent-shell--config-option-get :state state :id id)
+    (let ((matches (seq-filter (lambda (option)
+                                 (equal category (map-elt option :category)))
+                               (agent-shell--config-options state))))
+      (when (cdr matches)
+        (error "Several %s options, pass :id with one of: %s"
+               category
+               (string-join (seq-map (lambda (option)
+                                       (map-elt option :id))
+                                     matches)
+                            ", ")))
+      (car matches))))
+
 (defun agent-shell--select-config-options (state)
   "Return selectable (type = \"select\") config options from STATE."
   (seq-filter (lambda (option)

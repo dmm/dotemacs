@@ -256,6 +256,11 @@ Start an interactive Factory Droid agent shell." t)
 (register-definition-prefixes "agent-shell-droid" '("agent-shell-droid-"))
 
 
+;;; Generated autoloads from agent-shell-elicitation.el
+
+(register-definition-prefixes "agent-shell-elicitation" '("agent-shell-elicitation-"))
+
+
 ;;; Generated autoloads from agent-shell-experimental.el
 
 (register-definition-prefixes "agent-shell-experimental" '("agent-shell-experimental--"))
