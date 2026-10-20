@@ -5,7 +5,7 @@
 ;; Author: Protesilaos <info@protesilaos.com>
 ;; Maintainer: Protesilaos <info@protesilaos.com>
 ;; URL: https://github.com/protesilaos/ef-themes
-;; Version: 2.2.0
+;; Version: 2.2.1
 ;; Package-Requires: ((emacs "28.1") (modus-themes "5.0.0"))
 ;; Keywords: faces, theme, accessibility
 
@@ -195,6 +195,10 @@ and Modus into a single group, enable `modus-themes-include-derivatives-mode'."
     (fg-prominent-err err)
     (fg-prominent-warning warning)
     (fg-prominent-note info)
+
+    (bg-added-fringe bg-info)
+    (bg-changed-fringe bg-warning)
+    (bg-removed-fringe bg-err)
 
     (bg-space unspecified)
     (fg-space border)
