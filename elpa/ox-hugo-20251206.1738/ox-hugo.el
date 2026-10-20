@@ -2,8 +2,8 @@
 
 ;; Author: Kaushal Modi <kaushal.modi@gmail.com>
 ;;         Matt Price <moptop99@gmail.com>
-;; Package-Version: 20250814.1439
-;; Package-Revision: 6499e35bb04b
+;; Package-Version: 20251206.1738
+;; Package-Revision: b7dc44dc2891
 ;; Package-Requires: ((emacs "26.3") (tomelr "0.4.3"))
 ;; Keywords: Org, markdown, docs
 ;; URL: https://ox-hugo.scripter.co
@@ -4909,7 +4909,8 @@ The optional argument NOERROR is passed to
 
     ;; Auto-update `org-id-locations' if it's nil or empty hash table
     ;; to avoid broken [[id:..]] type links.
-    (when (or (eq org-id-locations nil) (zerop (hash-table-count org-id-locations)))
+    (unless org-id-locations (org-id-locations-load))
+    (when (or (null org-id-locations) (zerop (hash-table-count org-id-locations)))
       (org-id-update-id-locations (directory-files "." :full "\\.org$" :nosort) :silent))
 
     (org-hugo--cleanup)
