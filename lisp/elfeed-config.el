@@ -19,6 +19,9 @@
           "https://batsov.com/feed.xml"
           "https://updates.crosspointreader.com/history.rss"
           "https://snow-dev.com/index.xml"
+          "https://matklad.github.io/feed.xml"
+          "https://tigerbeetle.com/blog/atom.xml"
+          "https://zserge.com/rss.xml"
           ))
   :hook
     (elfeed-show-mode . (lambda () (setq-local show-trailing-whitespace nil)))
