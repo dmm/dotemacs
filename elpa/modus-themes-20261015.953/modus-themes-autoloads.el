@@ -78,6 +78,16 @@ such that the current element in the list becomes the last.  Do not
 modify THEMES in the process.
 
 (fn THEMES &optional REVERSE)" t)
+(autoload 'modus-themes-rotate-dark "modus-themes" "\
+Like `modus-themes-rotate' with optional REVERSE argument for dark themes only.
+
+(fn &optional REVERSE)" t)
+(function-put 'modus-themes-rotate-dark 'interactive-only 't)
+(autoload 'modus-themes-rotate-light "modus-themes" "\
+Like `modus-themes-rotate' with optional REVERSE argument for light themes only.
+
+(fn &optional REVERSE)" t)
+(function-put 'modus-themes-rotate-light 'interactive-only 't)
 (autoload 'modus-themes-load-random "modus-themes" "\
 Load a Modus theme at random, excluding the current one.
 
@@ -89,10 +99,10 @@ Run `modus-themes-after-load-theme-hook' after loading a theme.
 
 (fn &optional BACKGROUND-MODE)" t)
 (autoload 'modus-themes-load-random-dark "modus-themes" "\
-Load a random dark theme." t)
+Like `modus-themes-load-random' but only for dark themes." t)
 (function-put 'modus-themes-load-random-dark 'interactive-only 't)
 (autoload 'modus-themes-load-random-light "modus-themes" "\
-Load a random light theme." t)
+Like `modus-themes-load-random' but only for light themes." t)
 (function-put 'modus-themes-load-random-light 'interactive-only 't)
 (autoload 'modus-themes-theme "modus-themes" "\
 Define a Modus theme or derivative thereof.

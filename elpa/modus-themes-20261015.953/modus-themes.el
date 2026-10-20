@@ -5,8 +5,8 @@
 ;; Author: Protesilaos <info@protesilaos.com>
 ;; Maintainer: Protesilaos <info@protesilaos.com>
 ;; URL: https://github.com/protesilaos/modus-themes
-;; Package-Version: 20260730.719
-;; Package-Revision: 75aa3fa79efd
+;; Package-Version: 20261015.953
+;; Package-Revision: 6272f81ae3fe
 ;; Package-Requires: ((emacs "28.1"))
 ;; Keywords: faces, theme, accessibility
 
@@ -180,20 +180,26 @@ This behaves in accordance with `modus-themes-italic-constructs'."
 This is intended to be inherited by faces that should not retain
 properties from their context (e.g. an overlay over an underlined
 text should not be underlined as well) yet still blend in."
+  :package-version '(modus-themes . "5.4.0")
+  :version "32.1"
   :group 'modus-themes-faces)
 
 (defface modus-themes-button nil
   "Face for graphical buttons."
+  :package-version '(modus-themes . "5.4.0")
+  :version "32.1"
   :group 'modus-themes-faces)
 
 (defface modus-themes-prompt nil
   "Prompts like in the minibuffer and the shell."
   :package-version '(modus-themes . "5.4.0")
+  :version "32.1"
   :group 'modus-themes-faces)
 
 (defface modus-themes-completion-selected nil
   "Face for completion selected candidate."
   :package-version '(modus-themes . "5.4.0")
+  :version "32.1"
   :group 'modus-themes-faces)
 
 (dotimes (n 4)
@@ -201,6 +207,7 @@ text should not be underlined as well) yet still blend in."
    (intern (format "modus-themes-completion-match-%d" n))
    nil (format "Face for completion matches %d." n)
    :package-version '(modus-themes . "5.4.0")
+   :version "32.1"
    :group 'modus-themes-faces))
 
 (dolist (suffix '(current lazy replace static))
@@ -208,6 +215,7 @@ text should not be underlined as well) yet still blend in."
    (intern (format "modus-themes-search-%s" suffix))
    nil (format "Face for %s search matches." suffix)
    :package-version '(modus-themes . "5.4.0")
+   :version "32.1"
    :group 'modus-themes-faces))
 
 (dotimes (n 4)
@@ -215,6 +223,7 @@ text should not be underlined as well) yet still blend in."
    (intern (format "modus-themes-search-rx-group-%d" n))
    nil (format "Face for regexp group %d." n)
    :package-version '(modus-themes . "5.4.0")
+   :version "32.1"
    :group 'modus-themes-faces))
 
 (define-obsolete-face-alias 'modus-themes-mark-alt 'modus-themes-mark-other "5.4.0")
@@ -226,6 +235,7 @@ text should not be underlined as well) yet still blend in."
    (intern (format "modus-themes-mark-%s" suffix))
    nil (format "Face for %s marks." suffix)
    :package-version '(modus-themes . "5.4.0")
+   :version "32.1"
    :group 'modus-themes-faces))
 
 
@@ -403,8 +413,23 @@ This is a helper variable intended for internal use.")
 This is an alist that accepts a (KEY . LIST-OF-VALUES)
 combination.  The KEY is either a number, representing the
 heading's level (0-8) or t, which pertains to the fallback style.
+
 The named keys `agenda-date' and `agenda-structure' apply to the
 Org agenda.
+
+The named key `section-minibuffer' refers to the section headings in the
+minibuffer when completion candidates are sorted into groups, such as
+what various commands of the Consult package do as well as what the
+command `modus-themes-select' does.
+
+The named key `section-other' refers to any other heading that is
+conceptually not like the aforementioned.  This includes sections the
+path to the current Dired directory or any subdirectory that is inserted
+in that buffer, as well as diffs and files in the various Magit
+buffers.
+
+The named key `commit-summary' refers to the first line of a commit
+message in version control systems, as used by VC and Magit.
 
 Level 0 is used for what counts as a document title or
 equivalent, such as the #+title construct we find in Org files.
@@ -420,6 +445,9 @@ available properties:
                   (2 . (1.3))
                   (agenda-date . (1.3))
                   (agenda-structure . (variable-pitch light 1.8))
+                  (section-minibuffer . (variable-pitch light 0.9))
+                  (section-other . (regular 1.3))
+                  (commit-summary . (bold 1.1))
                   (t . (1.1)))))
 
 By default (a nil value for this variable), all headings have a
@@ -463,6 +491,9 @@ In user configuration files the form may look like this:
                   (2 . (1.3))
                   (agenda-date . (1.3))
                   (agenda-structure . (variable-pitch light 1.8))
+                  (section-minibuffer . (variable-pitch light 0.9))
+                  (section-other . (regular 1.3))
+                  (commit-summary . (bold 1.1))
                   (t . (1.1)))))
 
 When defining the styles per heading level, it is possible to
@@ -489,12 +520,17 @@ well as Info node `(modus-themes) Make headings more or less
 colorful'.  Else check `modus-themes-common-palette-overrides'
 and related user options."
   :group 'modus-themes
-  :package-version '(modus-themes . "4.0.0")
-  :version "30.1"
+  :package-version '(modus-themes . "5.4.0")
+  :version "32.1"
   :type `(alist
-          :options ,(mapcar (lambda (el)
-                              (list el modus-themes--headings-widget))
-                            '(0 1 2 3 4 5 6 7 8 t agenda-date agenda-structure))
+          :options ,(mapcar
+                     (lambda (element)
+                       (list element modus-themes--headings-widget))
+                     '( 0 1 2 3 4 5 6 7 8
+                        section-minibuffer section-other
+                        agenda-date agenda-structure
+                        commit-summary
+                        t))
           :key-type symbol
           :value-type ,modus-themes--headings-widget)
   :link '(info-link "(modus-themes) Heading styles"))
@@ -3867,6 +3903,7 @@ Else return (append OVERRIDES USER CORE)."
                                       user-palette-name
                                       (boundp user-palette-name))
                              (symbol-value user-palette-name)))
+             (all-user-defined (append user-palette modus-themes-common-palette-user))
              (overrides-palette-name (plist-get properties :modus-overrides-palette))
              (overrides-palette (when (and with-overrides
                                            overrides-palette-name
@@ -3874,7 +3911,7 @@ Else return (append OVERRIDES USER CORE)."
                                   (symbol-value overrides-palette-name)))
              (all-overrides (when with-overrides
                               (append overrides-palette modus-themes-common-palette-overrides))))
-        (append all-overrides user-palette core-palette)))))
+        (append all-overrides all-user-defined core-palette)))))
 
 (defun modus-themes-get-theme-palette (&optional theme with-overrides with-user-palette)
   "Return palette value of active `modus-themes-get-themes' THEME.
@@ -3911,8 +3948,8 @@ Run the `modus-themes-after-load-theme-hook' as the final step
 after loading the THEME.  If HOOK, then call that instead.
 
 Return THEME."
-  (load-theme theme :no-confirm)
   (modus-themes--disable-themes (remq theme (modus-themes--get-color-schemes)))
+  (load-theme theme :no-confirm)
   (run-hooks (or hook 'modus-themes-after-load-theme-hook))
   theme)
 
@@ -3975,14 +4012,13 @@ symbol, which is safe when used as a face attribute's value."
   "Minibuffer history of `modus-themes-select-prompt'.")
 
 (defun modus-themes--annotate-theme (theme)
-  "Return description of THEME ."
+  "Return THEME description."
   (when-let* ((symbol (intern-soft theme))
               (properties (get symbol 'theme-properties))
-              (doc-string (or (get symbol 'theme-documentation)
-                              (plist-get properties :modus-documentation))))
-    (format " %s"
-            (propertize (concat "-- " (car (split-string doc-string "\\.")))
-                        'face 'completions-annotations))))
+              (doc-string (or (get symbol 'theme-documentation) (plist-get properties :modus-documentation)))
+              (doc-no-newlines (replace-regexp-in-string "\n" " " doc-string))
+              (doc-first-line (replace-regexp-in-string "\\(.*?\\)\\.\\(.*\\)" "\\1" doc-no-newlines)))
+    (propertize (format " -- %s" doc-first-line) 'face 'completions-annotations)))
 
 (defun modus-themes--group-themes (theme transform)
   "Group THEME by its background for minibuffer completion.
@@ -3998,7 +4034,7 @@ If TRANSFORM is non-nil, return THEME as-is."
         (capitalize (format "%s" background)))))))
 
 (defun modus-themes--display-sort (themes)
-  "Put the current theme before other THEMES for minibuffer completion."
+  "Sort THEMES by putting the current one before the rest."
   (let* ((current (modus-themes-get-current-theme))
          (current-theme-p (lambda (theme) (eq (intern-soft theme) current))))
     (nconc
@@ -4116,6 +4152,26 @@ modify THEMES in the process."
     (message "Rotating to `%s'" theme)
     (modus-themes-load-theme theme)))
 
+;;;###autoload
+(defun modus-themes-rotate-dark (&optional reverse)
+  "Like `modus-themes-rotate' with optional REVERSE argument for dark themes only."
+  (declare (interactive-only t))
+  (interactive "P")
+  (if-let* ((themes (or modus-themes-to-rotate (modus-themes-get-themes)))
+            (dark-themes (modus-themes-filter-by-background-mode themes 'dark)))
+      (modus-themes-rotate dark-themes reverse)
+    (error "No dark themes found")))
+
+;;;###autoload
+(defun modus-themes-rotate-light (&optional reverse)
+  "Like `modus-themes-rotate' with optional REVERSE argument for light themes only."
+  (declare (interactive-only t))
+  (interactive "P")
+  (if-let* ((themes (or modus-themes-to-rotate (modus-themes-get-themes)))
+            (light-themes (modus-themes-filter-by-background-mode themes 'light)))
+      (modus-themes-rotate light-themes reverse)
+    (error "No light themes found")))
+
 ;;;;; Load a random theme
 
 (defun modus-themes-filter-by-background-mode (themes background-mode)
@@ -4174,14 +4230,14 @@ Run `modus-themes-after-load-theme-hook' after loading a theme."
 
 ;;;###autoload
 (defun modus-themes-load-random-dark ()
-  "Load a random dark theme."
+  "Like `modus-themes-load-random' but only for dark themes."
   (declare (interactive-only t))
   (interactive)
   (modus-themes-load-random 'dark))
 
 ;;;###autoload
 (defun modus-themes-load-random-light ()
-  "Load a random light theme."
+  "Like `modus-themes-load-random' but only for light themes."
   (declare (interactive-only t))
   (interactive)
   (modus-themes-load-random 'light))
@@ -4450,12 +4506,14 @@ list given LIST-PRED, using DEFAULT as a fallback."
       (when (memq elt modus-themes-weights)
         (throw 'found elt)))))
 
-(defun modus-themes--heading (level fg &optional bg ol)
+(defun modus-themes--heading (level fg &optional bg ol fallback-height)
   "Conditional styles for `modus-themes-headings'.
 
 LEVEL is the heading's position in their order.  FG is the
 default text color.  Optional BG is an appropriate background.
-Optional OL is the color of an overline."
+Optional OL is the color of an overline.
+
+Optional FALLBACK-HEIGHT is used if LEVEL does not define one."
   (let* ((key (alist-get level modus-themes-headings))
          (style (or key (alist-get t modus-themes-headings)))
          (style-listp (listp style))
@@ -4474,7 +4532,7 @@ Optional OL is the color of an overline."
           :foreground fg
           :overline (or ol 'unspecified)
           :height (if style-listp
-                      (modus-themes--property-lookup properties 'height #'floatp 'unspecified)
+                      (modus-themes--property-lookup properties 'height #'floatp (or fallback-height 'unspecified))
                     'unspecified)
           :weight (or weight 'unspecified))))
 
@@ -4565,7 +4623,7 @@ If COLOR is unspecified, then return :box unspecified."
     `(italic ((,c :slant italic)))
     `(cursor ((,c :background ,cursor)))
     `(fringe ((,c :background ,fringe :foreground ,fg-main)))
-    `(margin ((,c :background ,fringe :foreground ,fg-main)))
+    `(margin ((,c :background ,bg-main :foreground ,fg-main)))
     `(scroll-bar ((,c :background ,bg-main :foreground ,border)))
     `(tool-bar ((,c :background ,bg-dim :foreground ,fg-main)))
     `(vertical-border ((,c :foreground ,border)))
@@ -4600,11 +4658,16 @@ If COLOR is unspecified, then return :box unspecified."
     `(mm-uu-extract ((,c :foreground ,mail-part)))
     `(next-error ((,c :background ,bg-prominent-err :foreground ,fg-prominent-err)))
     `(pgtk-im-0 ((,c :background ,bg-prominent-note :foreground ,fg-prominent-note)))
-    `(read-multiple-choice-face ((,c :inverse-video t)))
+    `(read-multiple-choice-face ((,c :inherit (bold modus-themes-fixed-pitch) :foreground ,keybind :inverse-video t)))
     `(rectangle-preview ((,c :background ,bg-active :foreground ,fg-main)))
     `(region ((,c :background ,bg-region :foreground ,fg-region)))
     `(secondary-selection ((,c :background ,bg-hover-secondary :foreground ,fg-main)))
-    `(separator-line ((,c :underline ,bg-active)))
+    `(separator-line
+      ((default :extend t)
+       (((type tty))
+        :foreground ,border :strike-through t)
+       (t
+        :height 1 :background ,border :foreground ,border)))
     `(shadow ((,c :foreground ,fg-dim)))
     `(success ((,c :inherit modus-themes-bold :foreground ,info)))
     `(trailing-whitespace ((,c :background ,bg-space-err)))
@@ -4837,11 +4900,17 @@ If COLOR is unspecified, then return :box unspecified."
     `(change-log-list ((,c :inherit modus-themes-bold)))
     `(change-log-name ((,c :foreground ,name)))
     `(log-edit-header ((,c :inherit modus-themes-bold)))
-    `(log-edit-headers-separator ((,c :height 1 :background ,border :extend t)))
-    `(log-edit-summary ((,c :inherit modus-themes-bold :foreground ,info)))
+    `(log-edit-headers-separator
+      ((default :extend t)
+       (((type tty))
+        :foreground ,border :strike-through t)
+       (t
+        :height 1 :background ,border :foreground ,border)))
+    `(log-edit-summary ((,c ,@(modus-themes--heading 'commit-summary info))))
     `(log-edit-unknown-header ((,c :foreground ,fg-dim)))
     `(log-view-commit-body (( )))
     `(log-view-file ((,c :inherit modus-themes-bold)))
+    `(log-view-marked ((,c :inherit modus-themes-mark-select)))
     `(log-view-message ((,c :foreground ,identifier)))
 ;;;;; cider
     `(cider-deprecated-face ((,c :foreground ,warning)))
@@ -4902,11 +4971,11 @@ If COLOR is unspecified, then return :box unspecified."
     ;; `completion-preview', then we should remember to customize
     ;; `completion-preview-adapt-background-color' accordingly.
     `(completion-preview-common ((,c :inherit completion-preview :underline t)))
-    `(completion-preview-exact ((,c :inherit (modus-themes-completion-match-0 completion-preview))))
+    `(completion-preview-exact ((,c :inherit (modus-themes-completion-match-0 completion-preview) :underline t)))
 ;;;;; completions
     `(completions-annotations ((,c :inherit modus-themes-slant :foreground ,docstring)))
     `(completions-common-part ((,c :inherit modus-themes-completion-match-0)))
-    `(completions-group-title ((,c :inherit modus-themes-slant :foreground ,name :height 0.9)))
+    `(completions-group-title ((,c ,@(modus-themes--heading 'section-minibuffer fg-dim nil nil 0.9))))
     `(completions-group-separator ((,c :strike-through t :foreground ,border)))
     `(completions-first-difference ((,c :inherit modus-themes-completion-match-1)))
     `(completions-highlight ((,c :inherit modus-themes-completion-selected)))
@@ -5062,7 +5131,7 @@ If COLOR is unspecified, then return :box unspecified."
     `(dired-broken-symlink ((,c :foreground ,err :underline t)))
     `(dired-directory ((,c :foreground ,accent-0)))
     `(dired-flagged ((,c :inherit modus-themes-mark-delete)))
-    `(dired-header ((,c :inherit modus-themes-bold)))
+    `(dired-header ((,c ,@(modus-themes--heading 'section-other fg-main))))
     `(dired-ignored ((,c :foreground ,fg-dim)))
     `(dired-mark ((,c :inherit modus-themes-bold)))
     `(dired-marked ((,c :inherit modus-themes-mark-select)))
@@ -5098,7 +5167,7 @@ If COLOR is unspecified, then return :box unspecified."
     `(diredfl-date-time ((,c :foreground ,date-common)))
     `(diredfl-deletion ((,c :inherit modus-themes-mark-delete)))
     `(diredfl-deletion-file-name ((,c :inherit modus-themes-mark-delete)))
-    `(diredfl-dir-heading ((,c :inherit modus-themes-bold)))
+    `(diredfl-dir-heading ((,c ,@(modus-themes--heading 'section-other fg-main))))
     `(diredfl-dir-name ((,c :foreground ,accent-0)))
     `(diredfl-dir-priv ((,c :foreground ,accent-0)))
     `(diredfl-exec-priv ((,c :foreground ,accent-1)))
@@ -5212,7 +5281,9 @@ If COLOR is unspecified, then return :box unspecified."
     `(elfeed-search-date-face ((,c :foreground ,date-common)))
     `(elfeed-search-feed-face ((,c :foreground ,accent-1)))
     `(elfeed-search-filter-face ((,c :inherit modus-themes-bold)))
+    `(elfeed-search-marked-face ((,c :inherit modus-themes-mark-select)))
     `(elfeed-search-last-update-face ((,c :inherit modus-themes-bold :foreground ,date-common)))
+    `(elfeed-search-separator-face ((,c :inherit modus-themes-bold :foreground ,date-common :underline t)))
     `(elfeed-search-tag-face ((,c :foreground ,accent-0)))
     `(elfeed-search-title-face ((,c :foreground ,fg-dim)))
     `(elfeed-search-unread-count-face (( )))
@@ -5421,11 +5492,11 @@ If COLOR is unspecified, then return :box unspecified."
     `(flymake-end-of-line-diagnostics-face ((,c :inherit modus-themes-slant :underline ,border)))
     `(flymake-error ((,c :underline (:style wave :color ,underline-err))))
     `(flymake-error-echo ((,c :foreground ,err)))
-    `(flymake-error-echo-at-eol ((,c :inherit modus-themes-slant :foreground ,err :underline ,border)))
+    `(flymake-error-echo-at-eol ((,c :inherit modus-themes-slant :foreground ,err :height 0.9 :underline ,border)))
     `(flymake-error-fringe ((,c :background ,bg-prominent-err :foreground ,fg-prominent-err)))
     `(flymake-note ((,c :underline (:style wave :color ,underline-note))))
     `(flymake-note-echo ((,c :foreground ,info)))
-    `(flymake-note-echo-at-eol ((,c :inherit modus-themes-slant :foreground ,info :underline ,border)))
+    `(flymake-note-echo-at-eol ((,c :inherit modus-themes-slant :foreground ,info :height 0.9 :underline ,border)))
     `(flymake-note-fringe ((,c :background ,bg-prominent-note :foreground ,fg-prominent-note)))
     `(flymake-warning ((,c :underline (:style wave :color ,underline-warning))))
     `(flymake-warning-echo ((,c :foreground ,warning)))
@@ -5502,8 +5573,8 @@ If COLOR is unspecified, then return :box unspecified."
     `(git-commit-comment-file ((,c :inherit modus-themes-slant :foreground ,accent-2))) ; like `magit-filename'
     `(git-commit-keyword ((,c :foreground ,keyword)))
     `(git-commit-nonempty-second-line ((,c :foreground ,err)))
-    `(git-commit-overlong-summary ((,c :foreground ,warning)))
-    `(git-commit-summary ((,c :inherit modus-themes-bold :foreground ,info)))
+    `(git-commit-overlong-summary ((,c :inherit git-commit-summary :foreground ,warning)))
+    `(git-commit-summary ((,c ,@(modus-themes--heading 'commit-summary info))))
 ;;;;; git-gutter
     `(git-gutter:added ((,c :background ,bg-added-fringe)))
     `(git-gutter:deleted ((,c :background ,bg-removed-fringe)))
@@ -5769,6 +5840,8 @@ If COLOR is unspecified, then return :box unspecified."
     `(lazy-highlight ((,c :inherit modus-themes-search-lazy)))
     `(match ((,c :inherit modus-themes-search-static)))
     `(query-replace ((,c :inherit modus-themes-search-replace)))
+    `(query-replace-preview ((,c :inherit (bold modus-themes-search-replace))))
+    `(query-replace-preview-match ((,c :inherit modus-themes-search-lazy)))
 ;;;;; ivy
     `(ivy-action ((,c :inherit (bold modus-themes-fixed-pitch) :foreground ,keybind)))
     `(ivy-confirm-face ((,c :foreground ,info)))
@@ -5954,22 +6027,25 @@ If COLOR is unspecified, then return :box unspecified."
     `(magit-diff-added-highlight ((,c :background ,bg-added :foreground ,fg-added)))
     `(magit-diff-added-indicator ((,c :background ,bg-added-refine :foreground ,fg-added)))
     `(magit-diff-base ((,c :background ,bg-changed-faint :foreground ,fg-changed)))
+    `(magit-diff-base-heading ((,c ,@(modus-themes--heading 'section-other fg-changed-intense))))
     `(magit-diff-base-highlight ((,c :background ,bg-changed :foreground ,fg-changed)))
     `(magit-diff-base-indicator ((,c :background ,bg-changed-refine :foreground ,fg-changed)))
     `(magit-diff-context ((,c :foreground ,fg-dim)))
     `(magit-diff-context-highlight ((,c :background ,bg-diff-context)))
-    `(magit-diff-file-heading ((,c :inherit modus-themes-bold :foreground ,accent-0)))
-    `(magit-diff-file-heading-highlight ((,c :inherit modus-themes-bold :background ,bg-inactive :foreground ,accent-0)))
-    `(magit-diff-file-heading-selection ((,c :inherit modus-themes-bold :background ,bg-hover-secondary)))
-    `(magit-diff-hunk-heading ((,c :background ,bg-inactive)))
-    `(magit-diff-hunk-heading-highlight ((,c :inherit modus-themes-bold :background ,bg-active)))
-    `(magit-diff-hunk-heading-selection ((,c :inherit modus-themes-bold :background ,bg-hover-secondary)))
+    `(magit-diff-file-heading ((,c ,@(modus-themes--heading 'section-other accent-0))))
+    `(magit-diff-file-heading-highlight ((,c :background ,bg-inactive)))
+    `(magit-diff-file-heading-selection ((,c :background ,bg-hover-secondary)))
+    `(magit-diff-hunk-heading ((,c ,@(modus-themes--heading 'section-other fg-main bg-inactive))))
+    `(magit-diff-hunk-heading-highlight ((,c :background ,bg-active)))
+    `(magit-diff-hunk-heading-selection ((,c :background ,bg-hover-secondary)))
     `(magit-diff-hunk-region ((,c :inherit modus-themes-bold)))
     `(magit-diff-lines-boundary ((,c :background ,fg-main)))
     `(magit-diff-lines-heading ((,c :background ,fg-dim :foreground ,bg-main)))
+    `(magit-diff-our-heading ((,c ,@(modus-themes--heading 'section-other fg-removed-intense))))
     `(magit-diff-removed ((,c :background ,bg-removed-faint :foreground ,fg-removed)))
     `(magit-diff-removed-highlight ((,c :background ,bg-removed :foreground ,fg-removed)))
     `(magit-diff-removed-indicator ((,c :background ,bg-removed-refine :foreground ,fg-removed)))
+    `(magit-diff-their-heading ((,c ,@(modus-themes--heading 'section-other fg-added-intense))))
     `(magit-diffstat-added ((,c :foreground ,fg-added-intense)))
     `(magit-diffstat-removed ((,c :foreground ,fg-removed-intense)))
     `(magit-dimmed ((,c :foreground ,fg-dim)))
@@ -6001,7 +6077,7 @@ If COLOR is unspecified, then return :box unspecified."
     `(magit-refname-pullreq ((,c :foreground ,fg-dim)))
     `(magit-refname-stash ((,c :foreground ,fg-dim)))
     `(magit-refname-wip ((,c :foreground ,fg-dim)))
-    `(magit-section-heading ((,c :inherit modus-themes-bold :foreground ,fg-alt)))
+    `(magit-section-heading ((,c ,@(modus-themes--heading 'section-other fg-alt))))
     `(magit-section-heading-selection ((,c :inherit modus-themes-bold :background ,bg-hover-secondary)))
     `(magit-section-highlight ((,c :background ,bg-dim)))
     `(magit-section-secondary-heading ((,c :inherit modus-themes-bold)))
@@ -6580,6 +6656,35 @@ If COLOR is unspecified, then return :box unspecified."
     `(proced-time-colon (( )))
     `(proced-uninterruptible-sleep-status-code ((,c :foreground ,err)))
     `(proced-user (( )))
+;;;;; Proof General & Rocq
+    `(proof-queue-face ((,c :background ,bg-cyan-subtle)))
+    `(proof-locked-face ((,c :background ,bg-inactive)))
+    `(proof-declaration-name-face ((,c :foreground ,fnname)))
+    `(proof-tacticals-name-face ((,c :foreground ,preprocessor)))
+    `(proof-tactics-name-face ((,c :foreground ,keyword)))
+    `(proof-error-face ((,c :foreground ,err)))
+    `(proof-warning-face ((,c :background ,bg-prominent-warning :foreground ,fg-prominent-warning)))
+    `(proof-eager-annotation-face ((,c :foreground ,fg-prominent-note)))
+    `(proof-debug-message-face ((,c :foreground ,comment)))
+    `(proof-boring-face ((,c :foreground ,fg-dim :background ,bg-dim)))
+    `(proof-mouse-highlight-face ((,c :background ,bg-hover)))
+    `(proof-command-mouse-highlight-face ((,c :background ,bg-hover-secondary)))
+    `(proof-region-mouse-highlight-face ((,c :foreground ,fg-mark-other :background ,bg-mark-other)))
+    `(proof-highlight-dependent-face ((,c :foreground ,fg-link-visited :background ,bg-link-visited)))
+    `(proof-highlight-dependency-face ((,c :foreground ,fg-link-symbolic :background ,bg-link-symbolic)))
+    `(proof-active-area-face ((,c :background ,bg-active)))
+    `(proof-script-sticky-error-face ((,c :foreground ,fg-prominent-err :background ,bg-prominent-err)))
+    `(proof-script-highlight-error-face ((,c :underline (:style wave :color ,underline-err) :foreground ,err)))
+    `(proof-omitted-proof-face ((,c :background ,bg-active)))
+    `(coq-solve-tactics-face ((,c :foreground ,builtin)))
+    `(coq-cheat-face ((,c :box (:line-width -1 :color ,err :style nil) :background ,err)))
+    `(coq-symbol-binder-face ((,c :foreground ,identifier)))
+    `(coq-symbol-face ((,c :foreground ,variable)))
+    `(coq-question-mark-face ((,c :foreground ,variable-use)))
+    `(coq-context-qualifier-face ((,c :foreground ,rx-construct)))
+    `(coq-button-face ((,c :foreground ,fg-alt :background ,bg-dim)))
+    `(coq-button-face-pressed ((,c :foreground ,fg-button-active :background ,bg-button-active)))
+    `(coq-button-face-active ((,c :foreground ,fg-button-inactive :background ,bg-button-inactive)))
 ;;;;; popup
     `(popup-face ((,c :background ,bg-popup :foreground ,fg-main)))
     `(popup-isearch-match ((,c :inherit modus-themes-search-current)))
@@ -6974,6 +7079,11 @@ If COLOR is unspecified, then return :box unspecified."
     (list 'transient-argument `((,c :inherit modus-themes-bold :background ,bg-active-argument :foreground ,fg-active-argument)))
     `(transient-disabled-suffix ((,c :inherit modus-themes-mark-delete)))
     `(transient-enabled-suffix ((,c :inherit modus-themes-mark-select)))
+    ;; NOTE 2026-09-11: I experimented with this:
+    ;;
+    ;;     `(transient-heading ,@(modus-themes--heading 'section-other fg-main))
+    ;;
+    ;; It is not viable because it can lead to misalignments.
     `(transient-heading ((,c :inherit bold :foreground ,fg-main)))
     `(transient-inactive-argument ((,c :foreground ,fg-dim)))
     `(transient-inactive-value ((,c :foreground ,fg-dim)))
@@ -7101,7 +7211,7 @@ If COLOR is unspecified, then return :box unspecified."
     `(vc-up-to-date-state (( )))
 ;;;;; vertico
     `(vertico-current ((,c :inherit modus-themes-completion-selected)))
-    `(vertico-group-title ((,c :inherit modus-themes-slant :foreground ,name :height 0.9)))
+    `(vertico-group-title ((,c ,@(modus-themes--heading 'section-minibuffer fg-dim nil nil 0.9))))
     `(vertico-group-separator ((,c :strike-through t :foreground ,border)))
 ;;;;; vertico-quick
     `(vertico-quick1 ((,c :inherit bold :background ,bg-search-current :foreground ,fg-search-current)))
@@ -7563,9 +7673,10 @@ accordingly."
 ;;;; Let derivative themes create commands to load only their themes
 
 (defvar modus-themes-define-derivative-command-known-suffixes
-  '( toggle rotate select select-dark select-light
-     load-random load-random-dark load-random-light
-     list-colors list-colors-current)
+  '( toggle list-colors list-colors-current
+     rotate rotate-light rotate-dark
+     select select-dark select-light
+     load-random load-random-dark load-random-light)
   "Command suffixes accepted by `modus-themes-define-derivative-command'.")
 
 (defmacro modus-themes-define-derivative-command (family suffix)
