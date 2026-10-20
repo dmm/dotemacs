@@ -1,7 +1,7 @@
 ;; -*- no-byte-compile: t; lexical-binding: nil -*-
-(define-package "acp" "20261009.1205"
+(define-package "acp" "20261018.1243"
   "An ACP (Agent Client Protocol) implementation."
   '((emacs "28.1"))
   :url "https://github.com/xenodium/acp.el"
-  :commit "62e33d8ca6ab6d7c458b6fb89a847d5ab49ee427"
-  :revdesc "62e33d8ca6ab")
+  :commit "73940c8905b930b2386c1d2e355cf44c0feabfb2"
+  :revdesc "73940c8905b9")

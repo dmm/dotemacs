@@ -346,6 +346,13 @@ Start an interactive Kiro agent shell." t)
 (register-definition-prefixes "agent-shell-openai" '("agent-shell-openai-"))
 
 
+;;; Generated autoloads from agent-shell-openclaw.el
+
+(autoload 'agent-shell-openclaw-start-agent "agent-shell-openclaw" "\
+Start an interactive OpenClaw agent shell." t)
+(register-definition-prefixes "agent-shell-openclaw" '("agent-shell-openclaw-"))
+
+
 ;;; Generated autoloads from agent-shell-opencode.el
 
 (autoload 'agent-shell-opencode-start-agent "agent-shell-opencode" "\

@@ -42,6 +42,10 @@
 (require 'shell-maker)
 (eval-when-compile (require 'cl-lib))
 
+(declare-function agent-shell-chat--busy-frame "agent-shell-chat-mode")
+
+(defvar agent-shell-chat-mode)
+
 (defcustom agent-shell-persistent-prompt-enabled t
   "Whether a shell keeps a writable prompt at the buffer end at all times.
 
@@ -248,15 +252,63 @@ in the transcript above answers nil."
               (input-start (marker-position (cdr prompt))))
     (>= (point) input-start)))
 
+(defvar-local agent-shell--busy-prompt-overlay nil
+  "Overlay drawing the busy frame ahead of the live prompt, or nil.
+See `agent-shell--animate-busy-prompt'.")
+
+(defun agent-shell--animate-busy-prompt ()
+  "Draw the heartbeat's busy frame ahead of the live prompt's chevron.
+
+The chevron is the prompt's last non-blank character.  For example,
+with the buffer ending in `Claude> ', draws \"Claude|> \" on the
+heartbeat's first busy beat, and \"Claude> \" once it ends.  The frame
+comes from `agent-shell-prompt-busy-frames', faced
+`agent-shell-secondary'.
+
+Only outside `agent-shell-chat-mode', which animates its own marker (see
+`agent-shell-chat--animate-live-marker').  Without a live prompt (see
+`agent-shell-persistent-prompt-enabled') there is nothing to draw."
+  (if-let* (((not agent-shell-chat-mode))
+            (frame (agent-shell-chat--busy-frame))
+            ((agent-shell--live-input-prompt-p comint-last-prompt))
+            (chevron (save-excursion
+                       (goto-char (cdr comint-last-prompt))
+                       (skip-chars-backward " \t" (car comint-last-prompt))
+                       (1- (point))))
+            ((>= chevron (car comint-last-prompt))))
+      (let ((overlay (or agent-shell--busy-prompt-overlay
+                         (setq agent-shell--busy-prompt-overlay
+                               (make-overlay chevron (cdr comint-last-prompt)))))
+            (drawn (propertize frame 'face 'agent-shell-secondary)))
+        ;; Runs on every heartbeat tick, so leave an unchanged overlay be
+        ;; rather than trigger a redisplay.
+        (unless (and (eql (overlay-start overlay) chevron)
+                     (eql (overlay-end overlay)
+                          (marker-position (cdr comint-last-prompt))))
+          (move-overlay overlay chevron (cdr comint-last-prompt)))
+        (unless (equal (overlay-get overlay 'before-string) drawn)
+          (overlay-put overlay 'before-string drawn)))
+    (agent-shell--clear-busy-prompt)))
+
+(defun agent-shell--clear-busy-prompt ()
+  "Remove the busy frame drawn by `agent-shell--animate-busy-prompt'."
+  (when agent-shell--busy-prompt-overlay
+    (delete-overlay agent-shell--busy-prompt-overlay)
+    (setq agent-shell--busy-prompt-overlay nil)))
+
 (defun agent-shell--print-prompt ()
   "Print a prompt at the end of the shell buffer.
 
 Goes through `shell-maker--output-filter' so the prompt is fontified and
 bracketed by `comint-last-prompt' exactly as one shell-maker prints
 itself; nothing else sets that up, and `agent-shell--live-input-prompt-p'
-reads it."
+reads it.
+
+Mid-turn, the busy frame moves to the new prompt right away rather than
+waiting for a heartbeat tick, which skips a static frame it already drew."
   (shell-maker--output-filter (shell-maker--process)
-                              (shell-maker-prompt shell-maker--config)))
+                              (shell-maker-prompt shell-maker--config))
+  (agent-shell--animate-busy-prompt))
 
 (cl-defun agent-shell--finish-output (&key config success)
   "Finish a turn in CONFIG's shell, recording SUCCESS.

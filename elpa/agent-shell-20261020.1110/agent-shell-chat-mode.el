@@ -40,6 +40,7 @@
 ;;; Code:
 
 (require 'agent-shell-faces)
+(require 'agent-shell-prompt)
 (require 'map)
 (require 'seq)
 (eval-when-compile
@@ -78,6 +79,9 @@ A list or vector of strings, drawn in the body indent ahead of the
 marker, a string shown as is, without animating, or a function
 returning either (or nil to show nothing).  For example,
 \\='(\"·\" \"•\" \"●\" \"•\") or \"(busy)\".
+
+Outside `agent-shell-chat-mode', drawn ahead of the shell prompt's
+chevron instead.  For example, \"Claude|> \".
 
 A function takes no arguments and is called in the shell buffer on
 every heartbeat tick, so keep it cheap.  For example, to show
@@ -214,13 +218,15 @@ For example, over \" Me \\n\" in plain text returns
 
 For example, on the heartbeat's third beat returns \"-\".  With
 `agent-shell-prompt-busy-frames' set to a string, or to a function
-returning one, returns that string on every beat."
+returning one, returns that string on every beat.  Empty frames, like
+[] or \"\", return nil."
   (when-let* (((bound-and-true-p agent-shell-show-busy-indicator))
               (heartbeat (map-elt agent-shell--state :heartbeat))
               ((eq (map-elt heartbeat :status) 'busy))
               (frames (if (functionp agent-shell-prompt-busy-frames)
                           (funcall agent-shell-prompt-busy-frames)
-                        agent-shell-prompt-busy-frames)))
+                        agent-shell-prompt-busy-frames))
+              ((not (seq-empty-p frames))))
     (if (stringp frames)
         frames
       (seq-elt frames (mod (map-elt heartbeat :value) (seq-length frames))))))
@@ -1210,6 +1216,8 @@ fragments rendered with no event, which the live prompt's label would
 otherwise hide."
   (unless agent-shell-chat--labeled
     (setq-local agent-shell-chat--labeled t)
+    ;; Chat mode draws its own busy frame (see `agent-shell-chat--live-marker').
+    (agent-shell--clear-busy-prompt)
     (agent-shell-chat--relabel)
     (setq-local agent-shell-chat--subscription
                 (agent-shell-subscribe-to

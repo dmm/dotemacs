@@ -85,7 +85,6 @@
 (declare-function agent-shell-ui-mode "agent-shell")
 (declare-function agent-shell--render-markdown "agent-shell")
 (declare-function agent-shell-completion--setup "agent-shell-completion")
-(declare-function agent-shell-completion-mode "agent-shell-completion")
 (declare-function agent-shell-yank-dwim "agent-shell")
 
 (defvar-local agent-shell-viewport--clean-up t)
@@ -96,7 +95,6 @@
 (defvar agent-shell-preferred-agent-config)
 (defvar agent-shell-session-strategy)
 (defvar agent-shell--state)
-(defvar agent-shell-file-completion-enabled)
 
 (defvar-local agent-shell-viewport--compose-snapshot nil
   "Alist with :content and :location from compose buffer before viewing history.")
@@ -1675,14 +1673,15 @@ For example, offer to kill associated shell session."
   (setq-local line-prefix "  ")
   (setq-local wrap-prefix "  ")
   (agent-shell-completion--setup)
-  (when agent-shell-file-completion-enabled
-    (agent-shell-completion-mode +1))
   (agent-shell-list-edit-mode +1)
   (agent-shell--enable-dnd)
   (yank-media-handler "image/.*" #'agent-shell--yank-media-image)
   (agent-shell-viewport--update-header)
   (let ((inhibit-read-only t))
     (erase-buffer))
+  ;; A major-mode change keeps `buffer-undo-list', so without this undo
+  ;; in compose brings back the pages view mode erased and inserted.
+  (setq buffer-undo-list nil)
   (add-hook 'kill-buffer-hook #'agent-shell-viewport--clean-up nil t))
 
 (define-derived-mode agent-shell-viewport-view-mode text-mode "Agent Shell Viewport (View)"

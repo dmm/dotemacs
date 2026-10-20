@@ -4,11 +4,11 @@
 
 ;; Author: Alvaro Ramirez https://xenodium.com
 ;; URL: https://github.com/xenodium/agent-shell
-;; Package-Version: 20261009.1224
-;; Package-Revision: 14bd04b3bf48
-;; Package-Requires: ((emacs "29.1") (shell-maker "0.97.5") (acp "0.16.1"))
+;; Package-Version: 20261020.1110
+;; Package-Revision: eff6bfd5b6dd
+;; Package-Requires: ((emacs "29.1") (shell-maker "0.97.5") (acp "0.17.1"))
 
-(defconst agent-shell--version "0.87.2")
+(defconst agent-shell--version "0.88.1")
 
 ;; Minimum dependency versions, as declared in the `Package-Requires'
 ;; header above.  Package managers that resolve versions enforce the
@@ -17,7 +17,7 @@
 ;; in sync with it.
 (defconst agent-shell--shell-maker-minimum-version "0.97.5")
 
-(defconst agent-shell--acp-minimum-version "0.16.1")
+(defconst agent-shell--acp-minimum-version "0.17.1")
 
 ;; This package is free software; you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
@@ -91,6 +91,7 @@
 (require 'agent-shell-mistral)
 (require 'agent-shell-omp)
 (require 'agent-shell-openai)
+(require 'agent-shell-openclaw)
 (require 'agent-shell-opencode)
 (require 'agent-shell-pi)
 (require 'agent-shell-project)
@@ -313,6 +314,15 @@ are applied.  Each function is called with a range alist containing:
   "Whether or not to highlight source blocks."
   :type 'boolean
   :group 'agent-shell)
+
+(defvar agent-shell--stream-render-interval 0.05
+  "Seconds to coalesce streamed message chunks before rendering them.
+
+Batching avoids re-rendering a growing markdown body on every chunk.
+Other fragment or plain text updates flush pending chunks first,
+preserving their order.
+
+Nil renders every chunk.")
 
 (defcustom agent-shell-markdown-render-function
   #'agent-shell-markdown-replace-markup
@@ -829,6 +839,7 @@ example filtering them.  See `agent-shell-agent-configs'."
         #'agent-shell-kiro-make-config
         #'agent-shell-mistral-make-config
         #'agent-shell-omp-make-agent-config
+        #'agent-shell-openclaw-make-agent-config
         #'agent-shell-opencode-make-agent-config
         #'agent-shell-pi-make-agent-config
         #'agent-shell-qoder-make-agent-config
@@ -917,6 +928,7 @@ behavior explicitly."
                  (const :tag "Kimi" kimi)
                  (const :tag "Kiro" kiro)
                  (const :tag "Mistral" le-chat)
+                 (const :tag "OpenClaw" openclaw)
                  (const :tag "OpenCode" opencode)
                  (const :tag "Pi" pi)
                  (const :tag "Qoder" qoder)
@@ -1297,6 +1309,8 @@ OUTGOING-REQUEST-DECORATOR (passed through to `acp-make-client')."
         (cons :prompt-capabilities nil)
         (cons :event-subscriptions nil)
         (cons :idle-timer nil)
+        (cons :stream-render-pending nil)
+        (cons :stream-render-timer nil)
         (cons :sleep-token nil)
         (cons :active-requests nil)
         (cons :pending-prompts nil)
@@ -3391,7 +3405,7 @@ Clears STATE's `:expanded-activity-group'."
              (agent-shell--emit-event
               :event 'agent-message-chunk
               :data (list (cons :text-chunk (map-nested-elt acp-notification '(params update content text)))))
-             (agent-shell--update-fragment
+             (agent-shell--update-streamed-fragment
               :state state
               ;; Out of turn, key under a dedicated namespace so the
               ;; message forms its own fragment rather than coalescing
@@ -3403,9 +3417,6 @@ Clears STATE's `:expanded-activity-group'."
                                 (or message-id (map-elt state :chunked-group-count)))
               :body content
               :create-new new-message
-              :append t
-              :navigation 'never
-              :render-body-images t
               ;; Out of turn (no prompt request in flight) lands the
               ;; message above the fresh prompt rather than after it.
               :above-last-prompt (not (agent-shell--active-requests-p state)))
@@ -4608,6 +4619,7 @@ side)."
 For example, shut down ACP client."
   (when (derived-mode-p 'agent-shell-mode)
     (agent-shell--cancel-idle-timer)
+    (agent-shell--cancel-stream-render-timer (agent-shell--state))
     (agent-shell--emit-event :event 'clean-up)
     (agent-shell--shutdown)
     ;; Kill any open diff buffers associated with tool calls.
@@ -4851,11 +4863,26 @@ displayed in no window is measured against the selected frame instead.
   (when-let* ((text)
               (available (- (window-body-width
                              (or (and buffer (get-buffer-window buffer t))
-                                 (frame-root-window)))
+                                 (frame-first-window)))
                             (or reserved 0))))
     (if (> (string-width text) available)
         (truncate-string-to-width text (max available 1) nil nil "…")
       text)))
+
+(cl-defun agent-shell--propertize-tool-call-title (&key title kind)
+  "Return TITLE faced as `default', with a read's line range dimmed.
+
+KIND is the tool call kind.  When KIND is \"read\" and TITLE ends in a
+line range, the range is faced with `agent-shell-section-annotation'.
+
+For example, the \"(10 - 20)\" in \"file.el (10 - 20)\" is dimmed."
+  (let ((title (propertize title 'font-lock-face 'default)))
+    (when (and (equal kind "read")
+               (string-match "([0-9]+ *- *[0-9]+)\\s-*\\'" title))
+      (put-text-property (match-beginning 0) (match-end 0)
+                         'font-lock-face 'agent-shell-section-annotation
+                         title))
+    title))
 
 (defun agent-shell-make-tool-call-label (state tool-call-id)
   "Create tool call label from STATE using TOOL-CALL-ID.
@@ -4903,11 +4930,13 @@ Returns propertized labels in :status and :title propertized."
                               (not (equal (string-remove-prefix "`" (string-remove-suffix "`" (string-trim title)))
                                           (string-remove-prefix "`" (string-remove-suffix "`" (string-trim description))))))
                          (concat
-                          (propertize title 'font-lock-face 'default)
+                          (agent-shell--propertize-tool-call-title
+                           :title title :kind (map-elt tool-call :kind))
                           " "
                           (propertize description 'font-lock-face 'agent-shell-section-annotation)))
                         (title
-                         (propertize title 'font-lock-face 'default))
+                         (agent-shell--propertize-tool-call-title
+                          :title title :kind (map-elt tool-call :kind)))
                         (description
                          (propertize description 'font-lock-face 'default)))))
       `((:status . ,status)
@@ -5057,17 +5086,14 @@ FUNCTION should be a function accepting keyword arguments (&key ...)."
                    (list (car pair) (cdr pair)))
                  alist)))
 
-(defun agent-shell-welcome-message (config)
-  "Return welcome text for shell-maker CONFIG.
+(defun agent-shell-welcome-message (_config)
+  "Return welcome text shared by all agents.
 
-Shows how to get help, how to support the project and the latest
-news.  Agents' `:welcome-function' typically place it below their
-own banner."
+Shows how to get help, the latest news and how to support the
+project.  Agents' `:welcome-function' typically place it below their
+own banner, passing along their shell-maker config."
   (concat
-   "     Welcome to "
-   (propertize (shell-maker-config-name config)
-               'font-lock-face 'font-lock-comment-face)
-   " shell\n\n\n"
+   "       WELCOME\n\n"
    "       Type " (propertize "help" 'font-lock-face 'italic) " and press "
    (mapconcat (lambda (keys)
                 (propertize (key-description keys)
@@ -5075,25 +5101,33 @@ own banner."
               (where-is-internal #'agent-shell-submit agent-shell-mode-map)
               " or ")
    " for details.\n\n"
-   "       Like this package? Consider ✨"
-   (shell-maker-make-button-text "sponsoring"
-                                 (lambda ()
-                                   (browse-url "https://github.com/sponsors/xenodium")
-                                   (message "Thank you!")))
-   "✨\n\n"
    "       NEWS\n\n"
    ;; Align bullets with the welcome text.
    (let ((agent-shell-markdown-list-line-prefix (make-string 7 ?\s)))
      (agent-shell-markdown-convert
-      "- `2026-09-22` [agent-shell 0.78 updates](https://xenodium.com/agent-shell-0-78-updates)
-- `2026-08-15` [agent-shell 0.73 updates](https://xenodium.com/agent-shell-0-73-updates)
-- `2026-07-22` [agent-shell 0.63 updates](https://xenodium.com/agent-shell-0-63-updates)"))
-   "\n\n"))
+      "- `2026-10-13` [agent-shell 0.87 updates](https://xenodium.com/agent-shell-0-87-updates){tracking-label=\"(new)\"}
+- `2026-09-22` [agent-shell 0.78 updates](https://xenodium.com/agent-shell-0-78-updates)
+- `2026-08-15` [agent-shell 0.73 updates](https://xenodium.com/agent-shell-0-73-updates)"
+      :tracking-file (locate-user-emacs-file "agent-shell/markdown-links.eld")))
+   "\n\n"
+   "       FUNDING\n\n"
+   "       Tokens keep your agents running. Sponsors keep agent-shell running.\n\n"
+   "       Consider ✨"
+   (shell-maker-make-button-text "sponsoring"
+                                 (lambda ()
+                                   (browse-url "https://github.com/sponsors/xenodium")
+                                   (message "Thank you!")))
+   "✨ (or ask your employer to).\n\n"))
 
-(cl-defun agent-shell--start (&key config no-focus new-session session-strategy session-id fork-session-id outgoing-request-decorator)
+(cl-defun agent-shell--start (&key config no-focus new-session session-strategy session-id fork-session-id outgoing-request-decorator cwd)
   "Programmatically start shell with CONFIG.
 
 See `agent-shell-make-agent-config' for config format.
+
+CWD is the shell's working directory, defaulting to `agent-shell-cwd'.
+Callers that have already computed it should pass it, since
+`agent-shell-cwd-function' may be expensive or interactive.  Signal an
+error if it is not an existing directory.
 
 Set NO-FOCUS to start in background.
 Set NEW-SESSION to start a separate new session.
@@ -5130,7 +5164,12 @@ variable (see makunbound)"))
                               :prompt (map-elt config :shell-prompt)
                               :prompt-regexp (map-elt config :shell-prompt-regexp)))
          (agent-shell--shell-maker-config shell-maker-config)
-         (default-directory (agent-shell-cwd))
+         (default-directory (let ((cwd (or cwd (agent-shell-cwd))))
+                              ;; `shell-maker-start-v2' would otherwise quietly
+                              ;; fall back to "~/" and use that value forever.
+                              (unless (file-directory-p cwd)
+                                (error "Not an existing directory: %s" cwd))
+                              cwd))
          (shell-buffer
           ;; Suppress mode hook during shell-maker-start since
           ;; agent-shell state isn't ready yet.
@@ -5198,8 +5237,6 @@ variable (see makunbound)"))
       (add-hook 'agent-shell-ui-post-expand-fragment-at-point-hook
                 #'agent-shell--render-markdown nil t)
       (agent-shell-completion--setup)
-      (when agent-shell-file-completion-enabled
-        (agent-shell-completion-mode +1))
       (agent-shell--enable-dnd)
       (yank-media-handler "image/.*" #'agent-shell--yank-media-image)
       (agent-shell--setup-modeline)
@@ -5426,6 +5463,80 @@ the reported range down to the newly inserted chars."
   (when-let* ((untagged (text-property-not-all start end 'field 'output)))
     (add-text-properties untagged end '(field output))))
 
+(defun agent-shell--arm-stream-render-timer (state)
+  "Schedule STATE's pending batch without postponing an existing timer."
+  (unless (map-elt state :stream-render-timer)
+    (map-put! state :stream-render-timer
+              (run-at-time agent-shell--stream-render-interval nil
+                           (lambda ()
+                             (map-put! state :stream-render-timer nil)
+                             (when-let* ((buffer (map-elt state :buffer))
+                                         ((buffer-live-p buffer)))
+                               (with-current-buffer buffer
+                                 (agent-shell--flush-stream-render state))))))))
+
+(defun agent-shell--cancel-stream-render-timer (state)
+  "Cancel STATE's pending stream render timer, if any."
+  (when-let* ((timer (map-elt state :stream-render-timer)))
+    (cancel-timer timer)
+    (map-put! state :stream-render-timer nil)))
+
+(defun agent-shell--render-streamed-chunk (state chunk)
+  "Append CHUNK to its streamed fragment in STATE.
+
+CHUNK is an alist like:
+
+  ((:namespace-id . \"1\")
+   (:block-id . \"1-agent_message_chunk\")
+   (:body . \"Hello world\")
+   (:create-new . t)
+   (:above-last-prompt . nil))"
+  (agent-shell--update-fragment
+   :state state
+   :namespace-id (map-elt chunk :namespace-id)
+   :block-id (map-elt chunk :block-id)
+   :body (map-elt chunk :body)
+   :append t
+   :create-new (map-elt chunk :create-new)
+   :navigation 'never
+   :render-body-images t
+   :above-last-prompt (map-elt chunk :above-last-prompt)))
+
+(defun agent-shell--flush-stream-render (state)
+  "Render STATE's pending streamed text, if any."
+  (when-let* ((pending (map-elt state :stream-render-pending)))
+    ;; Clear before rendering, which re-enters this flush.
+    (map-put! state :stream-render-pending nil)
+    (agent-shell--cancel-stream-render-timer state)
+    (agent-shell--render-streamed-chunk state pending)))
+
+(cl-defun agent-shell--update-streamed-fragment (&key state namespace-id block-id body
+                                                      create-new above-last-prompt)
+  "Append BODY to streamed fragment BLOCK-ID in STATE.
+
+NAMESPACE-ID, CREATE-NEW, and ABOVE-LAST-PROMPT follow
+`agent-shell--update-fragment'.  Chunks for the same fragment are
+batched while `agent-shell--stream-render-interval' is non-nil.  A
+different fragment or CREATE-NEW flushes the previous batch first."
+  (let ((chunk (list (cons :namespace-id namespace-id)
+                     (cons :block-id block-id)
+                     (cons :body body)
+                     (cons :create-new create-new)
+                     (cons :above-last-prompt above-last-prompt)))
+        (pending (map-elt state :stream-render-pending)))
+    (cond
+     ((not agent-shell--stream-render-interval)
+      (agent-shell--render-streamed-chunk state chunk))
+     ((and pending
+           (not create-new)
+           (equal (map-elt pending :namespace-id) namespace-id)
+           (equal (map-elt pending :block-id) block-id))
+      (map-put! pending :body (concat (map-elt pending :body) body)))
+     (t
+      (agent-shell--flush-stream-render state)
+      (map-put! state :stream-render-pending chunk)
+      (agent-shell--arm-stream-render-timer state)))))
+
 (cl-defun agent-shell--update-fragment (&key state namespace-id block-id label-left label-right
                                              body append create-new navigation expanded
                                              render-body-images above-last-prompt
@@ -5451,6 +5562,8 @@ Programmatic fragment updates do not enter undo history.
 GROUP-ID nests this block under a collapsible group header, materialized
 from GROUP-LABEL on first use (see `agent-shell-ui-make-fragment-model'),
 with GROUP-EXPANDED as the group's initial fold state."
+  ;; Streamed text lands before this fragment, never after it.
+  (agent-shell--flush-stream-render state)
   ;; A persistent prompt is live for the whole turn, so there is always one
   ;; to render above and every write goes there.  Callers decide
   ;; ABOVE-LAST-PROMPT from whether the shell is busy, which only tells
@@ -5657,6 +5770,7 @@ Lands above the live prompt while
 `agent-shell-persistent-prompt-enabled' is on, the same as
 `agent-shell--update-fragment'.  Without it this appends at `point-max',
 which mid-turn is past whatever the user is typing."
+  (agent-shell--flush-stream-render state)
   (let ((ns (or namespace-id (map-elt state :request-count))))
     (when-let* (((map-elt state :buffer))
                 (viewport-buffer (agent-shell-viewport--buffer
@@ -8154,99 +8268,118 @@ Notifications are dispatched through `agent-shell--on-notification'
 so they render as they would during a live turn.  Clears the
 pending-restore state once replay completes."
   (when-let* ((prompt-turns (agent-shell--pop-pending-restore state)))
-    ;; Pre-create bootstrapping placeholders so replayed
-    ;; notifications (e.g. `available_commands_update') update
-    ;; them in place instead of inserting at point-max — which
-    ;; would land past the restored conversation.
-    (agent-shell--create-bootstrapping-placeholders state)
-    ;; Temporarily restore the session/load request so handlers
-    ;; that gate on `:active-requests' (out-of-turn check,
-    ;; `user_message_chunk' rendering, etc.) treat the replayed
-    ;; notifications as if they arrived during the live load.
-    (let ((saved-active-requests (map-elt state :active-requests))
-          (count (length prompt-turns)))
-      (map-put! state :active-requests
-                (cons (list (cons :method "session/load")) saved-active-requests))
-      (unwind-protect
-          ;; A replay renders history the user never typed, so keep all of
-          ;; it out of undo history (see `agent-shell--reset-undo-history').
-          (let ((buffer-undo-list t)
-                (prompt-start (and comint-last-prompt
-                                   (marker-position (car comint-last-prompt))
-                                   (agent-shell--live-input-prompt-p comint-last-prompt)
-                                   (car comint-last-prompt))))
-            (when prompt-start
-              (set-marker-insertion-type prompt-start t))
-            (save-restriction
-              (when prompt-start
-                ;; Narrowing to exclude early prompt so all replayed
-                ;; history is rendered above/before the live prompt.
-                (narrow-to-region (point-min) (marker-position prompt-start)))
-              (pcase (agent-shell--effective-restore-verbosity state)
-                ('last
-                 (when (> count 1)
-                   (agent-shell--update-bootstrapping-fragment
-                    :state state
-                    :block-id "restore_truncated_history"
-                    :body (agent-shell--make-boxed-message
-                           :text "Note: truncated history (last only)")))
-                 (agent-shell--replay-turn state (car (last prompt-turns))))
-                ('first-last
-                 (agent-shell--replay-turn state (car prompt-turns))
-                 (when (> count 2)
-                   (agent-shell--update-bootstrapping-fragment
-                    :state state
-                    :block-id "restore_truncated_history"
-                    :body (agent-shell--make-boxed-message
-                           :text "Note: truncated history (first and last only)")))
-                 (when (> count 1)
-                   (agent-shell--replay-turn state (car (last prompt-turns)))))
-                ('full
-                 (dolist (turn prompt-turns)
-                   (agent-shell--replay-turn state turn))))
-              ;; Close a replay that ended on a user prompt.
-              ;; `agent-shell--on-notification' terminates a replayed
-              ;; `user_message_chunk' only when the next notification
-              ;; arrives, emitting shell-maker's end-of-prompt marker so
-              ;; `shell-maker--extract-history' can pair the command with
-              ;; its response.  A session whose last turn is a user
-              ;; message (an interrupted request, whose final entry is the
-              ;; interruption notice) has no next notification, leaving
-              ;; the turn open: the live prompt renders on the same line
-              ;; as the restored user text, and the next unrelated
-              ;; notification (say `available_commands_update') emits the
-              ;; marker unnarrowed, landing it after the live prompt.
-              (when (equal (map-elt state :last-entry-type) "user_message_chunk")
-                (agent-shell--with-buffer-narrowed-to (agent-shell--live-prompt-start)
-                (shell-maker-insert-end-of-prompt-marker)
-                (let ((inhibit-read-only t))
-                  (goto-char (point-max))
-                  (insert (propertize "\n\n"
-                                      'field 'output
-                                      'read-only t
-                                      'front-sticky '(read-only)
-                                        'rear-nonsticky '(field read-only)))))
-                (map-put! state :last-entry-type nil))))
-        (map-put! state :active-requests saved-active-requests))
-      ;; Replay renders history as a live turn would, so the last replayed
-      ;; group is left expanded under `latest'.  Nothing is actually
-      ;; running, so fold it like a completed turn.
-      (agent-shell--collapse-expanded-activity-group state)
-      ;; Replayed history renders through the streaming path, which holds
-      ;; back an image or list item ending a message in case more of it
-      ;; follows.  No further notification is coming for it, so render it
-      ;; now, as at the end of a live turn.
-      (agent-shell--render-deferred-markup)
-      ;; Point followed the narrowed history insertions up above the live
-      ;; prompt.  Return it to the input area so the cursor lands where the
-      ;; user types (matching pre-early-prompt restore behavior).
-      (goto-char (point-max))
-      ;; The restored history landed above the early prompt, shifting any
-      ;; type-ahead down along with the undo entries recorded for it.
-      (agent-shell--reset-undo-history)
-      ;; The replayed conversation, including the live prompt, is now
-      ;; fully laid down; notify observers that the shell has settled.
-      (agent-shell--emit-event :event 'session-restored))))
+    (condition-case-unless-debug err
+        (progn
+          ;; Pre-create bootstrapping placeholders so replayed notifications
+          ;; (e.g. `available_commands_update') update them in place instead of
+          ;; inserting at point-max — which would land past the restored
+          ;; conversation.
+          (agent-shell--create-bootstrapping-placeholders state)
+          ;; Temporarily restore the session/load request so handlers
+          ;; that gate on `:active-requests' (out-of-turn check,
+          ;; `user_message_chunk' rendering, etc.) treat the replayed
+          ;; notifications as if they arrived during the live load.
+          (let ((saved-active-requests (map-elt state :active-requests))
+                (count (length prompt-turns)))
+            (map-put! state :active-requests
+                      (cons (list (cons :method "session/load")) saved-active-requests))
+            (unwind-protect
+                ;; A replay renders history the user never typed, so keep all of
+                ;; it out of undo history (see `agent-shell--reset-undo-history').
+                (let ((buffer-undo-list t)
+                      (prompt-start (and comint-last-prompt
+                                         (marker-position (car comint-last-prompt))
+                                         (agent-shell--live-input-prompt-p comint-last-prompt)
+                                         (car comint-last-prompt))))
+                  (when prompt-start
+                    (set-marker-insertion-type prompt-start t))
+                  (save-restriction
+                    (when prompt-start
+                      ;; Narrowing to exclude early prompt so all replayed
+                      ;; history is rendered above/before the live prompt.
+                      (narrow-to-region (point-min) (marker-position prompt-start)))
+                    (pcase (agent-shell--effective-restore-verbosity state)
+                      ('last
+                       (when (> count 1)
+                         (agent-shell--update-bootstrapping-fragment
+                          :state state
+                          :block-id "restore_truncated_history"
+                          :body (agent-shell--make-boxed-message
+                                 :text "Note: truncated history (last only)")))
+                       (agent-shell--replay-turn state (car (last prompt-turns))))
+                      ('first-last
+                       (agent-shell--replay-turn state (car prompt-turns))
+                       (when (> count 2)
+                         (agent-shell--update-bootstrapping-fragment
+                          :state state
+                          :block-id "restore_truncated_history"
+                          :body (agent-shell--make-boxed-message
+                                 :text "Note: truncated history (first and last only)")))
+                       (when (> count 1)
+                         (agent-shell--replay-turn state (car (last prompt-turns)))))
+                      ('full
+                       (dolist (turn prompt-turns)
+                         (agent-shell--replay-turn state turn))))
+                    ;; Flush while history is still narrowed above the live prompt.
+                    (agent-shell--flush-stream-render state)
+                    ;; Close a replay that ended on a user prompt.
+                    ;; `agent-shell--on-notification' terminates a replayed
+                    ;; `user_message_chunk' only when the next notification
+                    ;; arrives, emitting shell-maker's end-of-prompt marker so
+                    ;; `shell-maker--extract-history' can pair the command with
+                    ;; its response.  A session whose last turn is a user
+                    ;; message (an interrupted request, whose final entry is the
+                    ;; interruption notice) has no next notification, leaving
+                    ;; the turn open: the live prompt renders on the same line
+                    ;; as the restored user text, and the next unrelated
+                    ;; notification (say `available_commands_update') emits the
+                    ;; marker unnarrowed, landing it after the live prompt.
+                    (when (equal (map-elt state :last-entry-type) "user_message_chunk")
+                      (agent-shell--with-buffer-narrowed-to (agent-shell--live-prompt-start)
+                        (shell-maker-insert-end-of-prompt-marker)
+                        (let ((inhibit-read-only t))
+                          (goto-char (point-max))
+                          (insert (propertize "\n\n"
+                                              'field 'output
+                                              'read-only t
+                                              'front-sticky '(read-only)
+                                              'rear-nonsticky '(field read-only)))))
+                      (map-put! state :last-entry-type nil))))
+              (map-put! state :active-requests saved-active-requests))
+            ;; Replay renders history as a live turn would, so the last replayed
+            ;; group is left expanded under `latest'.  Nothing is actually
+            ;; running, so fold it like a completed turn.
+            (agent-shell--collapse-expanded-activity-group state)
+            ;; Replayed history renders through the streaming path, which holds
+            ;; back an image or list item ending a message in case more of it
+            ;; follows.  No further notification is coming for it, so render it
+            ;; now, as at the end of a live turn.
+            (agent-shell--render-deferred-markup)))
+      (error (agent-shell--report-restore-error :state state :err err)))
+    ;; Point followed the narrowed history insertions up above the live prompt.
+    ;; Return it to the input area so the cursor lands where the user types
+    ;; (matching pre-early-prompt restore behavior).
+    (goto-char (point-max))
+    ;; The restored history landed above the early prompt, shifting any
+    ;; type-ahead down along with the undo entries recorded for it.
+    (agent-shell--reset-undo-history)
+    ;; The replayed conversation, including the live prompt, is now fully laid
+    ;; down; notify observers that the shell has settled.
+    (agent-shell--emit-event :event 'session-restored)))
+
+(cl-defun agent-shell--report-restore-error (&key state err)
+  "Report ERR, signaled rendering STATE's restored history.
+
+Shows ERR in the echo area and in a warning above the prompt.  The
+history rendered before ERR was signaled stays in the shell."
+  (let ((text (format "Couldn't render restored history: %s"
+                      (error-message-string err))))
+    (message "%s" text)
+    (agent-shell--update-bootstrapping-fragment
+     :state state
+     :block-id "restore_failed"
+     :body (agent-shell--make-boxed-message
+            :text (concat "Warning: " text)))))
 
 (cl-defun agent-shell--resume-failure-message (&key session-id)
   "Return the message reporting SESSION-ID couldn't be resumed.
@@ -9141,6 +9274,8 @@ reads the buffer's prompt capabilities."
                :prompt content-blocks)
      :buffer (current-buffer)
      :on-success (lambda (acp-response)
+                   ;; Before the turn-end footer scans the fragment bodies.
+                   (agent-shell--flush-stream-render (agent-shell--state))
                    (agent-shell--separate-transcript-after-agent-message
                     :last-entry-type (map-elt (agent-shell--state) :last-entry-type)
                     :file-path agent-shell--transcript-file)
@@ -9196,6 +9331,10 @@ reads the buffer's prompt capabilities."
                                                    :shell-buffer shell-buffer
                                                    :existing-only t)))
                        (with-current-buffer viewport-buffer
+                         ;; Streaming renders into the viewport too, so it
+                         ;; holds back the same trailing markup.
+                         (when (derived-mode-p 'agent-shell-viewport-view-mode)
+                           (agent-shell--render-deferred-markup))
                          (agent-shell-viewport--update-header)))
                      (cond
                       (success
@@ -9235,9 +9374,11 @@ Continue?" (agent-shell--prompt-queue-summary)))
 
 ;;; Projects
 
-(defun agent-shell-project-buffers ()
-  "Return all shell buffers in the same project as current buffer."
-  (let ((project-root (agent-shell-cwd)))
+(defun agent-shell-project-buffers (&optional cwd)
+  "Return all shell buffers in the same project as current buffer.
+
+CWD is the current buffer's `agent-shell-cwd', which is computed if nil."
+  (let ((project-root (or cwd (agent-shell-cwd))))
     (seq-filter (lambda (buffer)
                   (equal project-root
                          (with-current-buffer buffer
@@ -9259,11 +9400,16 @@ When NO-CREATE is non-nil, return existing shell or nil/error if none exists.
 When NO-ERROR is non-nil, return nil instead of raising an error.
 
 Returns a buffer object or nil."
-  (let ((shell-buffer (or (agent-shell-viewport--shell-buffer
-                           (or viewport-buffer (current-buffer)))
-                          (if (derived-mode-p 'agent-shell-mode)
-                              (current-buffer)
-                            (seq-first (agent-shell-project-buffers))))))
+  (let* (;; Computed only when looking for a shell in the current project,
+         ;; and reused when creating one (which only happens after that), since
+         ;; `agent-shell-cwd-function' may be expensive or interactive.
+         (cwd nil)
+         (shell-buffer (or (agent-shell-viewport--shell-buffer
+                            (or viewport-buffer (current-buffer)))
+                           (if (derived-mode-p 'agent-shell-mode)
+                               (current-buffer)
+                             (seq-first (agent-shell-project-buffers
+                                         (setq cwd (agent-shell-cwd))))))))
     (if shell-buffer
         shell-buffer
       (if no-create
@@ -9294,14 +9440,16 @@ Returns a buffer object or nil."
                                                   :prompt "Start new agent: ")
                                                  (error "No agent config found"))
                                      :no-focus t
-                                     :new-session t))))
+                                     :new-session t
+                                     :cwd cwd))))
           (agent-shell--start :config (or (agent-shell--auto-preferred-config)
                                           (agent-shell-select-config
                                            :prompt "Start new agent: ")
                                           (error "No agent config found"))
                               :no-focus t
                               :new-session t
-                              :session-strategy agent-shell-session-strategy))))))
+                              :session-strategy agent-shell-session-strategy
+                              :cwd cwd))))))
 
 (defun agent-shell-goto-last-interaction ()
   "Move point to the last interaction in the shell buffer."
@@ -9431,6 +9579,11 @@ If the shell is busy with no live prompt, it is queued instead."
                             (use-local-map map))
                           (current-buffer)))
          (window-config (current-window-configuration))
+         ;; Run the command in the shell buffer's directory, not the
+         ;; calling buffer's (they differ when invoked from a viewport),
+         ;; and through its file handler, so remote (TRAMP) shells
+         ;; execute there instead of silently running locally.
+         (default-directory (buffer-local-value 'default-directory shell-buffer))
          (proc (make-process
                 :name command
                 :buffer output-buffer
@@ -9442,6 +9595,7 @@ If the shell is busy with no live prompt, it is queued instead."
                                   ;; (all into output buffer)
                                   (format "%s 2>&1" command))))
                 :connection-type 'pipe
+                :file-handler t
                 :filter
                 (lambda (proc output)
                   (when (buffer-live-p (process-buffer proc))
@@ -10616,7 +10770,8 @@ TEXT is the error message."
 
 (defun agent-shell--get-flymake-error-context ()
   "Get flymake error at point, ready for sending to agent."
-  (when-let* ((diagnostics (flymake-diagnostics (point))))
+  (when-let* (((bound-and-true-p flymake-mode))
+              (diagnostics (flymake-diagnostics (point))))
     (mapconcat
      (lambda (diagnostic)
        (let* ((buffer (flymake-diagnostic-buffer diagnostic))
@@ -10921,9 +11076,9 @@ tick, its first busy tick and its ending tick, and on none in between."
     (lambda (_heartbeat status)
       (when-let* (((buffer-live-p shell-buffer))
                   (frames (with-current-buffer shell-buffer
-                            (cons (agent-shell--busy-indicator-frame)
-                                  (and agent-shell-chat-mode
-                                       (agent-shell-chat--busy-frame))))))
+                            (list (agent-shell--busy-indicator-frame)
+                                  (agent-shell-chat--busy-frame)
+                                  agent-shell-chat-mode))))
         ;; 'ended is the final tick; render even if off-screen to
         ;; ensure animation is hidden.  Frames go unrecorded while
         ;; off-screen, so the next visible tick redraws.
@@ -10935,8 +11090,9 @@ tick, its first busy tick and its ending tick, and on none in between."
               (with-current-buffer shell-buffer
                 (agent-shell--update-header-and-mode-line
                  :cache-enabled (eq status 'busy))
-                (when agent-shell-chat-mode
-                  (agent-shell-chat--animate-live-marker))))
+                (if agent-shell-chat-mode
+                    (agent-shell-chat--animate-live-marker)
+                  (agent-shell--animate-busy-prompt))))
           (setq shell-frames nil))
         (when-let* ((viewport-buffer (agent-shell-viewport--buffer
                                       :shell-buffer shell-buffer
@@ -11673,7 +11829,8 @@ the originating key) so the user can type `r' as plain input.
 
 Otherwise, when a region is active, wrap it as a Markdown block quote
 and insert it at the live prompt, point left below it, ready to type.
-Busy or not makes no difference: with
+The mark is left where point was, so \\[universal-argument] \\[set-mark-command]
+returns to where reading stopped.  Busy or not makes no difference: with
 `agent-shell-persistent-prompt-enabled' there is a prompt to quote into
 for the whole turn.
 
@@ -11696,6 +11853,7 @@ with the block quote, when there is no prompt to insert into."
       (if (not (agent-shell--can-insert-into-prompt-p))
           (agent-shell-prompt-queue
            (agent-shell--prompt-queue-read :initial (concat "\n\n" quoted "\n\n")))
+        (push-mark nil t)
         (agent-shell-insert :text (concat quoted "\n\n")
                             :shell-buffer (current-buffer)
                             :no-focus t)

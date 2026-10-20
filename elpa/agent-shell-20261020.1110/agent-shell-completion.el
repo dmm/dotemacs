@@ -39,10 +39,19 @@
 (defvar agent-shell-prompt-queue-setup-minibuffer-functions)
 
 (defcustom agent-shell-file-completion-enabled t
-  "Non-nil enables `agent-shell-completion-mode' when starting shells.
+  "Non-nil pops project file completion as @ is typed.
 
-@ and / completion is available via \\[completion-at-point] either way.
-This only decides whether typing them pops it up automatically."
+@ completion is available via \\[completion-at-point] either way.  This
+only decides whether typing @ pops it up automatically, which can be
+slow in large projects."
+  :type 'boolean
+  :group 'agent-shell)
+
+(defcustom agent-shell-command-completion-enabled t
+  "Non-nil pops agent command completion as / is typed.
+
+/ only pops at the start of the input, where agents recognize commands.
+/ completion is available via \\[completion-at-point] either way."
   :type 'boolean
   :group 'agent-shell)
 
@@ -193,6 +202,8 @@ buffer.  Returns nil if the override is set but its buffer is dead."
 
 (defun agent-shell--trigger-completion-at-point ()
   "Trigger completion when @ or / is typed at a word boundary.
+Each pops only when `agent-shell-file-completion-enabled' or
+`agent-shell-command-completion-enabled' respectively allows it.
 Only triggers when the character is at line start or after whitespace,
 preventing spurious completions mid-word or in paths.  / additionally
 requires being at the start of the input, where agents recognize
@@ -201,9 +212,11 @@ commands."
              (or (= (point) (1+ (line-beginning-position)))
                  (memq (char-before (1- (point))) '(?\s ?\t ?\n))))
     (cond
-     ((eq (char-before) ?@)
+     ((and (eq (char-before) ?@)
+           agent-shell-file-completion-enabled)
       (completion-at-point))
      ((and (eq (char-before) ?/)
+           agent-shell-command-completion-enabled
            (agent-shell--command-completion-at-point))
       (completion-at-point)))))
 
@@ -211,11 +224,16 @@ commands."
   "Offer @ and / completion via `completion-at-point' in the current buffer.
 
 Also offers it while reading queued prompts.  Popping completion as @
-or / are typed is left to `agent-shell-completion-mode'."
+or / are typed is left to `agent-shell-completion-mode', enabled here
+unless `agent-shell-file-completion-enabled' and
+`agent-shell-command-completion-enabled' are both nil."
   (add-hook 'completion-at-point-functions #'agent-shell--file-completion-at-point nil t)
   (add-hook 'completion-at-point-functions #'agent-shell--command-completion-at-point nil t)
   (add-hook 'agent-shell-prompt-queue-setup-minibuffer-functions
-            #'agent-shell-completion--setup-queued-prompt))
+            #'agent-shell-completion--setup-queued-prompt)
+  (when (or agent-shell-file-completion-enabled
+            agent-shell-command-completion-enabled)
+    (agent-shell-completion-mode +1)))
 
 (defun agent-shell-completion--setup-minibuffer (shell-buffer)
   "Enable @ and / completion in the current minibuffer for SHELL-BUFFER.

@@ -4,11 +4,11 @@
 
 ;; Author: Alvaro Ramirez https://xenodium.com
 ;; URL: https://github.com/xenodium/acp.el
-;; Package-Version: 20261009.1205
-;; Package-Revision: 62e33d8ca6ab
+;; Package-Version: 20261018.1243
+;; Package-Revision: 73940c8905b9
 ;; Package-Requires: ((emacs "28.1"))
 
-(defconst acp-package-version "0.16.1")
+(defconst acp-package-version "0.18.1")
 
 ;; This package is free software; you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
@@ -54,6 +54,21 @@
   "Whether to log ACP traffic and messages to the logs buffer.
 See `acp-logs-buffer' to view the resulting log."
   :type 'boolean
+  :group 'acp)
+
+(defcustom acp-drain-time-budget 0.02
+  "Seconds a single message-queue drain may spend routing messages.
+
+Routing runs client handlers, which typically render.  Once the budget
+is spent, the drain reschedules itself so Emacs can redisplay and read
+input before routing resumes.  Order is preserved and nothing is
+dropped.
+
+At least one message is routed per drain, so a budget smaller than a
+single handler still makes progress.  Nil drains the whole queue in one
+callback."
+  :type '(choice (number :tag "Seconds")
+                 (const :tag "No limit" nil))
   :group 'acp)
 
 (defvar acp-instance-count 0)
@@ -158,45 +173,55 @@ the error is logged."
     ;; input (aborting a minibuffer prompt signals `quit'), from
     ;; quitting the debugger when `debug-on-error' is set, and from any
     ;; error signalled outside the contained handler calls below.
+    ;;
+    ;; Each drain stops once `acp-drain-time-budget' is spent, leaving
+    ;; the rest to the reschedule below.
     (setq drain-queue
           (lambda ()
-            (unwind-protect
-                (while message-queue
-                  ;; Bind print variables so the debugger
-                  ;; can safely print the client alist
-                  ;; without infinite recursion (#360).
-                  (let ((message (car message-queue))
-                        ;; Handle circular refs in client alist.
-                        (print-circle t)
-                        ;; Cap nesting depth.
-                        (print-level 25)
-                        ;; Cap list elements printed.
-                        (print-length 200))
-                    (setq message-queue (cdr message-queue))
-                    (acp--route-incoming-message
-                     :message message
-                     :client client
-                     :on-notification
-                     (lambda (notification)
-                       (dolist (handler (map-elt client :notification-handlers))
-                         (condition-case-unless-debug err
-                             (funcall handler notification)
-                           (error
-                            (acp--log client "NOTIFICATION HANDLER ERROR"
-                                      "Failed with error: %S" err)))))
-                     :on-request
-                     (lambda (request)
-                       (dolist (handler (map-elt client :request-handlers))
-                         (condition-case-unless-debug err
-                             (funcall handler request)
-                           (error
-                            (acp--log client "REQUEST HANDLER ERROR"
-                                      "Failed with error: %S" err))))))))
-              ;; Keep the busy flag raised while a drain is still
-              ;; pending, so the filter doesn't schedule a second one.
-              (if message-queue
-                  (run-at-time 0 nil drain-queue)
-                (setq message-queue-busy nil)))))
+            (let ((deadline (when acp-drain-time-budget
+                              (+ (float-time) acp-drain-time-budget)))
+                  ;; Checked after routing, so every drain routes at
+                  ;; least one message and a tiny budget can't spin.
+                  (within-budget t))
+              (unwind-protect
+                  (while (and message-queue within-budget)
+                    ;; Bind print variables so the debugger
+                    ;; can safely print the client alist
+                    ;; without infinite recursion (#360).
+                    (let ((message (car message-queue))
+                          ;; Handle circular refs in client alist.
+                          (print-circle t)
+                          ;; Cap nesting depth.
+                          (print-level 25)
+                          ;; Cap list elements printed.
+                          (print-length 200))
+                      (setq message-queue (cdr message-queue))
+                      (acp--route-incoming-message
+                       :message message
+                       :client client
+                       :on-notification
+                       (lambda (notification)
+                         (dolist (handler (map-elt client :notification-handlers))
+                           (condition-case-unless-debug err
+                               (funcall handler notification)
+                             (error
+                              (acp--log client "NOTIFICATION HANDLER ERROR"
+                                        "Failed with error: %S" err)))))
+                       :on-request
+                       (lambda (request)
+                         (dolist (handler (map-elt client :request-handlers))
+                           (condition-case-unless-debug err
+                               (funcall handler request)
+                             (error
+                              (acp--log client "REQUEST HANDLER ERROR"
+                                        "Failed with error: %S" err))))))
+                      (setq within-budget (or (null deadline)
+                                              (< (float-time) deadline)))))
+                ;; Keep the busy flag raised while a drain is still
+                ;; pending, so the filter doesn't schedule a second one.
+                (if message-queue
+                    (run-at-time 0 nil drain-queue)
+                  (setq message-queue-busy nil))))))
     (let ((process (make-process
                     :name (format "acp-client(%s)-%s"
                                   (map-elt client :command)
@@ -738,7 +763,8 @@ See https://agentclientprotocol.com/rfds/session-fork."
 (cl-defun acp-make-session-list-request (&key cwd cursor)
   "Instantiate a \"session/list\" request.
 
-CWD is the current working directory used to filter sessions.
+CWD is an optional working directory used to filter sessions.
+When omitted, list sessions across all working directories.
 CURSOR is an optional opaque token, taken from the `nextCursor' of a
 previous \"session/list\" response, requesting the page that follows it.
 Omit it to request the first page.
@@ -754,12 +780,12 @@ Omit it to request the first page.
 Note: This is an unstable ACP feature.
 
 See https://agentclientprotocol.com/rfds/session-list."
-  (unless cwd
-    (error ":cwd is required"))
   `((:method . "session/list")
-    ;; directory-file-name removes any trailing /
-    (:params . ((cwd . ,(directory-file-name (expand-file-name cwd)))
-                ,@(when cursor `((cursor . ,cursor)))))))
+    (:params . ,(or (append
+                     (when cwd
+                       `((cwd . ,(directory-file-name (expand-file-name cwd)))))
+                     (when cursor `((cursor . ,cursor))))
+                    (make-hash-table)))))
 
 (cl-defun acp-make-session-load-request (&key session-id cwd mcp-servers meta)
   "Instantiate a \"session/load\" request.
