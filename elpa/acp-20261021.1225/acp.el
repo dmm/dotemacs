@@ -4,11 +4,11 @@
 
 ;; Author: Alvaro Ramirez https://xenodium.com
 ;; URL: https://github.com/xenodium/acp.el
-;; Package-Version: 20261018.1243
-;; Package-Revision: 73940c8905b9
+;; Package-Version: 20261021.1225
+;; Package-Revision: 2959da5fa865
 ;; Package-Requires: ((emacs "28.1"))
 
-(defconst acp-package-version "0.18.1")
+(defconst acp-package-version "0.18.2")
 
 ;; This package is free software; you can redistribute it and/or modify
 ;; it under the terms of the GNU General Public License as published by
@@ -260,6 +260,13 @@ the error is logged."
                                   (acp--fail-pending-requests :client client :event event))))))
       (map-put! client :process process))))
 
+(defvar acp--shutdown-grace-period 5
+  "Seconds `acp-shutdown' waits for the agent to exit before killing it.
+
+Shutdown first sends the agent's process group SIGTERM, so the agent
+can stop the processes it started itself, such as tool commands running
+in their own sessions.  A SIGKILL leaves those running.")
+
 (defun acp--make-internal-error (message)
   "Build a synthetic JSON-RPC-shaped error alist with MESSAGE.
 
@@ -399,7 +406,21 @@ never started) is still fully released.  Safe to call repeatedly."
   (map-put! client :pending-requests nil)
   (when-let* ((process (map-elt client :process)))
     (when (process-live-p process)
-      (delete-process process))
+      (set-process-filter process #'ignore)
+      ;; A negative pid signals the agent's whole process group.
+      ;; Remote (TRAMP) processes are signalled individually.
+      (if (process-get process 'remote-pid)
+          (signal-process process 'SIGTERM)
+        (signal-process (- (process-id process)) 'SIGTERM))
+      (run-at-time acp--shutdown-grace-period nil
+                   (lambda ()
+                     ;; `delete-process' sends nothing once the agent has
+                     ;; exited, so kill the group explicitly to catch
+                     ;; children the agent left behind.
+                     (unless (process-get process 'remote-pid)
+                       (ignore-errors
+                         (signal-process (- (process-id process)) 'SIGKILL)))
+                     (delete-process process))))
     (map-put! client :process nil))
   (when-let* ((buffer (get-buffer (acp--logs-buffer-name client))))
     (kill-buffer buffer))

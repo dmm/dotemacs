@@ -1146,7 +1146,8 @@ would claim a capability we do not have."
     ;; path arms.  Cancelled in `agent-shell-elicitation--respond'.
     (let ((data (list (cons :request-id request-id)
                       (cons :tool-call-id tool-call-id)
-                      (cons :message question))))
+                      (cons :message question)
+                      (cons :meta (map-nested-elt acp-request '(params _meta))))))
       (agent-shell--emit-event :event 'elicitation-request :data data)
       (agent-shell--start-idle-timer :event 'elicitation-request :data data))
     (map-put! state :last-entry-type "elicitation/create")))

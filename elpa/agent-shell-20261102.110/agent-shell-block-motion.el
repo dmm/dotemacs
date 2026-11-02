@@ -35,6 +35,7 @@
 (require 'seq)
 (require 'subr-x)
 (require 'agent-shell-chat-mode)
+(require 'agent-shell-prompt)
 (require 'agent-shell-ui)
 
 (defconst agent-shell--block-properties
@@ -70,7 +71,7 @@ In the form:
 Submitted input is the text comint highlights with
 `comint-highlight-input'; the prompt still being composed has no such
 text, so it is never one."
-  (let ((input (if (agent-shell-chat--prompt-face-p
+  (let ((input (if (agent-shell--prompt-face-p
                     (get-text-property position 'font-lock-face))
                    ;; On the prompt text, the input starts where it ends.
                    (next-single-property-change

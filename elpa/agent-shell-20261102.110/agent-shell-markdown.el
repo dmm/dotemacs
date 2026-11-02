@@ -323,7 +323,10 @@ Each function returns an alist (nil for no-op).  Recognised keys:
   :watermark  Buffer position the streaming frontier must not pass,
               so an unclosed delimiter at the buffer tail (e.g. an
               open `$$') is re-examined on the next chunk.  The
-              earliest :watermark across all renderers is honoured.
+              earliest :watermark across all renderers is honoured,
+              and the built-in passes leave text from it onward
+              untouched, so the construct reaches the renderer
+              intact once it closes.
 
 For example, a renderer holding the frontier behind an open `$$'
 at position 1200 returns:
@@ -423,7 +426,7 @@ block is left as literal text."
         (remove-text-properties (point-min) (point-max)
                                 '(agent-shell-markdown-watermark nil))))
     (let ((watermark (agent-shell-markdown--watermark-start))
-          (external-results)
+          (external-watermarks)
           (context)
           (source-blocks)
           (source-ranges)
@@ -454,8 +457,14 @@ block is left as literal text."
         ;; below (and `avoid-ranges') pick them up and the styling passes
         ;; skip them.
         (when agent-shell-markdown-render-functions
-          (setq external-results (agent-shell-markdown--run-render-functions
-                                  context)))
+          (setq external-watermarks
+                (seq-keep (lambda (result) (map-elt result :watermark))
+                          (agent-shell-markdown--run-render-functions context))))
+        ;; Keep the built-in passes off any renderer's unfinished
+        ;; construct, so it reaches the renderer intact on a later chunk.
+        (when external-watermarks
+          (narrow-to-region (point-min)
+                            (max (point-min) (seq-min external-watermarks))))
         (setq rendered-ranges (agent-shell-markdown--make-markers
                                (agent-shell-markdown--frozen-ranges)))
         (setq avoid-ranges (agent-shell-markdown-sort-ranges
@@ -525,16 +534,17 @@ block is left as literal text."
         ;; styling survives `font-lock-mode' re-fontification — comint
         ;; / shell-maker / agent-shell buffers fontify on every output
         ;; chunk and would otherwise clear our `face' properties.
-        (agent-shell-markdown--mirror-face-to-font-lock-face
-         (point-min) (point-max))
-        ;; Mark rendered chars `fontified' so jit-lock never re-runs over
-        ;; them during a mouse drag.  We style via `face'/`font-lock-face'
-        ;; text properties, not font-lock keywords (`font-lock-defaults'
-        ;; is `(nil t)'), so an in-drag jit-lock pass applies nothing —
-        ;; but firing at all disturbs drag tracking and collapses the
-        ;; selection to empty, silently breaking mouse copy of rendered
-        ;; text (keyboard selection is unaffected).
-        (put-text-property (point-min) (point-max) 'fontified t))
+        (with-silent-modifications
+          (agent-shell-markdown--mirror-face-to-font-lock-face
+           (point-min) (point-max))
+          ;; Mark rendered chars `fontified' so jit-lock never re-runs over
+          ;; them during a mouse drag.  We style via `face'/`font-lock-face'
+          ;; text properties, not font-lock keywords (`font-lock-defaults'
+          ;; is `(nil t)'), so an in-drag jit-lock pass applies nothing —
+          ;; but firing at all disturbs drag tracking and collapses the
+          ;; selection to empty, silently breaking mouse copy of rendered
+          ;; text (keyboard selection is unaffected).
+          (put-text-property (point-min) (point-max) 'fontified t)))
       ;; Normalize list spacing before framing: join items the source
       ;; separated with blank lines so a list always renders as one tidy
       ;; group.  Widened, like the framing below, so it sees the whole
@@ -551,8 +561,7 @@ block is left as literal text."
         (agent-shell-markdown--pad-rendered-blocks normalization-start))
       (agent-shell-markdown--update-watermark
        :source-blocks source-blocks
-       :external-candidates (seq-keep (lambda (result) (map-elt result :watermark))
-                                      external-results)))))
+       :external-candidates external-watermarks))))
 
 (defun agent-shell-markdown--source-block-ranges (source-blocks)
   "Project SOURCE-BLOCKS to sorted (START . END) marker ranges.
@@ -1050,22 +1059,7 @@ otherwise group 3 (bare form)."
   (let ((group (if (match-beginning 2) 2 3)))
     (buffer-substring-no-properties (match-beginning group) (match-end group))))
 
-(defun agent-shell-markdown--link-verb (url verb)
-  "Return VERB, or the action opening URL described when VERB is nil.
-
-Describes where invoking lands: \"open file\" for a local file (which
-opens in Emacs) and \"open in browser\" otherwise.  Resolved on each
-call rather than at render time, so a file appearing or going away
-later doesn't leave the wording stale.
-
-For example, URL \"/tmp/notes.org\" returns \"open file\" while it
-exists, and \"open in browser\" once it doesn't."
-  (or verb
-      (if (agent-shell-markdown--parse-local-link url)
-          "open file"
-        "open in browser")))
-
-(cl-defun agent-shell-markdown--apply-link-properties (&key start end url verb tracking-file)
+(cl-defun agent-shell-markdown--apply-link-properties (&key start end url tracking-file)
   "Make [START, END) a rendered link to URL.
 
 Applies what every link the renderer produces carries: face
@@ -1078,16 +1072,15 @@ navigation stops on, so a link missing it would open on RET yet stay
 invisible to both.  Web URLs also carry `browse-url-data', so
 terminal Emacs can display them as OSC 8 hyperlinks when enabled.
 
-VERB names the action in both hints (see
-`agent-shell-markdown--link-verb' for the default and when it
-resolves).
+Both hints name URL in full, so the target can be inspected before
+opening it.
 
 TRACKING-FILE, when non-nil, records opening the link there (see
 `agent-shell-markdown--track-link-open').
 
 For example, over the `docs' of a rendered \"[docs](https://gnu.org)\",
-RET opens the URL, the echo area reads \"Press RET to open in
-browser\", and hovering shows \"Open in browser\"."
+RET opens the URL, the echo area reads \"Press RET to open:
+https://gnu.org\", and hovering shows \"Open: https://gnu.org\"."
   (let* ((open-action (lambda () (interactive)
                         (when tracking-file
                           (agent-shell-markdown--track-link-open
@@ -1102,14 +1095,9 @@ browser\", and hovering shows \"Open in browser\"."
        (agent-shell-markdown--action-hint
         :action open-action
         :keymap link-map
-        :verb (agent-shell-markdown--link-verb url verb))))
-    ;; The mouse gets the same wording without a key in it, resolved on
-    ;; hover like the echoed hint is.
-    (put-text-property start end 'help-echo
-                       (lambda (_window _object _pos)
-                         (let ((text (agent-shell-markdown--link-verb url verb)))
-                           (concat (upcase (substring text 0 1))
-                                   (substring text 1)))))
+        :verb (concat "open: " url))))
+    ;; The mouse gets the same wording without a key in it.
+    (put-text-property start end 'help-echo (concat "Open: " url))
     ;; A hand pointer when over is enough. No need for `mouse-face'.
     (put-text-property start end 'pointer 'hand)
     (put-text-property start end 'agent-shell-markdown-url url)
@@ -1470,7 +1458,7 @@ For example, the buffer \"see ![logo](logo.png)\" becomes
                             :max-width (or (map-elt attributes :max-width)
                                            (agent-shell-markdown--image-max-width))
                             :max-height (map-elt attributes :max-height))))
-                (image-flush image)
+                (image-flush image t)
                 (delete-region markup-start content-end)
                 (goto-char markup-start)
                 (insert placeholder)
@@ -1516,11 +1504,10 @@ For example, the buffer \"see ![logo](logo.png)\" becomes
                 (goto-char markup-start)
                 (insert label)
                 (let ((end (+ markup-start (length label))))
-                  ;; A link standing in for the image, so the hint says so
-                  ;; and there's no resizing to offer.
+                  ;; A link standing in for the image, so there's no
+                  ;; resizing to offer.
                   (agent-shell-markdown--apply-link-properties
-                   :start markup-start :end end :url url
-                   :verb "open image in browser")
+                   :start markup-start :end end :url url)
                   (when source
                     (put-text-property markup-start end
                                        'agent-shell-markdown-source source)))))))))))))
@@ -1568,7 +1555,7 @@ renders the image in place of that text."
                                     (agent-shell-markdown-visit-file :file resolved)))
                      (image-keymap (agent-shell-markdown--make-ret-binding-map
                                     open-action)))
-                (image-flush image)
+                (image-flush image t)
                 (put-text-property path-start path-end 'display image)
                 (put-text-property path-start path-end 'keymap image-keymap)
                 ;; Nothing about a displayed image says it's actionable, so
@@ -3463,7 +3450,7 @@ re-creating and flushing it on each resize would be wasted work."
                           file nil nil
                           :max-width max-width
                           :max-height (image-property image :max-height))))
-      (image-flush resized)
+      (image-flush resized t)
       (put-text-property start end 'display resized))
     (put-text-property start end
                        'agent-shell-markdown-image-window-width window-width)))
@@ -4421,12 +4408,16 @@ unchanged."
   (if-let* ((mode (agent-shell-markdown--resolve-lang-mode lang))
             ((fboundp mode)))
       (with-temp-buffer
-        (insert code)
+        ;; Fontify with a trailing newline: the fenced body stops before
+        ;; the `\n' ahead of the closing fence, and keywords that match
+        ;; through end of line (e.g. `diff-mode''s `+'/`-' lines) would
+        ;; otherwise skip the last line.  The newline is dropped below.
+        (insert code "\n")
         (let ((inhibit-message t))
           (delay-mode-hooks
             (funcall mode)
             (font-lock-ensure)))
-        (buffer-string))
+        (buffer-substring (point-min) (+ (point-min) (length code))))
     code))
 
 (defun agent-shell-markdown--resolve-lang-mode (lang)

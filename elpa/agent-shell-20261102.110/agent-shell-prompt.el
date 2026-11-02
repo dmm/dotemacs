@@ -21,7 +21,8 @@
 ;;; Commentary:
 ;;
 ;; Locate the live prompt at the end of an `agent-shell' buffer, take what
-;; has been typed into it, and render above it.
+;; has been typed into it, and render above it.  `agent-shell-prompt-ranges'
+;; locates every prompt, submitted ones included.
 ;;
 ;; A shell keeps a prompt at the buffer end for the whole turn, not just
 ;; between turns (see `agent-shell-persistent-prompt-enabled'), so
@@ -39,6 +40,7 @@
 ;;; Code:
 
 (require 'comint)
+(require 'seq)
 (require 'shell-maker)
 (eval-when-compile (require 'cl-lib))
 
@@ -163,6 +165,84 @@ PROMPT-START at the `C', a BODY inserting `more' leaves
          (when ,saved-point
            (goto-char ,saved-point)
            (set-marker ,saved-point nil))))))
+
+(defun agent-shell--prompt-face-p (value)
+  "Return non-nil when a `font-lock-face' VALUE marks a shell prompt.
+A live prompt carries `comint-highlight-prompt'; a restored or echoed
+prompt carries `agent-shell-prompt' (which inherits it).  Either may be
+repeated.
+
+For example, \\='comint-highlight-prompt, \\='agent-shell-prompt, and
+\\='(comint-highlight-prompt comint-highlight-prompt) all return non-nil,
+while \\='default returns nil."
+  (let ((faces (if (listp value) value (list value))))
+    (or (memq 'comint-highlight-prompt faces)
+        (memq 'agent-shell-prompt faces))))
+
+(defun agent-shell-prompt-ranges ()
+  "Return the range of each prompt in the current buffer, in buffer order.
+
+Covers prompts typed at the shell, replayed by a restored session and
+steered into a running turn, each in the form:
+
+  ((:prompt-start . PROMPT-START)
+   (:prompt-end . PROMPT-END)
+   (:input-start . INPUT-START)
+   (:input-end . INPUT-END))
+
+The prompt text (say \"Claude> \") runs from PROMPT-START to PROMPT-END,
+and its input from INPUT-START to INPUT-END: shell-maker's end-of-prompt
+marker or, until a response starts, the next prompt or the buffer end.
+
+Consecutive prompts (e.g. an empty submission leaves a stale prompt
+above the fresh one) are separate entries, since input or whitespace
+separates them.
+
+A prompt is prompt-faced text ending an `output' field, as shell-maker
+marks process output, so prompt-faced text elsewhere (say, quoted in a
+response) is not one.
+
+For example, in a buffer holding:
+
+  Claude> hi
+  <shell-maker-end-of-prompt>Hello
+  Claude> draft
+
+returns:
+
+  (((:prompt-start . 1) (:prompt-end . 9)
+    (:input-start . 9) (:input-end . 12))
+   ((:prompt-start . 45) (:prompt-end . 53)
+    (:input-start . 53) (:input-end . 58)))"
+  (let ((runs '())
+        (pos (point-min)))
+    ;; A prompt ends where comint's `output' field gives way to input (or at
+    ;; the buffer end), as `comint-next-prompt' relies on.  Walking `field'
+    ;; skips the many `font-lock-face' changes in between.
+    (while (< pos (point-max))
+      (setq pos (next-single-property-change pos 'field nil (point-max)))
+      (when (agent-shell--prompt-face-p
+             (get-text-property (1- pos) 'font-lock-face))
+        (push (cons (or (previous-single-property-change pos 'font-lock-face)
+                        (point-min))
+                    pos)
+              runs)))
+    (setq runs (nreverse runs))
+    (seq-mapn
+     (lambda (run next)
+       (let* ((limit (or (car next) (point-max)))
+              ;; Matched by property rather than by text: an agent quoting
+              ;; "<shell-maker-end-of-prompt>" back writes the same
+              ;; characters without it, and reading those as a boundary
+              ;; would end the input mid-response.
+              (marker (text-property-any (cdr run) limit
+                                         'shell-maker--marker t)))
+         `((:prompt-start . ,(car run))
+           (:prompt-end . ,(cdr run))
+           (:input-start . ,(cdr run))
+           (:input-end . ,(or marker limit)))))
+     runs
+     (append (cdr runs) '(nil)))))
 
 (defun agent-shell--prompt-input-start ()
   "Return where the live prompt's input area begins, or nil when there is none.

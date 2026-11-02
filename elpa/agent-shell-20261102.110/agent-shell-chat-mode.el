@@ -303,19 +303,6 @@ with none available, returns \"Agent\"."
   (or (map-nested-elt agent-shell--state '(:agent-config :mode-line-name))
       "Agent"))
 
-(defun agent-shell-chat--prompt-face-p (value)
-  "Return non-nil when a `font-lock-face' VALUE marks a shell prompt.
-A live prompt carries `comint-highlight-prompt'; a restored or echoed
-prompt carries `agent-shell-prompt' (which inherits it).  Either may be
-repeated.
-
-For example, \\='comint-highlight-prompt, \\='agent-shell-prompt, and
-\\='(comint-highlight-prompt comint-highlight-prompt) all return non-nil,
-while \\='default returns nil."
-  (let ((faces (if (listp value) value (list value))))
-    (or (memq 'comint-highlight-prompt faces)
-        (memq 'agent-shell-prompt faces))))
-
 (defun agent-shell-chat--extends-bg-p (face)
   "Return non-nil when FACE paints an `:extend' background past end of line.
 FACE is a `face' text-property value (a face symbol or list of them).  A
@@ -647,24 +634,6 @@ reach."
                (not (memq overlay kept)))
       (delete-overlay overlay))))
 
-(defun agent-shell-chat--prompt-runs ()
-  "Return each prompt-face run in the current buffer as a list of (BEG . END).
-In buffer order.  Consecutive prompts (e.g. an empty submission leaves a
-stale prompt above the fresh one) are separate entries, since input or
-whitespace separates them."
-  (save-excursion
-    (goto-char (point-min))
-    (let ((runs '())
-          (pos (point-min)))
-      (while (< pos (point-max))
-        (let ((run-end (or (next-single-property-change pos 'font-lock-face)
-                           (point-max))))
-          (when (agent-shell-chat--prompt-face-p
-                 (get-text-property pos 'font-lock-face))
-            (push (cons pos run-end) runs))
-          (setq pos run-end)))
-      (nreverse runs))))
-
 (defun agent-shell-chat--label-prompts ()
   "Overlay each prompt run in the current buffer.
 
@@ -687,29 +656,24 @@ a string standing at the prompt holds point and the cursor on the row
 above, putting the first line of a multi-line input out of reach of
 `previous-line'.  Updates in place."
   (save-excursion
-    (let ((runs (agent-shell-chat--prompt-runs))
+    (let ((ranges (agent-shell-prompt-ranges))
           (prev-end nil)
           (pending-lead nil)
           (kept nil))
-      (while runs
-        (let* ((pos (caar runs))
-               (run-end (cdar runs))
-               (next-pos (caadr runs))
-               (limit (or next-pos (point-max)))
-               ;; Matched by property rather than by text: an agent quoting
-               ;; "<shell-maker-end-of-prompt>" back writes the same
-               ;; characters without it, and reading those as a boundary
-               ;; would end the turn (and hide the live prompt's marker)
-               ;; mid-response.
-               (marker-pos (text-property-any run-end limit
-                                              'shell-maker--marker t))
-               (input-end (or marker-pos limit))
+      (while ranges
+        (let* ((range (car ranges))
+               (pos (map-elt range :prompt-start))
+               (run-end (map-elt range :prompt-end))
+               (input-end (map-elt range :input-end))
                (blank (string-blank-p
-                       (buffer-substring-no-properties run-end input-end)))
+                       (buffer-substring-no-properties
+                        (map-elt range :input-start) input-end)))
                ;; The live prompt is the last one with no response yet: no
                ;; prompt and no end-of-prompt marker follow it.  (A submitted
                ;; turn awaiting its reprinted prompt is last but has a marker.)
-               (live (and (null next-pos) (null marker-pos)))
+               (live (and (null (cdr ranges))
+                          (not (get-text-property input-end
+                                                  'shell-maker--marker))))
                (raw-start (save-excursion
                             (goto-char pos)
                             (skip-chars-backward " \t\n")
@@ -980,7 +944,7 @@ above, putting the first line of a multi-line input out of reach of
           ;; whichever label renders next.
           (setq pending-lead (and (not labeled) lead))
           (setq prev-end run-end)
-          (setq runs (cdr runs))))
+          (setq ranges (cdr ranges))))
       ;; Drop stale labels whose prompt run was deleted (e.g. a live prompt a
       ;; `session/push' removed) and which no label above reached.
       (agent-shell-chat--gc-overlays '(me me-label me-surplus me-input me-draft)
@@ -1029,7 +993,7 @@ newline would merge the input line into the response for line motion
                       ;; (an empty response): it belongs to that prompt's
                       ;; spacing, and swallowing it would overlap the `Me'
                       ;; overlay.  Keep the label anchored at the marker.
-                      (if (agent-shell-chat--prompt-face-p
+                      (if (agent-shell--prompt-face-p
                            (get-text-property (point) 'font-lock-face))
                           mend
                         (point))))
@@ -1061,7 +1025,7 @@ newline would merge the input line into the response for line motion
                                  (goto-char mend)
                                  (skip-chars-forward " \t\n")
                                  (or (get-text-property (point) 'shell-maker--marker)
-                                     (agent-shell-chat--prompt-face-p
+                                     (agent-shell--prompt-face-p
                                       (get-text-property (point) 'font-lock-face))))))
           ;; A turn with no response is not labeled; its stale overlay, if
           ;; any, is dropped by the `--gc-overlays' sweep below.  Widen the

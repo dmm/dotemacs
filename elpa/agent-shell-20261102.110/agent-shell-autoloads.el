@@ -43,13 +43,17 @@ Keyword arguments:
 - MCP-SERVERS: Optional list of MCP servers for this agent, taking
   precedence over the global `agent-shell-mcp-servers'.  Same shape as
   that variable.
-- NOTIFICATION-ADAPTER: Optional function to modify/normalize `notification'
+- NOTIFICATION-ADAPTER: Optional function called with `:acp-notification'.
+  Return the original or a normalized notification for further handling.
+- NOTIFICATION-HANDLER: Optional function called after adaptation with an
+  alist of `:state' and `:acp-notification'.  Return non-nil if handled,
+  skipping core handling, or nil to let core handle it.
 - ICON-NAME: Name of the icon to use
 - INSTALL-INSTRUCTIONS: Instructions to show when executable is not found
 
 Returns an alist with all specified values.
 
-(fn &key IDENTIFIER MODE-LINE-NAME WELCOME-FUNCTION BUFFER-NAME SHELL-PROMPT SHELL-PROMPT-REGEXP CLIENT-MAKER NEEDS-AUTHENTICATION AUTHENTICATE-REQUEST-MAKER DEFAULT-MODEL-ID DEFAULT-SESSION-MODE-ID DEFAULT-CONFIG-OPTIONS SESSION-META MCP-SERVERS NOTIFICATION-ADAPTER ICON-NAME INSTALL-INSTRUCTIONS)")
+(fn &key IDENTIFIER MODE-LINE-NAME WELCOME-FUNCTION BUFFER-NAME SHELL-PROMPT SHELL-PROMPT-REGEXP CLIENT-MAKER NEEDS-AUTHENTICATION AUTHENTICATE-REQUEST-MAKER DEFAULT-MODEL-ID DEFAULT-SESSION-MODE-ID DEFAULT-CONFIG-OPTIONS SESSION-META MCP-SERVERS NOTIFICATION-ADAPTER NOTIFICATION-HANDLER ICON-NAME INSTALL-INSTRUCTIONS)")
 (autoload 'agent-shell "agent-shell" "\
 Start or reuse an existing agent shell.
 
@@ -237,6 +241,13 @@ Start an interactive CodeBuddy agent shell." t)
 (autoload 'agent-shell-cursor-start-agent "agent-shell-cursor" "\
 Start an interactive Cursor agent shell." t)
 (register-definition-prefixes "agent-shell-cursor" '("agent-shell-cursor-"))
+
+
+;;; Generated autoloads from agent-shell-deepseek.el
+
+(autoload 'agent-shell-deepseek-start-agent "agent-shell-deepseek" "\
+Start an interactive DeepSeek Harness agent shell." t)
+(register-definition-prefixes "agent-shell-deepseek" '("agent-shell-deepseek-"))
 
 
 ;;; Generated autoloads from agent-shell-devcontainer.el
@@ -442,8 +453,8 @@ disabled.
 (autoload 'agent-shell-new-worktree-shell "agent-shell-worktree" "\
 Create a new git worktree and start an agent shell in it.
 
-The worktree is created at <project-root>/.agent-shell/worktrees/<worktree-name>
-where <worktree-name> is a randomly generated name (e.g., \"adoring-hawking\").
+The worktree is created under <main-worktree>/.agent-shell/worktrees/,
+using a randomly generated name (e.g., \"adoring-hawking\").
 
 The user is prompted to confirm or edit the worktree path before creation." t)
 (register-definition-prefixes "agent-shell-worktree" '("agent-shell-worktree--"))
